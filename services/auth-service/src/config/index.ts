@@ -126,7 +126,8 @@ if (!config.jwt.secret) {
   throw new Error('JWT_SECRET is required');
 }
 
-if (!config.email.smtp.pass) {
+// Only warn about SMTP if API is not configured
+if (!process.env.ZEPTO_API_URL && !config.email.smtp.pass) {
   console.warn('⚠️  ZEPTO_SMTP_PASS not set - emails will not be sent');
 }
 
