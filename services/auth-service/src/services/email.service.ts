@@ -8,15 +8,6 @@ class EmailService {
   private useAPI: boolean = false;
 
   constructor() {
-    this.transporter = nodemailer.createTransport({
-      host: config.email.smtp.host,
-      port: config.email.smtp.port,
-      secure: false, // Use STARTTLS
-      auth: {
-        user: config.email.smtp.user,
-        pass: config.email.smtp.pass,
-      },
-    });
     // Check if we should use ZeptoMail API instead of SMTP
     if (process.env.ZEPTO_API_URL && process.env.ZEPTO_API_KEY) {
       this.useAPI = true;
