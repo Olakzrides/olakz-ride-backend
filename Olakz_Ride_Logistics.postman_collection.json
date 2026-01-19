@@ -1,0 +1,336 @@
+{
+  "info": {
+    "name": "Olakz Ride - Core Logistics API",
+    "description": "Complete API collection for testing Phase 1 Core Logistics Service",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "gateway_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "auth_base_url",
+      "value": "http://localhost:3003",
+      "type": "string",
+      "description": "Direct auth service URL (for debugging)"
+    },
+    {
+      "key": "logistics_base_url",
+      "value": "http://localhost:3001",
+      "type": "string",
+      "description": "Direct logistics service URL (for debugging)"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cart_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "ride_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Auth - Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set('access_token', response.data.tokens.accessToken);",
+              "    console.log('✅ Access token saved');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"customer@test.com\",\n  \"password\": \"Test@1234\"\n}"
+        },
+        "url": {
+          "raw": "{{gateway_url}}/api/auth/login",
+          "host": ["{{gateway_url}}"],
+          "path": ["api", "auth", "login"]
+        },
+        "description": "Login to get JWT access token"
+      },
+      "response": []
+    },
+    {
+      "name": "2. Create Ride Cart",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set('cart_id', response.data.cart.id);",
+              "    console.log('✅ Cart ID saved:', response.data.cart.id);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"productId\": \"00000000-0000-0000-0000-000000000021\",\n  \"salesChannelId\": \"00000000-0000-0000-0000-000000000001\",\n  \"passengers\": 1,\n  \"searchRadius\": 10,\n  \"pickupPoint\": {\n    \"latitude\": 6.5244,\n    \"longitude\": 3.3792,\n    \"address\": \"Victoria Island, Lagos\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{gateway_url}}/api/ride/cart",
+          "host": ["{{gateway_url}}"],
+          "path": ["api", "ride", "cart"]
+        },
+        "description": "Create a new ride cart with pickup location"
+      },
+      "response": []
+    },
+    {
+      "name": "3. Add Dropoff Location",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"dropoffPoint\": {\n    \"latitude\": 6.4474,\n    \"longitude\": 3.3903,\n    \"address\": \"Ikeja, Lagos\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{gateway_url}}/api/carts/{{cart_id}}/dropoff",
+          "host": ["{{gateway_url}}"],
+          "path": ["api", "carts", "{{cart_id}}", "dropoff"]
+        },
+        "description": "Add dropoff location to cart and get fare estimates"
+      },
+      "response": []
+    },
+    {
+      "name": "4. Select Variant (Standard)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"variantId\": \"00000000-0000-0000-0000-000000000031\",\n  \"quantity\": 1\n}"
+        },
+        "url": {
+          "raw": "{{gateway_url}}/api/carts/{{cart_id}}/line-items",
+          "host": ["{{gateway_url}}"],
+          "path": ["api", "carts", "{{cart_id}}", "line-items"]
+        },
+        "description": "Select Standard ride variant"
+      },
+      "response": []
+    },
+    {
+      "name": "5. Request Ride",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 201) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set('ride_id', response.data.ride.id);",
+              "    console.log('✅ Ride ID saved:', response.data.ride.id);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"cartId\": \"{{cart_id}}\",\n  \"pickupLocation\": {\n    \"latitude\": 6.5244,\n    \"longitude\": 3.3792,\n    \"address\": \"Victoria Island, Lagos\"\n  },\n  \"dropoffLocation\": {\n    \"latitude\": 6.4474,\n    \"longitude\": 3.3903,\n    \"address\": \"Ikeja, Lagos\"\n  },\n  \"vehicleVariantId\": \"00000000-0000-0000-0000-000000000031\",\n  \"paymentMethod\": {\n    \"type\": \"wallet\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{gateway_url}}/api/ride/request",
+          "host": ["{{gateway_url}}"],
+          "path": ["api", "ride", "request"]
+        },
+        "description": "Request a ride with selected variant"
+      },
+      "response": []
+    },
+    {
+      "name": "6. Get Ride Status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gateway_url}}/api/ride/{{ride_id}}/status",
+          "host": ["{{gateway_url}}"],
+          "path": ["api", "ride", "{{ride_id}}", "status"]
+        },
+        "description": "Get current ride status and details"
+      },
+      "response": []
+    },
+    {
+      "name": "7. Cancel Ride",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"Changed my mind\"\n}"
+        },
+        "url": {
+          "raw": "{{gateway_url}}/api/ride/{{ride_id}}/cancel",
+          "host": ["{{gateway_url}}"],
+          "path": ["api", "ride", "{{ride_id}}", "cancel"]
+        },
+        "description": "Cancel an active ride"
+      },
+      "response": []
+    },
+    {
+      "name": "8. Get Ride History",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gateway_url}}/api/ride/history?page=1&limit=10",
+          "host": ["{{gateway_url}}"],
+          "path": ["api", "ride", "history"],
+          "query": [
+            {
+              "key": "page",
+              "value": "1"
+            },
+            {
+              "key": "limit",
+              "value": "10"
+            }
+          ]
+        },
+        "description": "Get user's ride history with pagination"
+      },
+      "response": []
+    },
+    {
+      "name": "Get All Variants (Public)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{gateway_url}}/api/variants",
+          "host": ["{{gateway_url}}"],
+          "path": ["api", "variants"]
+        },
+        "description": "Get all available ride variants (no auth required)"
+      },
+      "response": []
+    },
+    {
+      "name": "Health Check - Logistics",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{logistics_base_url}}/health",
+          "host": ["{{logistics_base_url}}"],
+          "path": ["health"]
+        },
+        "description": "Check logistics service health"
+      },
+      "response": []
+    },
+    {
+      "name": "Health Check - Auth",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{auth_base_url}}/health",
+          "host": ["{{auth_base_url}}"],
+          "path": ["health"]
+        },
+        "description": "Check auth service health"
+      },
+      "response": []
+    }
+  ]
+}

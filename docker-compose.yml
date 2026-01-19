@@ -1,0 +1,124 @@
+version: '3.8'
+
+services:
+  # Redis - For caching and distributed rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: olakz-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - olakz-network
+    restart: unless-stopped
+
+  # API Gateway
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+      target: development
+    container_name: olakz-gateway
+    ports:
+      - "${GATEWAY_PORT:-3000}:3000"
+    volumes:
+      - ./gateway/src:/app/src
+      - ./gateway/logs:/app/logs
+      - /app/node_modules
+    env_file:
+      - ./gateway/.env
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - AUTH_SERVICE_URL=http://auth-service:3003
+      - LOGISTICS_SERVICE_URL=http://logistics-service:3001
+      - PAYMENT_SERVICE_URL=http://payment-service:3002
+    depends_on:
+      - redis
+    networks:
+      - olakz-network
+    restart: unless-stopped
+    command: npm run dev
+
+  # Auth Service
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+      target: development
+    container_name: olakz-auth-service
+    ports:
+      - "${AUTH_SERVICE_PORT:-3003}:3003"
+    volumes:
+      - ./services/auth-service/src:/app/src
+      - ./services/auth-service/prisma:/app/prisma
+      - ./services/auth-service/logs:/app/logs
+      - /app/node_modules
+    env_file:
+      - ./services/auth-service/.env
+    environment:
+      - NODE_ENV=development
+      - PORT=3003
+    networks:
+      - olakz-network
+    restart: unless-stopped
+    command: npm run dev
+
+  # Logistics Service (placeholder for future implementation)
+  # logistics-service:
+  #   build:
+  #     context: ./services/core-logistics
+  #     dockerfile: Dockerfile
+  #     target: development
+  #   container_name: olakz-logistics-service
+  #   ports:
+  #     - "${LOGISTICS_SERVICE_PORT:-3001}:3001"
+  #   volumes:
+  #     - ./services/core-logistics/src:/app/src
+  #     - /app/node_modules
+  #   env_file:
+  #     - ./services/core-logistics/.env
+  #   environment:
+  #     - NODE_ENV=development
+  #     - PORT=3001
+  #   networks:
+  #     - olakz-network
+  #   restart: unless-stopped
+  #   command: npm run dev
+
+  # Payment Service (placeholder for future implementation)
+  # payment-service:
+  #   build:
+  #     context: ./services/payment-service
+  #     dockerfile: Dockerfile
+  #     target: development
+  #   container_name: olakz-payment-service
+  #   ports:
+  #     - "${PAYMENT_SERVICE_PORT:-3002}:3002"
+  #   volumes:
+  #     - ./services/payment-service/src:/app/src
+  #     - /app/node_modules
+  #   env_file:
+  #     - ./services/payment-service/.env
+  #   environment:
+  #     - NODE_ENV=development
+  #     - PORT=3002
+  #   networks:
+  #     - olakz-network
+  #   restart: unless-stopped
+  #   command: npm run dev
+
+networks:
+  olakz-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+    driver: local

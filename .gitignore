@@ -1,0 +1,109 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+services/*/.env
+services/*/.env.local
+gateway/.env
+gateway/.env.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+services/*/dist/
+services/*/build/
+gateway/dist/
+gateway/build/
+
+# Testing
+coverage/
+.nyc_output/
+test-results/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-*
+
+# Prisma
+services/auth-service/prisma/migrations/migration_lock.toml
+services/core-logistics/prisma/migrations/migration_lock.toml
+
+# Runtime files
+*.pid
+*.seed
+*.pid.lock
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env.backup
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# Temporary folders
+tmp/
+temp/
+
+# Test files (keep templates but exclude actual test data)
+test-socketio.js
+test-accept-ride.js
+test-socketio.html
+
+# Documentation that's work-in-progress (keep final docs)
+PHASE*_TESTING_*.md
+WEEK*_*.md
+*_TESTING_SUMMARY.md
+MANUAL_MIGRATION_STEPS.md
+BEFORE_LOGISTICS_CHECKLIST.md
+RECOVERY_GUIDE.md
+
+# Keep these important docs
+!README.md
+!docs/
+!QUICK_START.md
+!API_CHANGES_QUICK_REFERENCE.md
+!DOCUMENTATION_INDEX.md

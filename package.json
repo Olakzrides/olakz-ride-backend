@@ -1,0 +1,37 @@
+{
+  "name": "olakz-ride-backend",
+  "private": true,
+  "workspaces": [
+    "services/*",
+    "gateway",
+    "packages/*"
+  ],
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "build": "node scripts/build.js",
+    "test": "node scripts/test.js",
+    "setup": "node scripts/setup.js",
+    "generate-secret": "node scripts/generate-jwt-secret.js",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "docker:build": "docker-compose build",
+    "prisma:generate": "cd services/auth-service && npm run prisma:generate",
+    "prisma:migrate": "cd services/auth-service && npm run prisma:migrate",
+    "prisma:seed": "cd services/auth-service && npm run prisma:seed",
+    "prisma:studio": "cd services/auth-service && npm run prisma:studio"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}
