@@ -1,51 +1,14 @@
-import nodemailer from 'nodemailer';
 import axios from 'axios';
 import config from '../config';
 import logger from '../utils/logger';
 
 class EmailService {
-  private transporter: nodemailer.Transporter | null = null;
-  private useAPI: boolean = false;
-
   constructor() {
-    // Check if we should use ZeptoMail API instead of SMTP
+    // Check if ZeptoMail API is configured
     if (process.env.ZEPTO_API_URL && process.env.ZEPTO_API_KEY) {
-      this.useAPI = true;
-      logger.info('✅ Using ZeptoMail HTTP API (SMTP ports blocked)');
-    } else if (config.email.smtp.host && config.email.smtp.user) {
-      // Fallback to SMTP if API not configured
-      this.transporter = nodemailer.createTransport({
-        host: config.email.smtp.host,
-        port: config.email.smtp.port,
-        secure: false, // Use STARTTLS
-        auth: {
-          user: config.email.smtp.user,
-          pass: config.email.smtp.pass,
-        },
-        // Add timeout configurations to prevent long hangs
-        connectionTimeout: 10000, // 10 seconds
-        greetingTimeout: 5000,     // 5 seconds
-        socketTimeout: 10000,      // 10 seconds
-      });
-
-      // Verify connection
-      this.verifyConnection();
+      logger.info('✅ ZeptoMail API configured successfully');
     } else {
-      logger.warn('⚠️ No email configuration found');
-    }
-  }
-
-  /**
-   * Verify SMTP connection (only if using SMTP)
-   */
-  private async verifyConnection(): Promise<void> {
-    if (!this.transporter) return;
-    
-    try {
-      await this.transporter.verify();
-      logger.info('✅ Email service connected successfully');
-    } catch (error) {
-      logger.error('❌ Email service connection failed:', error);
+      logger.warn('⚠️ ZeptoMail API not configured - emails will not be sent');
     }
   }
 
@@ -73,24 +36,14 @@ class EmailService {
   }
 
   /**
-   * Send generic email
+   * Send generic email via ZeptoMail API
    */
   private async sendEmail(to: string, subject: string, html: string): Promise<void> {
-    if (this.useAPI) {
-      // Use ZeptoMail HTTP API
-      await this.sendEmailViaAPI(to, subject, html);
-    } else if (this.transporter) {
-      // Use SMTP
-      await this.sendEmailViaSMTP(to, subject, html);
-    } else {
-      logger.warn(`Email sending skipped (no service configured): ${subject} to ${to}`);
+    if (!process.env.ZEPTO_API_URL || !process.env.ZEPTO_API_KEY) {
+      logger.warn(`Email sending skipped (API not configured): ${subject} to ${to}`);
+      return;
     }
-  }
 
-  /**
-   * Send email via ZeptoMail HTTP API
-   */
-  private async sendEmailViaAPI(to: string, subject: string, html: string): Promise<void> {
     try {
       const payload = {
         from: {
@@ -108,7 +61,7 @@ class EmailService {
         htmlbody: html
       };
 
-      const response = await axios.post(process.env.ZEPTO_API_URL!, payload, {
+      const response = await axios.post(process.env.ZEPTO_API_URL, payload, {
         headers: {
           'Accept': 'application/json',
           'Content-Type': 'application/json',
@@ -126,25 +79,6 @@ class EmailService {
         response: error.response?.data
       });
       throw new Error('Failed to send email via API');
-    }
-  }
-
-  /**
-   * Send email via SMTP (fallback)
-   */
-  private async sendEmailViaSMTP(to: string, subject: string, html: string): Promise<void> {
-    try {
-      const info = await this.transporter!.sendMail({
-        from: `"${config.email.from.name}" <${config.email.from.email}>`,
-        to,
-        subject,
-        html,
-      });
-
-      logger.info(`Email sent successfully via SMTP to ${to}`, { messageId: info.messageId });
-    } catch (error) {
-      logger.error('Error sending email via SMTP:', error);
-      throw new Error('Failed to send email via SMTP');
     }
   }
 

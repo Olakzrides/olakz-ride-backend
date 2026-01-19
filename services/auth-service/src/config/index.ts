@@ -18,12 +18,6 @@ interface Config {
     resendLimitPerHour: number;
   };
   email: {
-    smtp: {
-      host: string;
-      port: number;
-      user: string;
-      pass: string;
-    };
     from: {
       email: string;
       name: string;
@@ -75,12 +69,6 @@ const config: Config = {
   },
 
   email: {
-    smtp: {
-      host: process.env.ZEPTO_SMTP_HOST || 'smtp.zeptomail.com',
-      port: parseInt(process.env.ZEPTO_SMTP_PORT || '587', 10),
-      user: process.env.ZEPTO_SMTP_USER || '',
-      pass: process.env.ZEPTO_SMTP_PASS || '',
-    },
     from: {
       email: process.env.ZEPTO_FROM_EMAIL || '',
       name: process.env.ZEPTO_FROM_NAME || 'Olakz Ride',
@@ -126,9 +114,9 @@ if (!config.jwt.secret) {
   throw new Error('JWT_SECRET is required');
 }
 
-// Only warn about SMTP if API is not configured
-if (!process.env.ZEPTO_API_URL && !config.email.smtp.pass) {
-  console.warn('⚠️  ZEPTO_SMTP_PASS not set - emails will not be sent');
+// Validate email API configuration
+if (!process.env.ZEPTO_API_URL || !process.env.ZEPTO_API_KEY) {
+  console.warn('⚠️  ZeptoMail API not configured - emails will not be sent');
 }
 
 if (!config.google.clientId || !config.google.clientSecret) {
