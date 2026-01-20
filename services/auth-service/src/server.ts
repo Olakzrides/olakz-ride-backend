@@ -5,6 +5,8 @@ import logger from './utils/logger';
 import config from './config';
 
 const PORT = config.port;
+const authBaseUrl =
+  process.env.AUTH_BASE_URL || `http://localhost:${PORT}`;
 
 // Start server
 const server = app.listen(PORT, () => {
@@ -13,7 +15,7 @@ const server = app.listen(PORT, () => {
   logger.info(`===========================================`);
   logger.info(`Environment: ${config.env}`);
   logger.info(`Port: ${PORT}`);
-  logger.info(`Auth URL: http://localhost:${PORT}`);
+  logger.info(`Auth URL: ${authBaseUrl}`);
   logger.info(`===========================================`);
   logger.info(`Database: ${config.supabase.url}`);
   logger.info(`JWT Expiry: Access ${config.jwt.accessTokenExpiry}, Refresh ${config.jwt.refreshTokenExpiry}`);
