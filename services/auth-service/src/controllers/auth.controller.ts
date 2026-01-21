@@ -10,7 +10,9 @@ class AuthController {
    */
   async register(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      console.log("Before.auth REGISTER BODY:", req.body);
       const result = await authService.register(req.body);
+      console.log("After.auth REGISTER BODY:", req.body);
       ResponseUtil.success(
         res,
         result,
@@ -18,6 +20,7 @@ class AuthController {
         201
       );
     } catch (error) {
+      console.error("REGISTER ERROR:", error);
       next(error);
     }
   }
