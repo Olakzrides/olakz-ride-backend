@@ -1,0 +1,452 @@
+{
+  "info": {
+    "name": "Olakz Platform Service API",
+    "description": "Complete API collection for testing Platform Service endpoints - Phase 4 Multi-Service Platform",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "variable": [
+    {
+      "key": "gateway_url",
+      "value": "http://localhost:3000",
+      "type": "string",
+      "description": "Gateway URL (recommended for testing)"
+    },
+    {
+      "key": "platform_direct_url",
+      "value": "http://localhost:3004",
+      "type": "string",
+      "description": "Direct platform service URL (for debugging)"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string",
+      "description": "JWT token from auth login"
+    },
+    {
+      "key": "user_id",
+      "value": "",
+      "type": "string",
+      "description": "User ID from auth login"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"platform.test@example.com\",\n  \"password\": \"password123\",\n  \"first_name\": \"Platform\",\n  \"last_name\": \"Tester\"\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/auth/register",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "auth", "register"]
+            },
+            "description": "Register a new user for testing platform service endpoints"
+          },
+          "response": []
+        },
+        {
+          "name": "Login User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.success && response.data.access_token) {",
+                  "        pm.collectionVariables.set('access_token', response.data.access_token);",
+                  "        pm.collectionVariables.set('user_id', response.data.user.id);",
+                  "        console.log('✅ Login successful - Token saved');",
+                  "        console.log('User ID:', response.data.user.id);",
+                  "    }",
+                  "} else {",
+                  "    console.log('❌ Login failed');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"platform.test@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/api/auth/login",
+              "host": ["{{gateway_url}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Login to get JWT token for authenticated endpoints"
+          },
+          "response": []
+        }
+      ],
+      "description": "Authentication endpoints for getting JWT tokens"
+    },
+    {
+      "name": "Platform Service - Public",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/health",
+              "host": ["{{gateway_url}}"],
+              "path": ["health"]
+            },
+            "description": "Check platform service health status"
+          },
+          "response": []
+        },
+        {
+          "name": "Service Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{platform_direct_url}}/",
+              "host": ["{{platform_direct_url}}"],
+              "path": [""]
+            },
+            "description": "Get platform service information and available endpoints"
+          },
+          "response": []
+        },
+        {
+          "name": "Store Initialization (Public)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has success field', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('success');",
+                  "    pm.expect(jsonData.success).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test('Response contains service channels', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.data).to.have.property('supported_sales_channels');",
+                  "    pm.expect(jsonData.data.supported_sales_channels).to.be.an('array');",
+                  "    pm.expect(jsonData.data.supported_sales_channels.length).to.be.greaterThan(0);",
+                  "});",
+                  "",
+                  "pm.test('Service channels have required fields', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    const channels = jsonData.data.supported_sales_channels;",
+                  "    ",
+                  "    channels.forEach(channel => {",
+                  "        pm.expect(channel).to.have.property('id');",
+                  "        pm.expect(channel).to.have.property('name');",
+                  "        pm.expect(channel).to.have.property('description');",
+                  "        pm.expect(channel).to.have.property('is_active');",
+                  "        pm.expect(channel).to.have.property('metadata');",
+                  "    });",
+                  "});",
+                  "",
+                  "console.log('📊 Service Channels Found:');",
+                  "const response = pm.response.json();",
+                  "response.data.supported_sales_channels.forEach((channel, index) => {",
+                  "    console.log(`${index + 1}. ${channel.name} - ${channel.description}`);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/store/init",
+              "host": ["{{gateway_url}}"],
+              "path": ["store", "init"]
+            },
+            "description": "Get store initialization data including all service channels, advertisements, and configuration. This endpoint is public and doesn't require authentication."
+          },
+          "response": []
+        }
+      ],
+      "description": "Public platform service endpoints that don't require authentication"
+    },
+    {
+      "name": "Platform Service - Authenticated",
+      "item": [
+        {
+          "name": "Track Service Selection",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Service selection tracked successfully', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('success');",
+                  "    pm.expect(jsonData.success).to.be.true;",
+                  "    pm.expect(jsonData.message).to.include('tracked successfully');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"service_channel_name\": \"mobile_ride_sc\",\n  \"user_location\": {\n    \"latitude\": 6.5244,\n    \"longitude\": 3.3792\n  },\n  \"metadata\": {\n    \"source\": \"homepage\",\n    \"device\": \"mobile\",\n    \"app_version\": \"1.0.0\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/services/select",
+              "host": ["{{gateway_url}}"],
+              "path": ["services", "select"]
+            },
+            "description": "Track when a user selects a service channel. Requires authentication to associate the selection with the user."
+          },
+          "response": []
+        },
+        {
+          "name": "Track Food Service Selection",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"service_channel_name\": \"mobile_food_sc\",\n  \"user_location\": {\n    \"latitude\": 6.5244,\n    \"longitude\": 3.3792\n  },\n  \"metadata\": {\n    \"source\": \"main_services\",\n    \"device\": \"web\",\n    \"referrer\": \"homepage\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/services/select",
+              "host": ["{{gateway_url}}"],
+              "path": ["services", "select"]
+            },
+            "description": "Example of tracking food service selection"
+          },
+          "response": []
+        },
+        {
+          "name": "Get User Service Context",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response contains service context', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('success');",
+                  "    pm.expect(jsonData.success).to.be.true;",
+                  "    pm.expect(jsonData.data).to.have.property('recentServices');",
+                  "    pm.expect(jsonData.data).to.have.property('totalServices');",
+                  "});",
+                  "",
+                  "console.log('👤 User Service Context:');",
+                  "const response = pm.response.json();",
+                  "console.log('Recent Services:', response.data.recentServices.length);",
+                  "console.log('Total Services Used:', response.data.totalServices);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/services/context",
+              "host": ["{{gateway_url}}"],
+              "path": ["services", "context"]
+            },
+            "description": "Get user's service usage context and history. Shows recently used services and total service count."
+          },
+          "response": []
+        }
+      ],
+      "description": "Platform service endpoints that require user authentication"
+    },
+    {
+      "name": "Service Channel Examples",
+      "item": [
+        {
+          "name": "Track Delivery Service",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"service_channel_name\": \"mobile_delivery_sc\",\n  \"user_location\": {\n    \"latitude\": 6.5244,\n    \"longitude\": 3.3792\n  },\n  \"metadata\": {\n    \"source\": \"main_services\",\n    \"device\": \"mobile\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/services/select",
+              "host": ["{{gateway_url}}"],
+              "path": ["services", "select"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Track Bills Service",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"service_channel_name\": \"mobile_bills_sc\",\n  \"user_location\": {\n    \"latitude\": 6.5244,\n    \"longitude\": 3.3792\n  },\n  \"metadata\": {\n    \"source\": \"main_services\",\n    \"bill_type\": \"airtime\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/services/select",
+              "host": ["{{gateway_url}}"],
+              "path": ["services", "select"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Track Auto Wash Service",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"service_channel_name\": \"mobile_auto_wash_sc\",\n  \"user_location\": {\n    \"latitude\": 6.5244,\n    \"longitude\": 3.3792\n  },\n  \"metadata\": {\n    \"source\": \"main_services\",\n    \"service_type\": \"premium_wash\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{gateway_url}}/services/select",
+              "host": ["{{gateway_url}}"],
+              "path": ["services", "select"]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Examples of tracking different service channel selections"
+    }
+  ]
+}

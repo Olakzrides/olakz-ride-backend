@@ -17,6 +17,11 @@ interface Config {
       healthCheck: string;
       timeout: number;
     };
+    platform: {
+      url: string;
+      healthCheck: string;
+      timeout: number;
+    };
   };
   cors: {
     allowedOrigins: string[];
@@ -50,6 +55,11 @@ const config: Config = {
     },
     payment: {
       url: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3002',
+      healthCheck: '/health',
+      timeout: parseInt(process.env.SERVICE_TIMEOUT || '10000', 10),
+    },
+    platform: {
+      url: process.env.PLATFORM_SERVICE_URL || 'http://localhost:3004',
       healthCheck: '/health',
       timeout: parseInt(process.env.SERVICE_TIMEOUT || '10000', 10),
     },

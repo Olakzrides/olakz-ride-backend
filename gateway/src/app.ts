@@ -64,6 +64,8 @@ app.get('/', (_req: Request, res: Response) => {
       tracking: '/api/tracking/*',
       pricing: '/api/pricing/*',
       payments: '/api/payments/*',
+      store: '/store/*',
+      services: '/services/*',
     },
   });
 });

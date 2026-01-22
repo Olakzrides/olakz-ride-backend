@@ -65,7 +65,7 @@ async function checkServiceHealth(
  * Check all services health
  */
 async function checkAllServicesHealth(): Promise<HealthStatus> {
-  const serviceNames = ['auth', 'logistics', 'payment'] as const;
+  const serviceNames = ['auth', 'logistics', 'payment', 'platform'] as const;
   const serviceResults: { [key: string]: ServiceHealth } = {};
 
   // Check all services in parallel

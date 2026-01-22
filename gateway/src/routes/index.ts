@@ -27,7 +27,9 @@ const createProxyOptions = (target: string, pathRewrite?: any): Options => ({
         ResponseUtil.serviceUnavailable(
           response,
           target.includes('3003') ? 'Auth' :
-          target.includes('3001') ? 'Logistics' : 'Payment',
+          target.includes('3001') ? 'Logistics' : 
+          target.includes('3002') ? 'Payment' :
+          target.includes('3004') ? 'Platform' : 'Unknown',
           'Service is not reachable. Please try again later.'
         );
       } else if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
@@ -52,12 +54,6 @@ const createProxyOptions = (target: string, pathRewrite?: any): Options => ({
 
   // Add custom headers
   onProxyReq: (proxyReq, req: any) => {
-    // Forward user information if available (from auth middleware)
-    if (req.user) {
-      proxyReq.setHeader('X-User-Id', req.user.id);
-      proxyReq.setHeader('X-User-Role', req.user.role);
-    }
-
     // If body has been parsed by express.json(), re-send it to the proxied service
     // This avoids issues where the body was consumed by the gateway and never forwarded
     if (req.body && Object.keys(req.body).length && ['POST','PUT','PATCH'].includes(req.method)) {
@@ -71,7 +67,7 @@ const createProxyOptions = (target: string, pathRewrite?: any): Options => ({
     logger.debug('Proxying request:', {
       method: req.method,
       path: req.url,
-      target,
+      target
     });
   },
 
@@ -154,6 +150,17 @@ export function setupRoutes(app: Application): void {
   app.use(
     '/api/payments',
     createProxyMiddleware(createProxyOptions(config.services.payment.url))
+  );
+
+  // Platform Service routes (no auth middleware - service handles its own auth)
+  app.use(
+    '/api/store',
+    createProxyMiddleware(createProxyOptions(config.services.platform.url))
+  );
+
+  app.use(
+    '/api/services',
+    createProxyMiddleware(createProxyOptions(config.services.platform.url))
   );
 
   logger.info('All proxy routes configured successfully');
