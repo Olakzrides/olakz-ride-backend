@@ -97,7 +97,7 @@ class StoreService {
       });
 
       // Transform service channels to match expected format (without products for now)
-      const supportedSalesChannels = serviceChannels.map((channel: any) => ({
+      const supportedSalesChannels: any[] = serviceChannels.map((channel: any) => ({
         id: channel.id,
         name: channel.name,
         description: channel.description,
@@ -132,7 +132,7 @@ class StoreService {
 
       // Filter main services (exclude ride and delivery for now)
       const mainServices = supportedSalesChannels.filter(
-        channel => !['mobile_ride_sc', 'mobile_delivery_sc'].includes(channel.name)
+        (channel: any) => !['mobile_ride_sc', 'mobile_delivery_sc'].includes(channel.name)
       );
 
       const storeData: StoreInitData = {
