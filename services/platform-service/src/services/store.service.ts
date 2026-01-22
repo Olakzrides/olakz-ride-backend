@@ -88,15 +88,26 @@ class StoreService {
     }
 
     try {
-      // Fetch service channels
-      const serviceChannels = await this.prisma.service_channels.findMany({
+      // Test database connection first
+      await this.prisma.$queryRaw`SELECT 1`;
+      logger.info('Database connection successful');
+
+      // Fetch service channels with their products using Prisma include
+      const serviceChannels = await (this.prisma.service_channels as any).findMany({
         where: { active: true },
+        include: {
+          products: {
+            where: { isActive: true }
+          }
+        },
         orderBy: [
           { rank: 'asc' }
         ]
       });
 
-      // Transform service channels to match expected format (without products for now)
+      logger.info('Service channels fetched', { count: serviceChannels.length });
+
+      // Transform service channels to match expected format with products
       const supportedSalesChannels: any[] = serviceChannels.map((channel: any) => ({
         id: channel.id,
         name: channel.name,
@@ -107,7 +118,16 @@ class StoreService {
           icon: channel.name,
           color: this.getServiceColor(channel.name)
         },
-        product: [] // Empty for now until products table is properly linked
+        product: channel.products.map((product: any) => ({
+          id: product.id,
+          handle: product.handle,
+          title: product.title,
+          subtitle: product.subtitle,
+          description: product.description,
+          thumbnail: product.thumbnail,
+          is_active: product.isActive,
+          metadata: product.metadata
+        }))
       }));
 
       // Fetch advertisements
@@ -117,6 +137,8 @@ class StoreService {
           { rank: 'asc' }
         ]
       });
+
+      logger.info('Advertisements fetched', { count: advertisements.length });
 
       // Transform advertisements
       const ads = advertisements.map((ad: any) => ({
@@ -153,15 +175,21 @@ class StoreService {
       logger.info('Store init data fetched successfully', {
         serviceChannels: supportedSalesChannels.length,
         advertisements: ads.length,
+        totalProducts: supportedSalesChannels.reduce((sum, channel) => sum + channel.product.length, 0),
         userId: userId || 'anonymous'
       });
 
       return storeData;
 
-    } catch (error) {
-      logger.error('Error fetching store init data:', error);
+    } catch (error: any) {
+      logger.error('Error fetching store init data:', {
+        error: error.message,
+        stack: error.stack,
+        userId: userId || 'anonymous'
+      });
       
       // Return fallback data
+      logger.warn('Falling back to hardcoded data due to database error');
       return this.getFallbackStoreData();
     }
   }
@@ -193,14 +221,50 @@ class StoreService {
     selectionData: ServiceSelectionData
   ): Promise<void> {
     try {
-      // TODO: Implement tracking once user_service_usages table is properly set up
-      logger.info('Service selection tracked (placeholder)', {
+      // Insert into user_service_usages table
+      await (this.prisma as any).user_service_usages.create({
+        data: {
+          userId: userId,
+          serviceChannelId: await this.getServiceChannelIdByName(selectionData.service_channel_name),
+          sessionData: {
+            user_location: selectionData.user_location,
+            metadata: selectionData.metadata,
+            timestamp: new Date().toISOString()
+          },
+          startedAt: new Date(),
+          lastActivityAt: new Date(),
+          isActive: true
+        }
+      });
+
+      // Also track in analytics table
+      await (this.prisma as any).service_analytics.create({
+        data: {
+          serviceChannelId: await this.getServiceChannelIdByName(selectionData.service_channel_name),
+          userId: userId,
+          eventType: 'service_selected',
+          eventData: {
+            service_name: selectionData.service_channel_name,
+            user_location: selectionData.user_location,
+            metadata: selectionData.metadata
+          },
+          timestamp: new Date(),
+          userAgent: selectionData.metadata?.userAgent,
+          ipAddress: selectionData.metadata?.ip
+        }
+      });
+
+      logger.info('Service selection tracked successfully', {
         userId,
         serviceName: selectionData.service_channel_name
       });
 
-    } catch (error) {
-      logger.error('Error tracking service selection:', error);
+    } catch (error: any) {
+      logger.error('Error tracking service selection:', {
+        error: error.message,
+        userId,
+        serviceName: selectionData.service_channel_name
+      });
       // Don't throw error - tracking is not critical
     }
   }
@@ -210,13 +274,55 @@ class StoreService {
    */
   async getUserServiceContext(userId: string): Promise<any> {
     try {
-      // TODO: Implement once user_service_usages table is properly set up
-      return { recentServices: [], totalServices: 0 };
+      // Get recent service usages
+      const recentUsages = await (this.prisma as any).user_service_usages.findMany({
+        where: { 
+          userId: userId,
+          isActive: true 
+        },
+        include: {
+          service_channels: true
+        },
+        orderBy: { lastActivityAt: 'desc' },
+        take: 10
+      });
 
-    } catch (error) {
-      logger.error('Error fetching user service context:', error);
+      // Transform to expected format
+      const recentServices = recentUsages.map((usage: any) => ({
+        id: usage.id,
+        service_name: usage.service_channels.name,
+        service_description: usage.service_channels.description,
+        last_used: usage.lastActivityAt,
+        session_data: usage.sessionData
+      }));
+
+      return { 
+        recentServices,
+        totalServices: recentUsages.length 
+      };
+
+    } catch (error: any) {
+      logger.error('Error fetching user service context:', {
+        error: error.message,
+        userId
+      });
       return { recentServices: [], totalServices: 0 };
     }
+  }
+
+  /**
+   * Helper method to get service channel ID by name
+   */
+  private async getServiceChannelIdByName(serviceName: string): Promise<string> {
+    const channel = await this.prisma.service_channels.findFirst({
+      where: { name: serviceName }
+    });
+    
+    if (!channel) {
+      throw new Error(`Service channel not found: ${serviceName}`);
+    }
+    
+    return channel.id;
   }
 
   /**
