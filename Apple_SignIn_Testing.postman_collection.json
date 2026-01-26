@@ -1,0 +1,197 @@
+{
+  "info": {
+    "name": "Apple Sign-In Testing",
+    "description": "Collection for testing Apple Sign-In endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Apple Sign-In",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"authorization_code\": \"mock_authorization_code_from_apple\",\n  \"user_info\": {\n    \"name\": {\n      \"firstName\": \"John\",\n      \"lastName\": \"Doe\"\n    },\n    \"email\": \"john.doe@example.com\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{BASE_URL}}/api/auth/apple/signin",
+          "host": [
+            "{{BASE_URL}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "apple",
+            "signin"
+          ]
+        },
+        "description": "Test Apple Sign-In with authorization code"
+      },
+      "response": []
+    },
+    {
+      "name": "Apple Sign-In (No Email)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"authorization_code\": \"mock_authorization_code_from_apple\",\n  \"user_info\": {\n    \"name\": {\n      \"firstName\": \"Jane\",\n      \"lastName\": \"Smith\"\n    }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{BASE_URL}}/api/auth/apple/signin",
+          "host": [
+            "{{BASE_URL}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "apple",
+            "signin"
+          ]
+        },
+        "description": "Test Apple Sign-In without email (user chose to hide email)"
+      },
+      "response": []
+    },
+    {
+      "name": "Apple Sign-In (Minimal Data)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"authorization_code\": \"mock_authorization_code_from_apple\"\n}"
+        },
+        "url": {
+          "raw": "{{BASE_URL}}/api/auth/apple/signin",
+          "host": [
+            "{{BASE_URL}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "apple",
+            "signin"
+          ]
+        },
+        "description": "Test Apple Sign-In with minimal data (only authorization code)"
+      },
+      "response": []
+    },
+    {
+      "name": "Apple OAuth Callback",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{BASE_URL}}/api/auth/apple/callback?code=mock_authorization_code&state=optional_state",
+          "host": [
+            "{{BASE_URL}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "apple",
+            "callback"
+          ],
+          "query": [
+            {
+              "key": "code",
+              "value": "mock_authorization_code"
+            },
+            {
+              "key": "state",
+              "value": "optional_state"
+            }
+          ]
+        },
+        "description": "Test Apple OAuth callback (web-based flow)"
+      },
+      "response": []
+    },
+    {
+      "name": "Invalid Authorization Code",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"authorization_code\": \"invalid_code\",\n  \"user_info\": {\n    \"name\": {\n      \"firstName\": \"Test\",\n      \"lastName\": \"User\"\n    },\n    \"email\": \"test@example.com\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{BASE_URL}}/api/auth/apple/signin",
+          "host": [
+            "{{BASE_URL}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "apple",
+            "signin"
+          ]
+        },
+        "description": "Test with invalid authorization code to verify error handling"
+      },
+      "response": []
+    },
+    {
+      "name": "Missing Authorization Code",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_info\": {\n    \"name\": {\n      \"firstName\": \"Test\",\n      \"lastName\": \"User\"\n    },\n    \"email\": \"test@example.com\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{BASE_URL}}/api/auth/apple/signin",
+          "host": [
+            "{{BASE_URL}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "apple",
+            "signin"
+          ]
+        },
+        "description": "Test validation error when authorization code is missing"
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "BASE_URL",
+      "value": "https://olakzride.duckdns.org",
+      "type": "string"
+    }
+  ]
+}

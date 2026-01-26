@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import authService from '../services/auth.service';
 import tokenService from '../services/token.service';
 import googleService from '../services/google.service';
+import appleService from '../services/apple.service';
 import ResponseUtil from '../utils/response';
 
 class AuthController {
@@ -153,6 +154,38 @@ class AuthController {
     try {
       const result = await googleService.verifyGoogleToken(req.body.googleToken);
       ResponseUtil.success(res, result, 'Google authentication successful');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Apple Sign-In - Handle authorization code (for mobile/web apps)
+   */
+  async appleSignIn(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await appleService.handleAppleSignIn(req.body);
+      ResponseUtil.success(res, result, 'Apple authentication successful');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Apple Sign-In - Handle callback (for web-based flow)
+   */
+  async appleCallback(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { code, state } = req.query;
+      if (!code || typeof code !== 'string') {
+        throw new Error('Authorization code not provided');
+      }
+
+      const result = await appleService.handleCallback(code, state as string);
+
+      // Redirect to frontend with tokens (in production, use proper redirect)
+      const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/callback?accessToken=${result.accessToken}&refreshToken=${result.refreshToken}`;
+      res.redirect(redirectUrl);
     } catch (error) {
       next(error);
     }

@@ -28,6 +28,14 @@ interface Config {
     clientSecret: string;
     redirectUri: string;
   };
+  apple: {
+    teamId: string;
+    keyId: string;
+    privateKey: string;
+    serviceId: string;
+    bundleId: string;
+    redirectUri: string;
+  };
   rateLimit: {
     registrationPerHour: number;
     loginFailureLimit: number;
@@ -81,6 +89,15 @@ const config: Config = {
     redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3003/api/auth/google/callback',
   },
 
+  apple: {
+    teamId: process.env.APPLE_TEAM_ID || '',
+    keyId: process.env.APPLE_KEY_ID || '',
+    privateKey: process.env.APPLE_PRIVATE_KEY || '',
+    serviceId: process.env.APPLE_SERVICE_ID || '',
+    bundleId: process.env.APPLE_BUNDLE_ID || '',
+    redirectUri: process.env.APPLE_REDIRECT_URI || 'https://olakzride.duckdns.org/api/auth/apple/callback',
+  },
+
   rateLimit: {
     registrationPerHour: parseInt(process.env.REGISTRATION_RATE_LIMIT || '5', 10),
     loginFailureLimit: parseInt(process.env.LOGIN_RATE_LIMIT || '5', 10),
@@ -121,6 +138,10 @@ if (!process.env.ZEPTO_API_URL || !process.env.ZEPTO_API_KEY) {
 
 if (!config.google.clientId || !config.google.clientSecret) {
   console.warn('⚠️  Google OAuth credentials not set - Google login disabled');
+}
+
+if (!config.apple.teamId || !config.apple.keyId || !config.apple.privateKey) {
+  console.warn('⚠️  Apple Sign-In credentials not set - Apple login disabled');
 }
 
 export default config;

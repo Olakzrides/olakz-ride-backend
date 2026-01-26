@@ -111,3 +111,18 @@ export const googleTokenValidator = {
     }),
   }),
 };
+
+export const appleSignInValidator = {
+  body: Joi.object({
+    authorization_code: Joi.string().required().messages({
+      'any.required': 'Apple authorization code is required',
+    }),
+    user_info: Joi.object({
+      name: Joi.object({
+        firstName: Joi.string().optional(),
+        lastName: Joi.string().optional(),
+      }).optional(),
+      email: Joi.string().email().optional(),
+    }).optional(),
+  }),
+};

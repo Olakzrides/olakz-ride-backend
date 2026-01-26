@@ -103,6 +103,12 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.auth.url))
   );
 
+  // Apple Sign-In routes (proxied to auth service)
+  app.use(
+    '/api/auth/apple',
+    createProxyMiddleware(createProxyOptions(config.services.auth.url))
+  );
+
   // Logistics Service routes - Phase 1 (Ride Booking)
   app.use(
     '/api/ride',

@@ -10,6 +10,7 @@ import {
   forgotPasswordValidator,
   resetPasswordValidator,
   googleTokenValidator,
+  appleSignInValidator,
 } from '../validators/auth.validator';
 
 const router = Router();
@@ -32,5 +33,9 @@ router.post('/reset-password', validateRequest(resetPasswordValidator), authCont
 router.get('/google', authController.googleAuth);
 router.get('/google/callback', authController.googleCallback);
 router.post('/google/verify', validateRequest(googleTokenValidator), authController.googleVerify);
+
+// Apple Sign-In
+router.post('/apple/signin', validateRequest(appleSignInValidator), authController.appleSignIn);
+router.get('/apple/callback', authController.appleCallback);
 
 export default router;
