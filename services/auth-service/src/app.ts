@@ -55,6 +55,8 @@ app.get('/', (_req: Request, res: Response) => {
       verifyEmail: 'POST /api/auth/verify-email',
       login: 'POST /api/auth/login',
       google: 'GET /api/auth/google',
+      appleSignIn: 'POST /api/auth/apple/signin',
+      appleCallback: 'GET /api/auth/apple/callback',
       profile: 'GET /api/users/me (requires auth)',
     },
   });

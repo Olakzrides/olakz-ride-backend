@@ -153,10 +153,10 @@ const handleAppleSignIn = async () => {
 ### Environment Variables
 ```bash
 # Apple Sign-In Configuration
-APPLE_TEAM_ID=A4ZWJ6FJ23
-APPLE_KEY_ID=W9477G3VC9
-APPLE_SERVICE_ID=com.olakzride.service
-APPLE_BUNDLE_ID=com.olakz.olakzride
+APPLE_TEAM_ID=TEAM-ID
+APPLE_KEY_ID=KEY-ID
+APPLE_SERVICE_ID=SERVICE
+APPLE_BUNDLE_ID=BUDLE-ID
 APPLE_REDIRECT_URI=https://olakzride.duckdns.org/api/auth/apple/callback
 APPLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 ```

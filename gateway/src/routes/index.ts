@@ -90,6 +90,12 @@ const createProxyOptions = (target: string, pathRewrite?: any): Options => ({
  * Setup all proxy routes
  */
 export function setupRoutes(app: Application): void {
+  // Apple Sign-In routes (MUST come before general /api/auth route)
+  app.use(
+    '/api/auth/apple',
+    createProxyMiddleware(createProxyOptions(config.services.auth.url))
+  );
+
   // Auth Service routes (with stricter rate limiting)
   app.use(
     '/api/auth',
@@ -100,12 +106,6 @@ export function setupRoutes(app: Application): void {
   // User Service routes (proxied to auth service)
   app.use(
     '/api/users',
-    createProxyMiddleware(createProxyOptions(config.services.auth.url))
-  );
-
-  // Apple Sign-In routes (proxied to auth service)
-  app.use(
-    '/api/auth/apple',
     createProxyMiddleware(createProxyOptions(config.services.auth.url))
   );
 
