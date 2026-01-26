@@ -93,7 +93,7 @@ class StoreService {
       logger.info('Database connection successful');
 
       // Fetch service channels with their products using Prisma include
-      const serviceChannels = await (this.prisma.service_channels as any).findMany({
+      const serviceChannels = await this.prisma.service_channels.findMany({
         where: { active: true },
         include: {
           products: {
@@ -222,7 +222,7 @@ class StoreService {
   ): Promise<void> {
     try {
       // Insert into user_service_usages table
-      await (this.prisma as any).user_service_usages.create({
+      await this.prisma.user_service_usages.create({
         data: {
           userId: userId,
           serviceChannelId: await this.getServiceChannelIdByName(selectionData.service_channel_name),
@@ -238,7 +238,7 @@ class StoreService {
       });
 
       // Also track in analytics table
-      await (this.prisma as any).service_analytics.create({
+      await this.prisma.service_analytics.create({
         data: {
           serviceChannelId: await this.getServiceChannelIdByName(selectionData.service_channel_name),
           userId: userId,
@@ -275,7 +275,7 @@ class StoreService {
   async getUserServiceContext(userId: string): Promise<any> {
     try {
       // Get recent service usages
-      const recentUsages = await (this.prisma as any).user_service_usages.findMany({
+      const recentUsages = await this.prisma.user_service_usages.findMany({
         where: { 
           userId: userId,
           isActive: true 
