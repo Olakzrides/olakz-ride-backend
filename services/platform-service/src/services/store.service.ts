@@ -71,7 +71,9 @@ class StoreService {
   private prisma: PrismaClient;
 
   constructor() {
-    this.prisma = Database.getInstance();
+    this.prisma = new PrismaClient({
+      log: ['error', 'warn'],
+    });
   }
 
   /**
@@ -93,6 +95,7 @@ class StoreService {
       logger.info('Database connection successful');
 
       // Fetch service channels with their products using Prisma include
+      logger.info('Fetching service channels...');
       const serviceChannels = await this.prisma.service_channels.findMany({
         where: { active: true },
         include: {
@@ -104,6 +107,7 @@ class StoreService {
           { rank: 'asc' }
         ]
       });
+      logger.info('Service channels query completed', { count: serviceChannels.length });
 
       logger.info('Service channels fetched', { count: serviceChannels.length });
 
@@ -131,12 +135,14 @@ class StoreService {
       }));
 
       // Fetch advertisements
+      logger.info('Fetching advertisements...');
       const advertisements = await this.prisma.advertisements.findMany({
         where: { active: true },
         orderBy: [
           { rank: 'asc' }
         ]
       });
+      logger.info('Advertisements query completed', { count: advertisements.length });
 
       logger.info('Advertisements fetched', { count: advertisements.length });
 
@@ -185,6 +191,8 @@ class StoreService {
       logger.error('Error fetching store init data:', {
         error: error.message,
         stack: error.stack,
+        code: error.code,
+        meta: error.meta,
         userId: userId || 'anonymous'
       });
       
