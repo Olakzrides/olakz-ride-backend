@@ -1,7 +1,10 @@
 import dotenv from 'dotenv';
+import path from 'path';
 
-// Load environment variables FIRST
-dotenv.config();
+// Load environment variables FIRST - explicitly specify path
+dotenv.config({ 
+  path: path.resolve(__dirname, '../.env')
+});
 
 import app from './app';
 import config from './config';

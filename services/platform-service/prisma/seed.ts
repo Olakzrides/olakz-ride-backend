@@ -109,10 +109,10 @@ async function main() {
   if (rideChannelResult.length > 0) {
     const rideChannelId = rideChannelResult[0].id;
     await prisma.$executeRaw`
-      INSERT INTO products (serviceChannelId, handle, title, subtitle, description, thumbnail, metadata)
+      INSERT INTO products ("serviceChannelId", handle, title, subtitle, description, thumbnail, metadata)
       VALUES 
-        (${rideChannelId}, 'standard-ride', 'Standard Ride', 'Affordable rides for everyone', 'Book a standard ride with professional drivers', '/images/products/standard-ride.png', '{"basePrice": 500, "currency": "NGN"}'),
-        (${rideChannelId}, 'premium-ride', 'Premium Ride', 'Luxury rides with premium vehicles', 'Experience comfort with our premium ride service', '/images/products/premium-ride.png', '{"basePrice": 1000, "currency": "NGN"}')
+        (${rideChannelId}::uuid, 'standard-ride', 'Standard Ride', 'Affordable rides for everyone', 'Book a standard ride with professional drivers', '/images/products/standard-ride.png', '{"basePrice": 500, "currency": "NGN"}'),
+        (${rideChannelId}::uuid, 'premium-ride', 'Premium Ride', 'Luxury rides with premium vehicles', 'Experience comfort with our premium ride service', '/images/products/premium-ride.png', '{"basePrice": 1000, "currency": "NGN"}')
     `;
     console.log('✅ Created ride service products');
   }
@@ -120,10 +120,10 @@ async function main() {
   if (foodChannelResult.length > 0) {
     const foodChannelId = foodChannelResult[0].id;
     await prisma.$executeRaw`
-      INSERT INTO products (serviceChannelId, handle, title, subtitle, description, thumbnail, metadata)
+      INSERT INTO products ("serviceChannelId", handle, title, subtitle, description, thumbnail, metadata)
       VALUES 
-        (${foodChannelId}, 'restaurant-delivery', 'Restaurant Delivery', 'Order from your favorite restaurants', 'Get food delivered from top restaurants in your area', '/images/products/restaurant-delivery.png', '{"deliveryFee": 200, "currency": "NGN"}'),
-        (${foodChannelId}, 'grocery-delivery', 'Grocery Delivery', 'Fresh groceries delivered to your door', 'Order groceries and get them delivered within hours', '/images/products/grocery-delivery.png', '{"deliveryFee": 300, "currency": "NGN"}')
+        (${foodChannelId}::uuid, 'restaurant-delivery', 'Restaurant Delivery', 'Order from your favorite restaurants', 'Get food delivered from top restaurants in your area', '/images/products/restaurant-delivery.png', '{"deliveryFee": 200, "currency": "NGN"}'),
+        (${foodChannelId}::uuid, 'grocery-delivery', 'Grocery Delivery', 'Fresh groceries delivered to your door', 'Order groceries and get them delivered within hours', '/images/products/grocery-delivery.png', '{"deliveryFee": 300, "currency": "NGN"}')
     `;
     console.log('✅ Created food service products');
   }
@@ -164,7 +164,7 @@ async function main() {
       await prisma.$executeRaw`
         UPDATE advertisements 
         SET title = ${ad.title}, description = ${ad.description}, image_url = ${ad.image_url}, link_url = ${ad.link_url}, rank = ${ad.rank}
-        WHERE id = ${existingAd.id}
+        WHERE id = ${existingAd.id}::uuid
       `;
       console.log(`✅ Updated advertisement: ${ad.title}`);
     }
@@ -185,9 +185,9 @@ async function main() {
   for (const channel of allChannels) {
     for (const region of regions) {
       await prisma.$executeRaw`
-        INSERT INTO service_regions (serviceChannelId, regionCode, regionName, isAvailable, metadata)
-        VALUES (${channel.id}, ${region.code}, ${region.name}, true, '{"timezone": "Africa/Lagos", "currency": "NGN"}')
-        ON CONFLICT (serviceChannelId, regionCode) DO NOTHING
+        INSERT INTO service_regions ("serviceChannelId", "regionCode", "regionName", "isAvailable", metadata)
+        VALUES (${channel.id}::uuid, ${region.code}, ${region.name}, true, '{"timezone": "Africa/Lagos", "currency": "NGN"}')
+        ON CONFLICT ("serviceChannelId", "regionCode") DO NOTHING
       `;
     }
   }
