@@ -1,11 +1,12 @@
 import dotenv from 'dotenv';
+
+// Load environment variables FIRST
+dotenv.config();
+
 import app from './app';
 import config from './config';
 import logger from './utils/logger';
 import Database from './utils/database';
-
-// Load environment variables
-dotenv.config();
 
 // Graceful shutdown handler
 const gracefulShutdown = async (signal: string) => {
