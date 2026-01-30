@@ -14,6 +14,10 @@ services/*/.env.local
 gateway/.env
 gateway/.env.local
 
+# PM2 Ecosystem (contains secrets)
+ecosystem.config.js
+services/*/ecosystem.config.js
+
 # Logs
 logs/
 *.log
