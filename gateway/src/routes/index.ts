@@ -131,6 +131,12 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))
   );
 
+  // Phase 2: Driver Registration routes (Multi-step registration flow)
+  app.use(
+    '/api/driver-registration',
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+  );
+
   // Legacy logistics routes (for future phases)
   app.use(
     '/api/deliveries',

@@ -28,10 +28,45 @@ model Region {
   @@map("regions")
 }
 
-// Vehicle types (Standard, Premium, VIP)
+// Service types (ride, delivery)
+model ServiceType {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique @db.VarChar(50) // 'ride', 'delivery'
+  displayName String   @map("display_name") @db.VarChar(100)
+  description String?  @db.Text
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  vehicleServiceCapabilities VehicleServiceCapability[]
+
+  @@index([isActive])
+  @@map("service_types")
+}
+
+// Vehicle-Service capability mapping
+model VehicleServiceCapability {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicleTypeId String      @map("vehicle_type_id") @db.Uuid
+  serviceTypeId String      @map("service_type_id") @db.Uuid
+  isAvailable   Boolean     @default(true) @map("is_available")
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  vehicleType   VehicleType @relation(fields: [vehicleTypeId], references: [id], onDelete: Cascade)
+  serviceType   ServiceType @relation(fields: [serviceTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([vehicleTypeId, serviceTypeId])
+  @@index([vehicleTypeId])
+  @@index([serviceTypeId])
+  @@map("vehicle_service_capabilities")
+}
+
+// Vehicle types (Standard, Premium, VIP) - Enhanced with requirements
 model VehicleType {
   id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name             String        @db.VarChar(50)
+  displayName      String        @map("display_name") @db.VarChar(100)
   description      String?       @db.Text
   baseFarePerKm    Decimal       @map("base_fare_per_km") @db.Decimal(10, 2)
   baseFarePerMinute Decimal      @default(0) @map("base_fare_per_minute") @db.Decimal(10, 2)
@@ -39,6 +74,12 @@ model VehicleType {
   capacity         Int           @default(4)
   iconUrl          String?       @map("icon_url") @db.Text
   isActive         Boolean       @default(true) @map("is_active")
+  
+  // Requirements matrix
+  licenseRequired     Boolean @default(true) @map("license_required")
+  insuranceRequired   Boolean @default(true) @map("insurance_required")
+  registrationRequired Boolean @default(true) @map("registration_required")
+  
   metadata         Json          @default("{}")
   createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
 
@@ -46,6 +87,7 @@ model VehicleType {
   rideVariants     RideVariant[]
   drivers          Driver[]
   driverVehicles   DriverVehicle[]
+  serviceCapabilities VehicleServiceCapability[]
 
   @@index([isActive])
   @@index([name])
@@ -452,4 +494,42 @@ model DriverLocation {
   @@index([driverId])
   @@index([createdAt])
   @@map("driver_locations")
+}
+
+// ============================================
+// PHASE 2: DRIVER REGISTRATION SESSIONS
+// ============================================
+
+// Multi-step driver registration sessions
+model DriverRegistrationSession {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                     String    @map("user_id") @db.Uuid
+  vehicleType                String    @map("vehicle_type") @db.VarChar(50)
+  serviceTypes               String[]  @map("service_types")
+  status                     String    @default("initiated") @db.VarChar(20)
+  progressPercentage         Int       @default(0) @map("progress_percentage")
+  currentStep                String    @default("personal_info") @map("current_step") @db.VarChar(30)
+  expiresAt                  DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Step completion tracking
+  personalInfoCompletedAt    DateTime? @map("personal_info_completed_at") @db.Timestamptz(6)
+  vehicleDetailsCompletedAt  DateTime? @map("vehicle_details_completed_at") @db.Timestamptz(6)
+  documentsCompletedAt       DateTime? @map("documents_completed_at") @db.Timestamptz(6)
+  submittedAt                DateTime? @map("submitted_at") @db.Timestamptz(6)
+
+  // Step data (JSON for flexibility)
+  personalInfoData           Json?     @map("personal_info_data") @db.JsonB
+  vehicleDetailsData         Json?     @map("vehicle_details_data") @db.JsonB
+  documentsData              Json?     @map("documents_data") @db.JsonB
+
+  // Metadata
+  metadata                   Json      @default("{}") @db.JsonB
+
+  @@index([userId])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([createdAt])
+  @@map("driver_registration_sessions")
 }

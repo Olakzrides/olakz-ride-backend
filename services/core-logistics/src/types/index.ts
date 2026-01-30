@@ -1,3 +1,51 @@
+// ============================================
+// PHASE 1: SERVICE ARCHITECTURE TYPES
+// ============================================
+
+export interface ServiceType {
+  id: string;
+  name: string;
+  displayName: string;
+  description?: string;
+  isActive: boolean;
+}
+
+export interface VehicleServiceCapability {
+  vehicleTypeId: string;
+  serviceTypeId: string;
+  isAvailable: boolean;
+}
+
+export interface VehicleTypeWithServices {
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  capacity: number;
+  iconUrl: string;
+  availableServices: string[];
+  requirements: {
+    licenseRequired: boolean;
+    insuranceRequired: boolean;
+    registrationRequired: boolean;
+  };
+}
+
+export interface ServiceValidationRequest {
+  vehicleType: string;
+  serviceTypes: string[];
+}
+
+export interface ServiceValidationResult {
+  isValid: boolean;
+  error?: string;
+  allowedServices?: string[];
+}
+
+// ============================================
+// LOCATION AND CART TYPES
+// ============================================
+
 // Location types
 export interface Location {
   latitude: number;
@@ -131,6 +179,7 @@ export interface ApiResponse<T = any> {
   data?: T;
   error?: string;
   message?: string;
+  timestamp?: string;
 }
 
 export interface PaginatedResponse<T> {
