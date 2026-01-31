@@ -27,15 +27,10 @@ export class DriverRegistrationController {
     this.comprehensiveValidationService = new ComprehensiveValidationService();
   }
 
-  /**
-   * Get all vehicle types with service capabilities
-   * GET /api/driver-registration/vehicle-types
-   */
   getVehicleTypes = async (_req: Request, res: Response): Promise<void> => {
     try {
       const vehicleTypes = await this.vehicleTypeService.getVehicleTypesWithServices();
 
-      // Transform to match frontend expectation exactly
       const response = {
         vehicle_types: vehicleTypes.map(vt => ({
           id: vt.id,
@@ -57,9 +52,6 @@ export class DriverRegistrationController {
     }
   };
 
-  /**
-   * Validate vehicle-service combination
-   */
   validateVehicleService = async (
     vehicleType: string,
     serviceTypes: string[]
@@ -98,9 +90,6 @@ export class DriverRegistrationController {
     }
   };
 
-  /**
-   * Get document requirements for vehicle type
-   */
   getDocumentRequirements = async (req: Request, res: Response): Promise<void> => {
     try {
       const { id: sessionId } = req.params;
@@ -130,9 +119,6 @@ export class DriverRegistrationController {
     }
   };
 
-  /**
-   * Get form configuration for vehicle type
-   */
   getVehicleFormConfig = async (req: Request, res: Response): Promise<void> => {
     try {
       const { vehicleType } = req.params;
@@ -149,9 +135,6 @@ export class DriverRegistrationController {
     }
   };
 
-  /**
-   * Initiate driver registration session (Enhanced Phase 4)
-   */
   initiateRegistration = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const { vehicle_type, service_types } = req.body;
@@ -220,9 +203,6 @@ export class DriverRegistrationController {
     }
   };
 
-  /**
-   * Submit personal information (Enhanced Phase 4)
-   */
   submitPersonalInfo = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const { id: sessionId } = req.params;

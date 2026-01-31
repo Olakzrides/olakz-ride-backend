@@ -16,10 +16,10 @@ router.get('/vehicle-types', driverRegistrationController.getVehicleTypes);
 // Phase 3: Vehicle-specific form configuration (PUBLIC)
 router.get('/vehicle-types/:vehicleType/form-config', driverRegistrationController.getVehicleFormConfig);
 
-// Phase 1: Document Requirements (temporary endpoint for testing)
+// Document Requirements (temporary endpoint for testing)
 router.get('/register/:registrationId/documents/requirements', driverRegistrationController.getDocumentRequirements);
 
-// Phase 2: Multi-step registration endpoints (AUTHENTICATED + RATE LIMITED)
+// Multi-step registration endpoints (AUTHENTICATED + RATE LIMITED)
 router.post('/register/initiate', 
   authenticate, 
   strictRegistrationRateLimit.strictInitiationLimit, 

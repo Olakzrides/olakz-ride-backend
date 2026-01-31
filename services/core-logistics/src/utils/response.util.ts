@@ -29,9 +29,6 @@ export class ResponseUtil {
     return res.status(statusCode).json(response);
   }
 
-  /**
-   * Enhanced error response with standardized error codes
-   */
   static standardizedError(
     res: Response, 
     errorCode: DriverRegistrationErrorCode, 
@@ -63,9 +60,6 @@ export class ResponseUtil {
     return res.status(statusCode).json(response);
   }
 
-  /**
-   * Validation error response with multiple field errors
-   */
   static validationError(
     res: Response,
     validationErrors: ValidationError[],
@@ -87,9 +81,6 @@ export class ResponseUtil {
     return res.status(400).json(response);
   }
 
-  /**
-   * Session-related errors
-   */
   static sessionNotFound(res: Response, requestId?: string): Response {
     return this.standardizedError(
       res, 
@@ -123,9 +114,6 @@ export class ResponseUtil {
     );
   }
 
-  /**
-   * Authentication and authorization errors
-   */
   static authenticationRequired(res: Response): Response {
     return this.standardizedError(res, DriverRegistrationErrorCode.UNAUTHORIZED);
   }
@@ -142,9 +130,6 @@ export class ResponseUtil {
     return this.standardizedError(res, DriverRegistrationErrorCode.TOKEN_EXPIRED);
   }
 
-  /**
-   * Vehicle and service validation errors
-   */
   static invalidVehicleType(res: Response, vehicleType: string): Response {
     return this.standardizedError(
       res,
@@ -175,9 +160,6 @@ export class ResponseUtil {
     );
   }
 
-  /**
-   * Step flow validation errors
-   */
   static stepOutOfOrder(res: Response, currentStep: string, requiredStep: string): Response {
     return this.standardizedError(
       res,
@@ -201,9 +183,6 @@ export class ResponseUtil {
     );
   }
 
-  /**
-   * Business logic errors
-   */
   static duplicateRegistration(res: Response, userId: string): Response {
     return this.standardizedError(
       res,
@@ -234,9 +213,6 @@ export class ResponseUtil {
     );
   }
 
-  /**
-   * Rate limiting and system errors
-   */
   static rateLimitExceeded(res: Response, retryAfter?: number): Response {
     return this.standardizedError(
       res,

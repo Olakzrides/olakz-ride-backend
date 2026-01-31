@@ -1,4 +1,4 @@
-// Phase 4: Standardized Error Codes and Types
+// Standardized Error Codes and Types
 
 export enum DriverRegistrationErrorCode {
   // Authentication & Authorization

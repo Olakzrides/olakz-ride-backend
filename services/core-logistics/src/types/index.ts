@@ -1,6 +1,4 @@
-// ============================================
-// PHASE 1: SERVICE ARCHITECTURE TYPES
-// ============================================
+// SERVICE ARCHITECTURE TYPES
 
 export interface ServiceType {
   id: string;
@@ -42,9 +40,7 @@ export interface ServiceValidationResult {
   allowedServices?: string[];
 }
 
-// ============================================
 // LOCATION AND CART TYPES
-// ============================================
 
 // Location types
 export interface Location {
@@ -192,9 +188,7 @@ export interface PaginatedResponse<T> {
   };
 }
 
-// ============================================
-// PHASE 2: DRIVER TYPES
-// ============================================
+// DRIVER TYPES
 
 export interface DriverRegistrationRequest {
   identificationType: 'drivers_license' | 'national_id' | 'passport';
