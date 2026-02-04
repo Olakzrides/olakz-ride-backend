@@ -40,6 +40,7 @@ export enum DriverRegistrationErrorCode {
   DOCUMENT_SIZE_EXCEEDED = 'DOCUMENT_SIZE_EXCEEDED',
   DOCUMENT_EXPIRED = 'DOCUMENT_EXPIRED',
   DOCUMENT_UPLOAD_FAILED = 'DOCUMENT_UPLOAD_FAILED',
+  DOCUMENT_TYPE_INVALID = 'DOCUMENT_TYPE_INVALID',
   INSUFFICIENT_DOCUMENTS = 'INSUFFICIENT_DOCUMENTS',
 
   // Step Flow Errors
@@ -122,6 +123,7 @@ export const ErrorMessages: Record<DriverRegistrationErrorCode, string> = {
   [DriverRegistrationErrorCode.DOCUMENT_SIZE_EXCEEDED]: 'Document size exceeds maximum allowed.',
   [DriverRegistrationErrorCode.DOCUMENT_EXPIRED]: 'Document has expired.',
   [DriverRegistrationErrorCode.DOCUMENT_UPLOAD_FAILED]: 'Document upload failed.',
+  [DriverRegistrationErrorCode.DOCUMENT_TYPE_INVALID]: 'Invalid document type provided.',
   [DriverRegistrationErrorCode.INSUFFICIENT_DOCUMENTS]: 'Insufficient documents provided.',
   [DriverRegistrationErrorCode.STEP_OUT_OF_ORDER]: 'Please complete the previous steps before proceeding.',
   [DriverRegistrationErrorCode.PREVIOUS_STEP_INCOMPLETE]: 'Previous step must be completed first.',
@@ -172,6 +174,7 @@ export const ErrorStatusCodes: Record<DriverRegistrationErrorCode, number> = {
   [DriverRegistrationErrorCode.DOCUMENT_SIZE_EXCEEDED]: 413,
   [DriverRegistrationErrorCode.DOCUMENT_EXPIRED]: 400,
   [DriverRegistrationErrorCode.DOCUMENT_UPLOAD_FAILED]: 500,
+  [DriverRegistrationErrorCode.DOCUMENT_TYPE_INVALID]: 400,
   [DriverRegistrationErrorCode.INSUFFICIENT_DOCUMENTS]: 400,
   [DriverRegistrationErrorCode.STEP_OUT_OF_ORDER]: 400,
   [DriverRegistrationErrorCode.PREVIOUS_STEP_INCOMPLETE]: 400,

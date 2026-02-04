@@ -54,9 +54,13 @@ const createProxyOptions = (target: string, pathRewrite?: any): Options => ({
 
   // Add custom headers
   onProxyReq: (proxyReq, req: any) => {
+    // Skip body rewriting for multipart/form-data requests
+    const contentType = req.headers['content-type'] || '';
+    const isMultipart = contentType.includes('multipart/form-data');
+    
     // If body has been parsed by express.json(), re-send it to the proxied service
     // This avoids issues where the body was consumed by the gateway and never forwarded
-    if (req.body && Object.keys(req.body).length && ['POST','PUT','PATCH'].includes(req.method)) {
+    if (!isMultipart && req.body && Object.keys(req.body).length && ['POST','PUT','PATCH'].includes(req.method)) {
       const bodyData = JSON.stringify(req.body);
       proxyReq.setHeader('Content-Type', 'application/json');
       proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
@@ -67,7 +71,8 @@ const createProxyOptions = (target: string, pathRewrite?: any): Options => ({
     logger.debug('Proxying request:', {
       method: req.method,
       path: req.url,
-      target
+      target,
+      isMultipart
     });
   },
 

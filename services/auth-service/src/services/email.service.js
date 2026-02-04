@@ -1,128 +1,107 @@
-import axios from 'axios';
-import config from '../config';
-import logger from '../utils/logger';
-
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const axios_1 = __importDefault(require("axios"));
+const config_1 = __importDefault(require("../config"));
+const logger_1 = __importDefault(require("../utils/logger"));
 class EmailService {
-  constructor() {
-    // Check if ZeptoMail API is configured
-    if (process.env.ZEPTO_API_URL && process.env.ZEPTO_API_KEY) {
-      logger.info('✅ ZeptoMail API configured successfully');
-    } else {
-      logger.warn('⚠️ ZeptoMail API not configured - emails will not be sent');
+    constructor() {
+        // Check if ZeptoMail API is configured
+        if (process.env.ZEPTO_API_URL && process.env.ZEPTO_API_KEY) {
+            logger_1.default.info('✅ ZeptoMail API configured successfully');
+        }
+        else {
+            logger_1.default.warn('⚠️ ZeptoMail API not configured - emails will not be sent');
+        }
     }
-  }
-
-  /**
-   * Send OTP email (HTML format)
-   */
-  async sendOTPEmail(to: string, firstName: string, otp: string, type: 'verification' | 'password_reset'): Promise<void> {
-    const subject = type === 'verification' 
-      ? 'Verify Your Email - Olakz Ride'
-      : 'Reset Your Password - Olakz Ride';
-
-    const html = this.getOTPEmailTemplate(firstName, otp, type);
-
-    await this.sendEmail(to, subject, html);
-  }
-
-  /**
-   * Send welcome email after verification
-   */
-  async sendWelcomeEmail(to: string, firstName: string): Promise<void> {
-    const subject = 'Welcome to Olakz Ride!';
-    const html = this.getWelcomeEmailTemplate(firstName);
-
-    await this.sendEmail(to, subject, html);
-  }
-
-  /**
-   * Send document status notification email
-   */
-  async sendDocumentNotificationEmail(
-    to: string, 
-    firstName: string, 
-    documentType: string,
-    status: 'approved' | 'rejected' | 'replacement_requested',
-    notes?: string,
-    rejectionReason?: string
-  ): Promise<void> {
-    const subject = this.getDocumentNotificationSubject(status, documentType);
-    const html = this.getDocumentNotificationTemplate(firstName, documentType, status, notes, rejectionReason);
-
-    await this.sendEmail(to, subject, html);
-  }
-
-  /**
-   * Send admin notification email for new document submissions
-   */
-  async sendAdminDocumentNotificationEmail(
-    adminEmail: string,
-    documentType: string,
-    driverName: string,
-    documentCount: number
-  ): Promise<void> {
-    const subject = `New Driver Document Submitted - ${documentType}`;
-    const html = this.getAdminDocumentNotificationTemplate(documentType, driverName, documentCount);
-
-    await this.sendEmail(adminEmail, subject, html);
-  }
-
-  /**
-   * Send generic email via ZeptoMail API
-   */
-  private async sendEmail(to: string, subject: string, html: string): Promise<void> {
-    if (!process.env.ZEPTO_API_URL || !process.env.ZEPTO_API_KEY) {
-      logger.warn(`Email sending skipped (API not configured): ${subject} to ${to}`);
-      return;
+    /**
+     * Send OTP email (HTML format)
+     */
+    async sendOTPEmail(to, firstName, otp, type) {
+        const subject = type === 'verification'
+            ? 'Verify Your Email - Olakz Ride'
+            : 'Reset Your Password - Olakz Ride';
+        const html = this.getOTPEmailTemplate(firstName, otp, type);
+        await this.sendEmail(to, subject, html);
     }
-
-    try {
-      const payload = {
-        from: {
-          address: process.env.ZEPTO_FROM_EMAIL,
-          name: process.env.ZEPTO_FROM_NAME
-        },
-        to: [
-          {
-            email_address: {
-              address: to
-            }
-          }
-        ],
-        subject: subject,
-        htmlbody: html
-      };
-
-      const response = await axios.post(process.env.ZEPTO_API_URL, payload, {
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Authorization': `Zoho-enczapikey ${process.env.ZEPTO_API_KEY}`
-        },
-        timeout: 10000 // 10 second timeout
-      });
-
-      logger.info(`Email sent successfully via API to ${to}`, { 
-        messageId: response.data.data?.[0]?.message_id 
-      });
-    } catch (error: any) {
-      logger.error('Error sending email via API:', {
-        error: error.message,
-        response: error.response?.data
-      });
-      throw new Error('Failed to send email via API');
+    /**
+     * Send welcome email after verification
+     */
+    async sendWelcomeEmail(to, firstName) {
+        const subject = 'Welcome to Olakz Ride!';
+        const html = this.getWelcomeEmailTemplate(firstName);
+        await this.sendEmail(to, subject, html);
     }
-  }
-
-  /**
-   * OTP Email Template (HTML)
-   */
-  private getOTPEmailTemplate(firstName: string, otp: string, type: 'verification' | 'password_reset'): string {
-    const message = type === 'verification'
-      ? 'Thank you for signing up! Please use the code below to verify your email address.'
-      : 'You requested to reset your password. Use the code below to proceed.';
-
-    return `
+    /**
+     * Send document status notification email
+     */
+    async sendDocumentNotificationEmail(to, firstName, documentType, status, notes, rejectionReason) {
+        const subject = this.getDocumentNotificationSubject(status, documentType);
+        const html = this.getDocumentNotificationTemplate(firstName, documentType, status, notes, rejectionReason);
+        await this.sendEmail(to, subject, html);
+    }
+    /**
+     * Send admin notification email for new document submissions
+     */
+    async sendAdminDocumentNotificationEmail(adminEmail, documentType, driverName, documentCount) {
+        const subject = `New Driver Document Submitted - ${documentType}`;
+        const html = this.getAdminDocumentNotificationTemplate(documentType, driverName, documentCount);
+        await this.sendEmail(adminEmail, subject, html);
+    }
+    /**
+     * Send generic email via ZeptoMail API
+     */
+    async sendEmail(to, subject, html) {
+        if (!process.env.ZEPTO_API_URL || !process.env.ZEPTO_API_KEY) {
+            logger_1.default.warn(`Email sending skipped (API not configured): ${subject} to ${to}`);
+            return;
+        }
+        try {
+            const payload = {
+                from: {
+                    address: process.env.ZEPTO_FROM_EMAIL,
+                    name: process.env.ZEPTO_FROM_NAME
+                },
+                to: [
+                    {
+                        email_address: {
+                            address: to
+                        }
+                    }
+                ],
+                subject: subject,
+                htmlbody: html
+            };
+            const response = await axios_1.default.post(process.env.ZEPTO_API_URL, payload, {
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'Authorization': `Zoho-enczapikey ${process.env.ZEPTO_API_KEY}`
+                },
+                timeout: 10000 // 10 second timeout
+            });
+            logger_1.default.info(`Email sent successfully via API to ${to}`, {
+                messageId: response.data.data?.[0]?.message_id
+            });
+        }
+        catch (error) {
+            logger_1.default.error('Error sending email via API:', {
+                error: error.message,
+                response: error.response?.data
+            });
+            throw new Error('Failed to send email via API');
+        }
+    }
+    /**
+     * OTP Email Template (HTML)
+     */
+    getOTPEmailTemplate(firstName, otp, type) {
+        const message = type === 'verification'
+            ? 'Thank you for signing up! Please use the code below to verify your email address.'
+            : 'You requested to reset your password. Use the code below to proceed.';
+        return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -234,7 +213,7 @@ class EmailService {
       <div class="otp-container">
         <div class="otp-label">Your Verification Code</div>
         <div class="otp-code">${otp}</div>
-        <div class="expiry">⏰ This code expires in ${config.otp.expiryMinutes} minutes</div>
+        <div class="expiry">⏰ This code expires in ${config_1.default.otp.expiryMinutes} minutes</div>
       </div>
 
       <div class="warning">
@@ -254,13 +233,12 @@ class EmailService {
 </body>
 </html>
     `;
-  }
-
-  /**
-   * Welcome Email Template
-   */
-  private getWelcomeEmailTemplate(firstName: string): string {
-    return `
+    }
+    /**
+     * Welcome Email Template
+     */
+    getWelcomeEmailTemplate(firstName) {
+        return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -297,65 +275,53 @@ class EmailService {
 </body>
 </html>
     `;
-  }
-
-  /**
-   * Get document notification subject based on status
-   */
-  private getDocumentNotificationSubject(status: string, documentType: string): string {
-    const docTypeFormatted = documentType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    
-    switch (status) {
-      case 'approved':
-        return `✅ Document Approved - ${docTypeFormatted}`;
-      case 'rejected':
-        return `❌ Document Rejected - ${docTypeFormatted}`;
-      case 'replacement_requested':
-        return `🔄 Document Replacement Required - ${docTypeFormatted}`;
-      default:
-        return `📄 Document Update - ${docTypeFormatted}`;
     }
-  }
-
-  /**
-   * Document notification email template
-   */
-  private getDocumentNotificationTemplate(
-    firstName: string,
-    documentType: string,
-    status: string,
-    notes?: string,
-    rejectionReason?: string
-  ): string {
-    const docTypeFormatted = documentType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    
-    let statusMessage = '';
-    let statusColor = '#667eea';
-    let statusIcon = '📄';
-    let actionRequired = '';
-
-    switch (status) {
-      case 'approved':
-        statusMessage = `Your ${docTypeFormatted} has been approved! ✅`;
-        statusColor = '#28a745';
-        statusIcon = '✅';
-        actionRequired = 'No further action is required for this document.';
-        break;
-      case 'rejected':
-        statusMessage = `Your ${docTypeFormatted} has been rejected. ❌`;
-        statusColor = '#dc3545';
-        statusIcon = '❌';
-        actionRequired = 'Please upload a new document that meets our requirements.';
-        break;
-      case 'replacement_requested':
-        statusMessage = `A replacement is required for your ${docTypeFormatted}. 🔄`;
-        statusColor = '#ffc107';
-        statusIcon = '🔄';
-        actionRequired = 'Please upload a new version of this document.';
-        break;
+    /**
+     * Get document notification subject based on status
+     */
+    getDocumentNotificationSubject(status, documentType) {
+        const docTypeFormatted = documentType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        switch (status) {
+            case 'approved':
+                return `✅ Document Approved - ${docTypeFormatted}`;
+            case 'rejected':
+                return `❌ Document Rejected - ${docTypeFormatted}`;
+            case 'replacement_requested':
+                return `🔄 Document Replacement Required - ${docTypeFormatted}`;
+            default:
+                return `📄 Document Update - ${docTypeFormatted}`;
+        }
     }
-
-    return `
+    /**
+     * Document notification email template
+     */
+    getDocumentNotificationTemplate(firstName, documentType, status, notes, rejectionReason) {
+        const docTypeFormatted = documentType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        let statusMessage = '';
+        let statusColor = '#667eea';
+        let statusIcon = '📄';
+        let actionRequired = '';
+        switch (status) {
+            case 'approved':
+                statusMessage = `Your ${docTypeFormatted} has been approved! ✅`;
+                statusColor = '#28a745';
+                statusIcon = '✅';
+                actionRequired = 'No further action is required for this document.';
+                break;
+            case 'rejected':
+                statusMessage = `Your ${docTypeFormatted} has been rejected. ❌`;
+                statusColor = '#dc3545';
+                statusIcon = '❌';
+                actionRequired = 'Please upload a new document that meets our requirements.';
+                break;
+            case 'replacement_requested':
+                statusMessage = `A replacement is required for your ${docTypeFormatted}. 🔄`;
+                statusColor = '#ffc107';
+                statusIcon = '🔄';
+                actionRequired = 'Please upload a new version of this document.';
+                break;
+        }
+        return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -419,19 +385,13 @@ class EmailService {
 </body>
 </html>
     `;
-  }
-
-  /**
-   * Admin notification email template
-   */
-  private getAdminDocumentNotificationTemplate(
-    documentType: string,
-    driverName: string,
-    documentCount: number
-  ): string {
-    const docTypeFormatted = documentType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    
-    return `
+    }
+    /**
+     * Admin notification email template
+     */
+    getAdminDocumentNotificationTemplate(documentType, driverName, documentCount) {
+        const docTypeFormatted = documentType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -477,7 +437,7 @@ class EmailService {
 </body>
 </html>
     `;
-  }
+    }
 }
-
-export default new EmailService();
+exports.default = new EmailService();
+//# sourceMappingURL=email.service.js.map

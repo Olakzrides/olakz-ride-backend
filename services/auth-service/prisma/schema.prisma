@@ -93,6 +93,8 @@ model advertisements {
   active      Boolean?  @default(true)
   created_at  DateTime? @default(now()) @db.Timestamptz(6)
   updated_at  DateTime? @default(now()) @db.Timestamptz(6)
+  name        String?   @default("")
+  updatedAt   DateTime? @default(now())
 
   @@index([active, rank], map: "idx_advertisements_active_rank")
 }
@@ -129,25 +131,44 @@ model driver_availability {
 }
 
 model driver_documents {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  driver_id     String    @db.Uuid
-  document_type String    @db.VarChar(100)
-  document_url  String
-  file_name     String    @db.VarChar(255)
-  file_size     Int
-  mime_type     String    @db.VarChar(100)
-  status        String    @default("pending") @db.VarChar(50)
-  verified_by   String?   @db.Uuid
-  verified_at   DateTime? @db.Timestamptz(6)
-  expiry_date   DateTime? @db.Timestamptz(6)
-  notes         String?
-  created_at    DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime  @default(now()) @db.Timestamptz(6)
-  drivers       drivers   @relation(fields: [driver_id], references: [id], onDelete: Cascade)
+  id                     String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  driver_id              String?                  @db.Uuid
+  document_type          String                   @db.VarChar(100)
+  document_url           String
+  file_name              String                   @db.VarChar(255)
+  file_size              Int
+  mime_type              String                   @db.VarChar(100)
+  status                 String                   @default("pending") @db.VarChar(50)
+  verified_by            String?                  @db.Uuid
+  verified_at            DateTime?                @db.Timestamptz(6)
+  expiry_date            DateTime?                @db.Timestamptz(6)
+  notes                  String?
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  session_id             String?                  @db.Uuid
+  version_number         Int?                     @default(1)
+  parent_document_id     String?                  @db.Uuid
+  is_current_version     Boolean?                 @default(true)
+  replaced_at            DateTime?                @db.Timestamptz(6)
+  replacement_reason     String?
+  file_path              String?
+  ocr_data               Json?                    @default("{}")
+  extracted_text         String?
+  expiry_date_extracted  DateTime?                @db.Date
+  validation_errors      Json?                    @default("[]")
+  document_notifications document_notifications[]
+  document_reviews       document_reviews[]
+  drivers                drivers?                 @relation(fields: [driver_id], references: [id], onDelete: Cascade)
+  driver_documents       driver_documents?        @relation("driver_documentsTodriver_documents", fields: [parent_document_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  other_driver_documents driver_documents[]       @relation("driver_documentsTodriver_documents")
 
   @@index([document_type])
   @@index([driver_id])
   @@index([status])
+  @@index([session_id])
+  @@index([parent_document_id], map: "idx_driver_documents_parent")
+  @@index([session_id], map: "idx_driver_documents_session")
+  @@index([driver_id, document_type, version_number], map: "idx_driver_documents_version")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -368,61 +389,69 @@ model ride_variants {
 }
 
 model rides {
-  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  cart_id             String?               @db.Uuid
-  user_id             String                @db.Uuid
-  driver_id           String?               @db.Uuid
-  variant_id          String                @db.Uuid
-  status              String                @default("searching") @db.VarChar(30)
-  pickup_latitude     Decimal               @db.Decimal(10, 8)
-  pickup_longitude    Decimal               @db.Decimal(11, 8)
-  pickup_address      String
-  dropoff_latitude    Decimal?              @db.Decimal(10, 8)
-  dropoff_longitude   Decimal?              @db.Decimal(11, 8)
-  dropoff_address     String?
-  estimated_distance  Decimal?              @db.Decimal(8, 2)
-  estimated_duration  Int?
-  actual_distance     Decimal?              @db.Decimal(8, 2)
-  actual_duration     Int?
-  estimated_fare      Decimal               @db.Decimal(10, 2)
-  final_fare          Decimal?              @db.Decimal(10, 2)
-  payment_method      String                @default("wallet") @db.VarChar(20)
-  payment_status      String                @default("pending") @db.VarChar(20)
-  scheduled_at        DateTime?             @db.Timestamptz(6)
-  started_at          DateTime?             @db.Timestamptz(6)
-  completed_at        DateTime?             @db.Timestamptz(6)
-  cancelled_at        DateTime?             @db.Timestamptz(6)
-  cancellation_reason String?
-  driver_rating       Int?
-  driver_feedback     String?
-  passenger_rating    Int?
-  passenger_feedback  String?
-  metadata            Json                  @default("{}")
-  created_at          DateTime              @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime              @default(now()) @db.Timestamptz(6)
-  ride_requests       ride_requests[]
-  ride_status_updates ride_status_updates[]
-  ride_carts          ride_carts?           @relation(fields: [cart_id], references: [id])
-  drivers             drivers?              @relation(fields: [driver_id], references: [id])
-  ride_variants       ride_variants         @relation(fields: [variant_id], references: [id])
-  wallet_transactions wallet_transactions[]
+  id                                                             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cart_id                                                        String?               @db.Uuid
+  user_id                                                        String                @db.Uuid
+  driver_id                                                      String?               @db.Uuid
+  variant_id                                                     String                @db.Uuid
+  status                                                         String                @default("searching") @db.VarChar(30)
+  pickup_latitude                                                Decimal               @db.Decimal(10, 8)
+  pickup_longitude                                               Decimal               @db.Decimal(11, 8)
+  pickup_address                                                 String
+  dropoff_latitude                                               Decimal?              @db.Decimal(10, 8)
+  dropoff_longitude                                              Decimal?              @db.Decimal(11, 8)
+  dropoff_address                                                String?
+  estimated_distance                                             Decimal?              @db.Decimal(8, 2)
+  estimated_duration                                             Int?
+  actual_distance                                                Decimal?              @db.Decimal(8, 2)
+  actual_duration                                                Int?
+  estimated_fare                                                 Decimal               @db.Decimal(10, 2)
+  final_fare                                                     Decimal?              @db.Decimal(10, 2)
+  payment_method                                                 String                @default("wallet") @db.VarChar(20)
+  payment_status                                                 String                @default("pending") @db.VarChar(20)
+  scheduled_at                                                   DateTime?             @db.Timestamptz(6)
+  started_at                                                     DateTime?             @db.Timestamptz(6)
+  completed_at                                                   DateTime?             @db.Timestamptz(6)
+  cancelled_at                                                   DateTime?             @db.Timestamptz(6)
+  cancellation_reason                                            String?
+  driver_rating                                                  Int?
+  driver_feedback                                                String?
+  passenger_rating                                               Int?
+  passenger_feedback                                             String?
+  metadata                                                       Json                  @default("{}")
+  created_at                                                     DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at                                                     DateTime              @default(now()) @db.Timestamptz(6)
+  payment_hold_id                                                String?               @db.Uuid
+  currency_code                                                  String?               @default("NGN") @db.VarChar(3)
+  ride_requests                                                  ride_requests[]
+  ride_status_updates                                            ride_status_updates[]
+  wallet_transactions_rides_payment_hold_idTowallet_transactions wallet_transactions?  @relation("rides_payment_hold_idTowallet_transactions", fields: [payment_hold_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_rides_payment_hold")
+  ride_carts                                                     ride_carts?           @relation(fields: [cart_id], references: [id])
+  drivers                                                        drivers?              @relation(fields: [driver_id], references: [id])
+  ride_variants                                                  ride_variants         @relation(fields: [variant_id], references: [id])
+  wallet_transactions                                            wallet_transactions[]
 
   @@index([created_at])
   @@index([driver_id])
   @@index([status, created_at])
   @@index([status])
   @@index([user_id])
+  @@index([payment_hold_id], map: "idx_rides_payment_hold")
+  @@index([user_id, status], map: "idx_rides_user_status")
 }
 
 model service_channels {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name        String    @db.VarChar(255)
-  description String?
-  icon_url    String?
-  active      Boolean?  @default(true)
-  rank        Int?      @default(0)
-  created_at  DateTime? @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime? @default(now()) @db.Timestamptz(6)
+  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String                @unique @db.VarChar(255)
+  description         String?
+  icon_url            String?
+  active              Boolean?              @default(true)
+  rank                Int?                  @default(0)
+  created_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime?             @default(now()) @db.Timestamptz(6)
+  products            products[]
+  service_regions     service_regions[]
+  user_service_usages user_service_usages[]
 
   @@index([active, rank], map: "idx_service_channels_active_rank")
 }
@@ -468,39 +497,45 @@ model user_sessions {
 }
 
 model vehicle_types {
-  id                   String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                 String            @db.VarChar(50)
-  description          String?
-  base_fare_per_km     Decimal           @db.Decimal(10, 2)
-  base_fare_per_minute Decimal           @default(0) @db.Decimal(10, 2)
-  minimum_fare         Decimal           @db.Decimal(10, 2)
-  capacity             Int               @default(4)
-  icon_url             String?
-  is_active            Boolean           @default(true)
-  metadata             Json              @default("{}")
-  created_at           DateTime          @default(now()) @db.Timestamptz(6)
-  driver_vehicles      driver_vehicles[]
-  drivers              drivers[]
-  ride_variants        ride_variants[]
+  id                           String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                         String                         @db.VarChar(50)
+  description                  String?
+  base_fare_per_km             Decimal                        @db.Decimal(10, 2)
+  base_fare_per_minute         Decimal                        @default(0) @db.Decimal(10, 2)
+  minimum_fare                 Decimal                        @db.Decimal(10, 2)
+  capacity                     Int                            @default(4)
+  icon_url                     String?
+  is_active                    Boolean                        @default(true)
+  metadata                     Json                           @default("{}")
+  created_at                   DateTime                       @default(now()) @db.Timestamptz(6)
+  license_required             Boolean                        @default(true)
+  insurance_required           Boolean                        @default(true)
+  registration_required        Boolean                        @default(true)
+  display_name                 String?                        @db.VarChar(100)
+  driver_vehicles              driver_vehicles[]
+  drivers                      drivers[]
+  ride_variants                ride_variants[]
+  vehicle_service_capabilities vehicle_service_capabilities[]
 
   @@index([is_active])
   @@index([name])
 }
 
 model wallet_transactions {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id          String   @db.Uuid
-  ride_id          String?  @db.Uuid
-  transaction_type String   @db.VarChar(20)
-  amount           Decimal  @db.Decimal(10, 2)
-  currency_code    String   @db.VarChar(3)
-  status           String   @default("pending") @db.VarChar(20)
-  reference        String?  @unique @db.VarChar(100)
-  description      String?
-  metadata         Json     @default("{}")
-  created_at       DateTime @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime @default(now()) @db.Timestamptz(6)
-  rides            rides?   @relation(fields: [ride_id], references: [id])
+  id                                               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id                                          String   @db.Uuid
+  ride_id                                          String?  @db.Uuid
+  transaction_type                                 String   @db.VarChar(20)
+  amount                                           Decimal  @db.Decimal(10, 2)
+  currency_code                                    String   @db.VarChar(3)
+  status                                           String   @default("pending") @db.VarChar(20)
+  reference                                        String?  @unique @db.VarChar(100)
+  description                                      String?
+  metadata                                         Json     @default("{}")
+  created_at                                       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at                                       DateTime @default(now()) @db.Timestamptz(6)
+  rides_rides_payment_hold_idTowallet_transactions rides[]  @relation("rides_payment_hold_idTowallet_transactions")
+  rides                                            rides?   @relation(fields: [ride_id], references: [id])
 
   @@index([reference])
   @@index([ride_id])
@@ -508,4 +543,170 @@ model wallet_transactions {
   @@index([transaction_type])
   @@index([user_id])
   @@index([user_id, transaction_type, status])
+  @@index([user_id, currency_code, status], map: "idx_wallet_transactions_user_currency")
+}
+
+model document_access_logs {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  document_id String   @db.Uuid
+  user_id     String   @db.Uuid
+  action      String   @db.VarChar(50)
+  ip_address  String?  @db.Inet
+  user_agent  String?
+  metadata    Json?
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([action])
+  @@index([created_at])
+  @@index([document_id])
+  @@index([user_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model document_notifications {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  document_id       String           @db.Uuid
+  user_id           String           @db.Uuid
+  notification_type String           @db.VarChar(30)
+  email_sent        Boolean?         @default(false)
+  email_sent_at     DateTime?        @db.Timestamptz(6)
+  email_error       String?
+  retry_count       Int?             @default(0)
+  metadata          Json?            @default("{}")
+  created_at        DateTime?        @default(now()) @db.Timestamptz(6)
+  driver_documents  driver_documents @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([created_at], map: "idx_document_notifications_created")
+  @@index([document_id], map: "idx_document_notifications_document")
+  @@index([email_sent], map: "idx_document_notifications_email_sent")
+  @@index([notification_type], map: "idx_document_notifications_type")
+  @@index([user_id], map: "idx_document_notifications_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model document_reviews {
+  id                    String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  document_id           String           @db.Uuid
+  reviewer_id           String           @db.Uuid
+  action                String           @db.VarChar(20)
+  status                String           @default("pending") @db.VarChar(20)
+  notes                 String?
+  rejection_reason      String?
+  replacement_requested Boolean?         @default(false)
+  priority              String?          @default("normal") @db.VarChar(10)
+  metadata              Json?            @default("{}")
+  reviewed_at           DateTime?        @db.Timestamptz(6)
+  created_at            DateTime?        @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime?        @default(now()) @db.Timestamptz(6)
+  driver_documents      driver_documents @relation(fields: [document_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([action], map: "idx_document_reviews_action")
+  @@index([created_at], map: "idx_document_reviews_created")
+  @@index([document_id], map: "idx_document_reviews_document")
+  @@index([priority], map: "idx_document_reviews_priority")
+  @@index([reviewer_id], map: "idx_document_reviews_reviewer")
+  @@index([status], map: "idx_document_reviews_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model driver_registration_sessions {
+  id                           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id                      String    @db.Uuid
+  vehicle_type                 String    @db.VarChar(50)
+  service_types                String[]  @default([])
+  status                       String    @default("initiated") @db.VarChar(20)
+  progress_percentage          Int       @default(0)
+  current_step                 String    @default("personal_info") @db.VarChar(30)
+  expires_at                   DateTime  @db.Timestamptz(6)
+  created_at                   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                   DateTime  @default(now()) @db.Timestamptz(6)
+  personal_info_completed_at   DateTime? @db.Timestamptz(6)
+  vehicle_details_completed_at DateTime? @db.Timestamptz(6)
+  documents_completed_at       DateTime? @db.Timestamptz(6)
+  submitted_at                 DateTime? @db.Timestamptz(6)
+  personal_info_data           Json?
+  vehicle_details_data         Json?
+  documents_data               Json?
+  metadata                     Json?     @default("{}")
+
+  @@index([created_at])
+  @@index([expires_at])
+  @@index([status])
+  @@index([user_id])
+}
+
+model products {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceChannelId String           @db.Uuid
+  handle           String           @unique
+  title            String
+  subtitle         String?
+  description      String?
+  thumbnail        String?
+  isActive         Boolean          @default(true)
+  metadata         Json             @default("{}")
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @default(now())
+  service_channels service_channels @relation(fields: [serviceChannelId], references: [id], onDelete: Cascade)
+}
+
+model service_analytics {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceChannelId String   @db.Uuid
+  userId           String?  @db.Uuid
+  eventType        String
+  eventData        Json     @default("{}")
+  timestamp        DateTime @default(now())
+  sessionId        String?
+  userAgent        String?
+  ipAddress        String?
+}
+
+model service_regions {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceChannelId String           @db.Uuid
+  regionCode       String
+  regionName       String?
+  isAvailable      Boolean          @default(true)
+  metadata         Json             @default("{}")
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @default(now())
+  service_channels service_channels @relation(fields: [serviceChannelId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceChannelId, regionCode])
+}
+
+model service_types {
+  id                           String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                         String                         @unique @db.VarChar(50)
+  display_name                 String                         @db.VarChar(100)
+  description                  String?
+  is_active                    Boolean                        @default(true)
+  created_at                   DateTime                       @default(now()) @db.Timestamptz(6)
+  vehicle_service_capabilities vehicle_service_capabilities[]
+
+  @@index([is_active])
+}
+
+model user_service_usages {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String           @db.Uuid
+  serviceChannelId String           @db.Uuid
+  sessionData      Json             @default("{}")
+  startedAt        DateTime         @default(now())
+  lastActivityAt   DateTime         @default(now())
+  isActive         Boolean          @default(true)
+  service_channels service_channels @relation(fields: [serviceChannelId], references: [id], onDelete: Cascade)
+}
+
+model vehicle_service_capabilities {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicle_type_id String        @db.Uuid
+  service_type_id String        @db.Uuid
+  is_available    Boolean       @default(true)
+  created_at      DateTime      @default(now()) @db.Timestamptz(6)
+  service_types   service_types @relation(fields: [service_type_id], references: [id], onDelete: Cascade)
+  vehicle_types   vehicle_types @relation(fields: [vehicle_type_id], references: [id], onDelete: Cascade)
+
+  @@unique([vehicle_type_id, service_type_id], map: "vehicle_service_capabilities_vehicle_type_id_service_type_id_ke")
 }

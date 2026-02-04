@@ -321,14 +321,11 @@ export class DriverService {
     // Initialize storage bucket if it doesn't exist
     await StorageUtil.initializeBucket();
 
-    // Validate file
-    const validation = StorageUtil.validateFile(file);
-    if (!validation.valid) {
-      throw new Error(validation.error);
-    }
+    // Enhanced file validation (now done inside uploadFile)
+    // The uploadFile method now includes comprehensive validation
 
-    // Upload file to Supabase Storage
-    const { url, path } = await StorageUtil.uploadFile(file, `drivers/${driver.id}/${documentType}`);
+    // Upload file to Supabase Storage with enhanced security
+    const uploadResult = await StorageUtil.uploadFile(file, `drivers/${driver.id}/${documentType}`);
 
     // Save document metadata to database
     const { data: document, error } = await supabase
@@ -336,7 +333,7 @@ export class DriverService {
       .insert({
         driver_id: driver.id,
         document_type: documentType,
-        document_url: url,
+        document_url: uploadResult.url,
         file_name: file.originalname,
         file_size: file.size,
         mime_type: file.mimetype,
@@ -348,7 +345,7 @@ export class DriverService {
 
     if (error) {
       // Cleanup uploaded file
-      await StorageUtil.deleteFile(path);
+      await StorageUtil.deleteFile(uploadResult.path);
       throw new Error(`Failed to save document metadata: ${error.message}`);
     }
 

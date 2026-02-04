@@ -150,7 +150,9 @@ export interface PaymentHoldResult {
   status: 'hold_created' | 'insufficient_funds' | 'failed';
   holdId?: string;
   message: string;
+  errorCode?: string;
   availableBalance?: number;
+  details?: any;
 }
 
 export interface PaymentProcessResult {

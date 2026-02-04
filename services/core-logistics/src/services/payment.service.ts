@@ -4,9 +4,58 @@ import { PaymentHoldResult, PaymentProcessResult } from '../types';
 
 export class PaymentService {
   /**
-   * Create payment hold for ride booking
-   * Phase 1: Simplified wallet hold (no actual wallet balance check)
-   * Phase 4: Will integrate with actual wallet system
+   * Get user's current wallet balance
+   */
+  async getUserWalletBalance(userId: string, currencyCode: string): Promise<number> {
+    try {
+      // Calculate balance from all transactions
+      const { data: transactions, error } = await supabase
+        .from('wallet_transactions')
+        .select('amount, transaction_type')
+        .eq('user_id', userId)
+        .eq('currency_code', currencyCode)
+        .eq('status', 'completed');
+
+      if (error) {
+        logger.error('Get wallet balance error:', error);
+        return 0;
+      }
+
+      let balance = 0;
+      transactions?.forEach(transaction => {
+        if (transaction.transaction_type === 'credit' || transaction.transaction_type === 'refund') {
+          balance += parseFloat(transaction.amount);
+        } else if (transaction.transaction_type === 'debit' || transaction.transaction_type === 'hold') {
+          balance -= parseFloat(transaction.amount);
+        }
+      });
+
+      return Math.max(0, balance); // Never return negative balance
+    } catch (error) {
+      logger.error('Get wallet balance error:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Check if user has sufficient balance for hold
+   */
+  async checkSufficientBalance(userId: string, amount: number, currencyCode: string): Promise<{
+    sufficient: boolean;
+    currentBalance: number;
+    required: number;
+  }> {
+    const currentBalance = await this.getUserWalletBalance(userId, currencyCode);
+    
+    return {
+      sufficient: currentBalance >= amount,
+      currentBalance,
+      required: amount,
+    };
+  }
+
+  /**
+   * Create payment hold for ride booking with balance verification
    */
   async createRidePaymentHold(params: {
     userId: string;
@@ -17,8 +66,28 @@ export class PaymentService {
     try {
       const { userId, amount, currencyCode, description } = params;
 
-      // Phase 1: Create hold transaction without balance check
-      // In Phase 4, we'll check actual wallet balance
+      // Check wallet balance first
+      const balanceCheck = await this.checkSufficientBalance(userId, amount, currencyCode);
+      
+      if (!balanceCheck.sufficient) {
+        logger.warn('Insufficient wallet balance:', {
+          userId,
+          required: amount,
+          available: balanceCheck.currentBalance,
+        });
+        
+        return {
+          status: 'failed',
+          message: 'Insufficient wallet balance',
+          errorCode: 'INSUFFICIENT_BALANCE',
+          details: {
+            required: amount,
+            available: balanceCheck.currentBalance,
+            shortfall: amount - balanceCheck.currentBalance,
+          },
+        };
+      }
+
       const reference = `hold_${Date.now()}_${userId}`;
 
       const { data: holdTransaction, error } = await supabase
@@ -28,11 +97,12 @@ export class PaymentService {
           transaction_type: 'hold',
           amount: amount,
           currency_code: currencyCode,
-          status: 'completed',
+          status: 'pending', // Changed from 'completed' to 'pending'
           description: description,
           reference: reference,
           metadata: {
             hold_type: 'ride_payment',
+            balance_before: balanceCheck.currentBalance,
             created_at: new Date().toISOString(),
           },
         })
@@ -44,8 +114,23 @@ export class PaymentService {
         return {
           status: 'failed',
           message: 'Failed to create payment hold',
+          errorCode: 'PAYMENT_HOLD_FAILED',
         };
       }
+
+      // Update hold status to completed after successful creation
+      await supabase
+        .from('wallet_transactions')
+        .update({ status: 'completed' })
+        .eq('id', holdTransaction.id);
+
+      logger.info('Payment hold created successfully:', {
+        userId,
+        amount,
+        reference,
+        balanceBefore: balanceCheck.currentBalance,
+        balanceAfter: balanceCheck.currentBalance - amount,
+      });
 
       return {
         status: 'hold_created',
@@ -155,65 +240,196 @@ export class PaymentService {
   }
 
   /**
-   * Release payment hold (for cancelled rides)
+   * Release payment hold (for cancelled rides) - Updated version
    */
-  async releasePaymentHold(holdId: string): Promise<PaymentProcessResult> {
+  async releasePaymentHold(params: {
+    holdId: string;
+    reason: string;
+    metadata?: any;
+  }): Promise<{ success: boolean; message: string; refundId?: string }> {
     try {
-      // Get hold transaction
-      const { data: holdTransaction, error: holdError } = await supabase
+      const { holdId, reason, metadata } = params;
+
+      // Get hold transaction details
+      const { data: holdTransaction, error: fetchError } = await supabase
         .from('wallet_transactions')
-        .select('*')
+        .select('user_id, amount, currency_code, status, reference')
         .eq('id', holdId)
+        .eq('transaction_type', 'hold')
         .single();
 
-      if (holdError || !holdTransaction) {
+      if (fetchError || !holdTransaction) {
         return {
           success: false,
-          message: 'Invalid hold transaction',
+          message: 'Hold transaction not found',
         };
       }
 
-      const heldAmount = parseFloat(holdTransaction.amount);
-      const userId = holdTransaction.user_id;
-      const currencyCode = holdTransaction.currency_code;
+      if (holdTransaction.status !== 'completed') {
+        return {
+          success: false,
+          message: 'Hold transaction is not in completed status',
+        };
+      }
 
       // Create refund transaction
-      const { error: refundError } = await supabase
+      const refundReference = `refund_${Date.now()}_${holdTransaction.user_id}`;
+
+      const { data: refundTransaction, error: refundError } = await supabase
         .from('wallet_transactions')
         .insert({
-          user_id: userId,
+          user_id: holdTransaction.user_id,
           transaction_type: 'refund',
-          amount: heldAmount,
-          currency_code: currencyCode,
+          amount: holdTransaction.amount,
+          currency_code: holdTransaction.currency_code,
           status: 'completed',
-          description: 'Ride cancellation refund',
-          reference: `cancel_refund_${Date.now()}_${userId}`,
+          description: `Refund for hold: ${reason}`,
+          reference: refundReference,
           metadata: {
-            hold_transaction_id: holdId,
-            refund_reason: 'ride_cancelled',
+            refund_type: 'hold_release',
+            original_hold_id: holdId,
+            original_reference: holdTransaction.reference,
+            reason,
+            ...metadata,
+            created_at: new Date().toISOString(),
           },
         })
         .select()
         .single();
 
       if (refundError) {
-        logger.error('Refund transaction error:', refundError);
+        logger.error('Create refund transaction error:', refundError);
         return {
           success: false,
-          message: 'Failed to release payment hold',
+          message: 'Failed to create refund transaction',
         };
       }
 
+      logger.info('Payment hold released successfully:', {
+        holdId,
+        refundId: refundTransaction.id,
+        amount: holdTransaction.amount,
+        reason,
+      });
+
       return {
         success: true,
-        refundAmount: heldAmount,
         message: 'Payment hold released successfully',
+        refundId: refundTransaction.id,
       };
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Release payment hold error:', error);
       return {
         success: false,
         message: 'Failed to release payment hold',
+      };
+    }
+  }
+
+  /**
+   * Convert hold to actual payment (when ride completes)
+   */
+  async convertHoldToPayment(params: {
+    holdId: string;
+    actualAmount?: number;
+    description: string;
+    metadata?: any;
+  }): Promise<{ success: boolean; message: string; paymentId?: string }> {
+    try {
+      const { holdId, actualAmount, description, metadata } = params;
+
+      // Get hold transaction details
+      const { data: holdTransaction, error: fetchError } = await supabase
+        .from('wallet_transactions')
+        .select('user_id, amount, currency_code, status')
+        .eq('id', holdId)
+        .eq('transaction_type', 'hold')
+        .single();
+
+      if (fetchError || !holdTransaction) {
+        return {
+          success: false,
+          message: 'Hold transaction not found',
+        };
+      }
+
+      const paymentAmount = actualAmount || holdTransaction.amount;
+      const refundAmount = holdTransaction.amount - paymentAmount;
+
+      // Create payment transaction
+      const paymentReference = `payment_${Date.now()}_${holdTransaction.user_id}`;
+
+      const { data: paymentTransaction, error: paymentError } = await supabase
+        .from('wallet_transactions')
+        .insert({
+          user_id: holdTransaction.user_id,
+          transaction_type: 'debit',
+          amount: paymentAmount,
+          currency_code: holdTransaction.currency_code,
+          status: 'completed',
+          description,
+          reference: paymentReference,
+          metadata: {
+            payment_type: 'hold_conversion',
+            original_hold_id: holdId,
+            hold_amount: holdTransaction.amount,
+            payment_amount: paymentAmount,
+            ...metadata,
+            created_at: new Date().toISOString(),
+          },
+        })
+        .select()
+        .single();
+
+      if (paymentError) {
+        logger.error('Create payment transaction error:', paymentError);
+        return {
+          success: false,
+          message: 'Failed to create payment transaction',
+        };
+      }
+
+      // Create refund for difference if any
+      if (refundAmount > 0) {
+        const refundReference = `refund_${Date.now()}_${holdTransaction.user_id}`;
+
+        await supabase
+          .from('wallet_transactions')
+          .insert({
+            user_id: holdTransaction.user_id,
+            transaction_type: 'refund',
+            amount: refundAmount,
+            currency_code: holdTransaction.currency_code,
+            status: 'completed',
+            description: `Refund for overpayment on ride`,
+            reference: refundReference,
+            metadata: {
+              refund_type: 'overpayment',
+              original_hold_id: holdId,
+              payment_id: paymentTransaction.id,
+              created_at: new Date().toISOString(),
+            },
+          });
+      }
+
+      logger.info('Hold converted to payment successfully:', {
+        holdId,
+        paymentId: paymentTransaction.id,
+        holdAmount: holdTransaction.amount,
+        paymentAmount,
+        refundAmount,
+      });
+
+      return {
+        success: true,
+        message: 'Hold converted to payment successfully',
+        paymentId: paymentTransaction.id,
+      };
+    } catch (error: any) {
+      logger.error('Convert hold to payment error:', error);
+      return {
+        success: false,
+        message: 'Failed to convert hold to payment',
       };
     }
   }

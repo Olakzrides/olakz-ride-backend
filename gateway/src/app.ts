@@ -37,9 +37,24 @@ app.use(corsMiddleware);
 app.use(morganMiddleware);
 app.use(requestLogger);
 
-// Body parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Body parsing middleware with multipart handling
+const bodyParsingMiddleware = (req: any, res: any, next: any) => {
+  const contentType = req.headers['content-type'] || '';
+  
+  // Skip body parsing for multipart/form-data - let the backend service handle it
+  if (contentType.includes('multipart/form-data')) {
+    return next();
+  }
+  
+  // Apply normal body parsing for other content types
+  express.json({ limit: '10mb' })(req, res, (err) => {
+    if (err) return next(err);
+    express.urlencoded({ extended: true, limit: '10mb' })(req, res, next);
+  });
+};
+
+// Apply body parsing middleware
+app.use(bodyParsingMiddleware);
 
 // General rate limiting (applied to all routes)
 app.use(generalRateLimiter);

@@ -9,6 +9,11 @@ export interface AuthRequest extends Request {
     id: string;
     email: string;
     role: string;
+  } | {
+    id: string;
+    email: string;
+    roles: string[];
+    isAdmin: boolean;
   };
 }
 
@@ -52,18 +57,18 @@ export const authenticate = async (
 /**
  * Check if user has required role
  */
-export const authorize = (...roles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction): void | Response => {
-    const user = (req as AuthRequest).user;
+// export const authorize = (...roles: string[]) => {
+//   return (req: Request, res: Response, next: NextFunction): void | Response => {
+//     const user = (req as AuthRequest).user;
 
-    if (!user) {
-      return ResponseUtil.unauthorized(res);
-    }
+//     if (!user) {
+//       return ResponseUtil.unauthorized(res);
+//     }
 
-    if (!roles.includes(user.role)) {
-      return ResponseUtil.forbidden(res, 'Insufficient permissions');
-    }
+//     if (!roles.includes(user.role)) {
+//       return ResponseUtil.forbidden(res, 'Insufficient permissions');
+//     }
 
-    next();
-  };
-};
+//     next();
+//   };
+// };

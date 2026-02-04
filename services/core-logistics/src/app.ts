@@ -4,10 +4,16 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import routes from './routes';
 import { errorHandler, notFoundHandler } from './middleware/error.middleware';
+import { StorageUtil } from './utils/storage.util';
 import { logger } from './config/logger';
 
 export function createApp(): Application {
   const app = express();
+
+  // Initialize storage bucket
+  StorageUtil.initializeBucket().catch(error => {
+    logger.error('Failed to initialize storage bucket:', error);
+  });
 
   // Security middleware
   app.use(helmet());
@@ -24,9 +30,9 @@ export function createApp(): Application {
   });
   app.use('/api', limiter);
 
-  // Body parsing middleware
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  // Body parsing middleware - Increased limits for file uploads
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   // Request logging
   app.use((req, _res, next) => {

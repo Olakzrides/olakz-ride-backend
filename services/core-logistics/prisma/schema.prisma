@@ -436,27 +436,52 @@ model DriverVehicle {
 }
 
 model DriverDocument {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  driverId     String    @map("driver_id") @db.Uuid
-  documentType String    @map("document_type") @db.VarChar(100) // license, insurance, vehicle_registration, profile_photo, vehicle_photo
-  documentUrl  String    @map("document_url") @db.Text
-  fileName     String    @map("file_name") @db.VarChar(255)
-  fileSize     Int       @map("file_size")
-  mimeType     String    @map("mime_type") @db.VarChar(100)
-  status       String    @default("pending") @db.VarChar(50) // pending, approved, rejected
-  verifiedBy   String?   @map("verified_by") @db.Uuid
-  verifiedAt   DateTime? @map("verified_at") @db.Timestamptz(6)
-  expiryDate   DateTime? @map("expiry_date") @db.Timestamptz(6)
-  notes        String?   @db.Text
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  driverId             String?   @map("driver_id") @db.Uuid
+  sessionId            String?   @map("session_id") @db.Uuid
+  documentType         String    @map("document_type") @db.VarChar(100) // license, insurance, vehicle_registration, profile_photo, vehicle_photo
+  documentUrl          String    @map("document_url") @db.Text
+  fileName             String    @map("file_name") @db.VarChar(255)
+  fileSize             Int       @map("file_size")
+  mimeType             String    @map("mime_type") @db.VarChar(100)
+  status               String    @default("pending") @db.VarChar(50) // pending, approved, rejected
+  verifiedBy           String?   @map("verified_by") @db.Uuid
+  verifiedAt           DateTime? @map("verified_at") @db.Timestamptz(6)
+  expiryDate           DateTime? @map("expiry_date") @db.Timestamptz(6)
+  notes                String?   @db.Text
+  
+  // Phase 2B: Document Versioning & OCR
+  versionNumber        Int       @default(1) @map("version_number")
+  parentDocumentId     String?   @map("parent_document_id") @db.Uuid
+  isCurrentVersion     Boolean   @default(true) @map("is_current_version")
+  replacedAt           DateTime? @map("replaced_at") @db.Timestamptz(6)
+  replacementReason    String?   @map("replacement_reason") @db.Text
+  filePath             String?   @map("file_path") @db.Text
+  ocrData              Json      @default("{}") @map("ocr_data") @db.JsonB
+  extractedText        String?   @map("extracted_text") @db.Text
+  expiryDateExtracted  DateTime? @map("expiry_date_extracted") @db.Date
+  validationErrors     Json      @default("[]") @map("validation_errors") @db.JsonB
+  
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   // Relations
-  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  driver               Driver?   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  session              DriverRegistrationSession? @relation(fields: [sessionId], references: [id])
+  parentDocument       DriverDocument? @relation("DocumentVersions", fields: [parentDocumentId], references: [id])
+  childDocuments       DriverDocument[] @relation("DocumentVersions")
+  reviews              DocumentReview[]
+  notifications        DocumentNotification[]
+  accessLogs           DocumentAccessLog[]
 
   @@index([driverId])
+  @@index([sessionId])
   @@index([documentType])
   @@index([status])
+  @@index([driverId, documentType, versionNumber])
+  @@index([driverId, documentType, isCurrentVersion])
+  @@index([parentDocumentId])
+  @@index([expiryDateExtracted])
   @@map("driver_documents")
 }
 
@@ -527,9 +552,89 @@ model DriverRegistrationSession {
   // Metadata
   metadata                   Json      @default("{}") @db.JsonB
 
+  // Relations
+  documents                  DriverDocument[]
+
   @@index([userId])
   @@index([status])
   @@index([expiresAt])
   @@index([createdAt])
   @@map("driver_registration_sessions")
+}
+// ============================================
+// PHASE 2B: DOCUMENT VERIFICATION WORKFLOW
+// ============================================
+
+// Document reviews by admin users
+model DocumentReview {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId          String    @map("document_id") @db.Uuid
+  reviewerId          String    @map("reviewer_id") @db.Uuid // Admin user ID
+  action              String    @db.VarChar(20) // approve, reject, request_replacement
+  status              String    @default("pending") @db.VarChar(20) // pending, completed, cancelled
+  notes               String?   @db.Text
+  rejectionReason     String?   @map("rejection_reason") @db.Text
+  replacementRequested Boolean  @default(false) @map("replacement_requested")
+  priority            String    @default("normal") @db.VarChar(10) // low, normal, high, urgent
+  metadata            Json      @default("{}") @db.JsonB
+  reviewedAt          DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  document            DriverDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([reviewerId])
+  @@index([status])
+  @@index([action])
+  @@index([priority])
+  @@index([createdAt])
+  @@map("document_reviews")
+}
+
+// Email notifications for document status changes
+model DocumentNotification {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId       String    @map("document_id") @db.Uuid
+  userId           String    @map("user_id") @db.Uuid // Driver user ID
+  notificationType String    @map("notification_type") @db.VarChar(30) // document_approved, document_rejected, replacement_requested, review_pending
+  emailSent        Boolean   @default(false) @map("email_sent")
+  emailSentAt      DateTime? @map("email_sent_at") @db.Timestamptz(6)
+  emailError       String?   @map("email_error") @db.Text
+  retryCount       Int       @default(0) @map("retry_count")
+  metadata         Json      @default("{}") @db.JsonB
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  document         DriverDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([userId])
+  @@index([notificationType])
+  @@index([emailSent])
+  @@index([createdAt])
+  @@map("document_notifications")
+}
+
+// Document access logs for audit trail
+model DocumentAccessLog {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId String   @map("document_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  action     String   @db.VarChar(20) // upload, view, download, delete, update
+  ipAddress  String?  @map("ip_address") @db.VarChar(45)
+  userAgent  String?  @map("user_agent") @db.Text
+  metadata   Json     @default("{}") @db.JsonB
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  document   DriverDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([documentId, userId])
+  @@map("document_access_logs")
 }

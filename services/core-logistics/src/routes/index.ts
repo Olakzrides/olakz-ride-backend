@@ -4,6 +4,8 @@ import rideRoutes from './ride.routes';
 import variantRoutes from './variant.routes';
 import driverRoutes from './driver.routes';
 import driverRegistrationRoutes from './driver-registration.routes';
+import walletRoutes from './wallet.routes';
+import adminDocumentRoutes from './admin-document.routes';
 
 const router = Router();
 
@@ -12,9 +14,13 @@ router.use('/api/driver-registration', driverRegistrationRoutes);
 router.use('/api/drivers', driverRoutes);
 router.use('/api', variantRoutes);
 
+// Mount admin routes (with admin auth middleware)
+router.use('/api/admin/documents', adminDocumentRoutes);
+
 // Mount routes with global auth middleware last
 router.use('/api', cartRoutes);
 router.use('/api', rideRoutes);
+router.use('/api', walletRoutes);
 
 // Health check
 router.get('/health', (_req, res) => {

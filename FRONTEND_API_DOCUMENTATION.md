@@ -18,72 +18,7 @@ headers: {
 }
 ```
 
----
 
-## 📱 Platform Service APIs
-
-### Get Service Channels
-**GET** `/api/store/channels`
-
-**Description:** Get all available service channels (ride, delivery, etc.)
-
-**Headers:** None required
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "channels": [
-      {
-        "id": "ride-channel",
-        "name": "Ride Service",
-        "description": "Passenger transportation service",
-        "is_active": true
-      },
-      {
-        "id": "delivery-channel", 
-        "name": "Delivery Service",
-        "description": "Package and food delivery service",
-        "is_active": true
-      }
-    ]
-  },
-  "timestamp": "2026-01-30T20:03:32.201Z"
-}
-```
-
-### Get Products
-**GET** `/api/store/products`
-
-**Description:** Get all available products/services
-
-**Headers:** None required
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "products": [
-      {
-        "id": "standard-ride",
-        "title": "Standard Ride",
-        "description": "Affordable rides for everyday travel",
-        "channel_id": "ride-channel",
-        "is_active": true
-      },
-      {
-        "id": "premium-ride",
-        "title": "Premium Ride", 
-        "description": "Comfortable rides with premium vehicles",
-        "channel_id": "ride-channel",
-        "is_active": true
-      }
-    ]
-  }
-}
-```
 
 ---
 
@@ -359,10 +294,25 @@ Authorization: Bearer <jwt-token>
 Content-Type: application/json
 ```
 
-**Body:**
+**Body (Complete Example for Car):**
 ```json
 {
   "documents": [
+    {
+      "type": "national_id",
+      "url": "https://your-storage.com/documents/national_id.jpg",
+      "filename": "national_id.jpg"
+    },
+    {
+      "type": "passport_photo",
+      "url": "https://your-storage.com/documents/passport_photo.jpg",
+      "filename": "passport_photo.jpg"
+    },
+    {
+      "type": "vehicle_photos",
+      "url": "https://your-storage.com/documents/vehicle_photos.jpg",
+      "filename": "vehicle_photos.jpg"
+    },
     {
       "type": "driver_license",
       "url": "https://your-storage.com/documents/license.jpg",
@@ -382,6 +332,29 @@ Content-Type: application/json
 }
 ```
 
+**Body (For Bicycle - Minimal Requirements):**
+```json
+{
+  "documents": [
+    {
+      "type": "national_id",
+      "url": "https://your-storage.com/documents/national_id.jpg",
+      "filename": "national_id.jpg"
+    },
+    {
+      "type": "passport_photo",
+      "url": "https://your-storage.com/documents/passport_photo.jpg",
+      "filename": "passport_photo.jpg"
+    },
+    {
+      "type": "vehicle_photos",
+      "url": "https://your-storage.com/documents/vehicle_photos.jpg",
+      "filename": "vehicle_photos.jpg"
+    }
+  ]
+}
+```
+
 **Response:**
 ```json
 {
@@ -391,7 +364,7 @@ Content-Type: application/json
     "status": "in_progress",
     "current_step": "review",
     "progress_percentage": 90,
-    "documents_validated": 3,
+    "documents_validated": 6,
     "next_action": {
       "step": "review",
       "endpoint": "/api/driver-registration/register/550e8400-e29b-41d4-a716-446655440000/submit",
@@ -498,84 +471,145 @@ Content-Type: application/json
 
 ---
 
-## 🔐 Authentication APIs
+## 📄 Document Requirements by Vehicle Type
 
-### Register User
-**POST** `/api/auth/register`
+### All Vehicle Types (Base Requirements)
+These documents are required for **ALL** vehicle types:
 
-**Description:** Register a new user account
-
-**Headers:**
-```
-Content-Type: application/json
-```
-
-**Body:**
 ```json
-{
-  "email": "user@example.com",
-  "password": "securePassword123",
-  "first_name": "John",
-  "last_name": "Doe",
-  "phone": "+1234567890"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "user": {
-      "id": "user-uuid",
-      "email": "user@example.com",
-      "first_name": "John",
-      "last_name": "Doe",
-      "role": "user"
-    },
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "expires_in": 86400
+[
+  {
+    "type": "national_id",
+    "name": "National ID",
+    "description": "Government issued ID",
+    "required": true,
+    "formats": ["jpg", "png", "pdf"],
+    "max_size": "5MB"
+  },
+  {
+    "type": "passport_photo",
+    "name": "Passport Photo", 
+    "description": "Recent passport-style photo",
+    "required": true,
+    "formats": ["jpg", "png"],
+    "max_size": "2MB"
+  },
+  {
+    "type": "vehicle_photos",
+    "name": "Vehicle Photos",
+    "description": "4 photos: front, back, left side, right side",
+    "required": true,
+    "formats": ["jpg", "png"],
+    "max_size": "5MB",
+    "count": 4
   }
-}
+]
 ```
 
-### Login User
-**POST** `/api/auth/login`
-
-**Description:** Authenticate user and get JWT token
-
-**Headers:**
-```
-Content-Type: application/json
-```
-
-**Body:**
+### Car (Additional Requirements)
 ```json
-{
-  "email": "user@example.com",
-  "password": "securePassword123"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "user": {
-      "id": "user-uuid",
-      "email": "user@example.com",
-      "first_name": "John",
-      "last_name": "Doe",
-      "role": "user"
-    },
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "expires_in": 86400
+[
+  {
+    "type": "driver_license",
+    "name": "Driver's License",
+    "description": "Valid driver's license for cars",
+    "required": true,
+    "formats": ["jpg", "png", "pdf"],
+    "max_size": "5MB"
+  },
+  {
+    "type": "vehicle_registration",
+    "name": "Vehicle Registration",
+    "description": "Vehicle registration certificate",
+    "required": true,
+    "formats": ["jpg", "png", "pdf"],
+    "max_size": "5MB"
+  },
+  {
+    "type": "insurance_certificate",
+    "name": "Insurance Certificate",
+    "description": "Valid vehicle insurance",
+    "required": true,
+    "formats": ["jpg", "png", "pdf"],
+    "max_size": "5MB"
   }
+]
+```
+
+### Motorcycle (Additional Requirements)
+```json
+[
+  {
+    "type": "motorcycle_license",
+    "name": "Motorcycle License",
+    "description": "Valid motorcycle license",
+    "required": true,
+    "formats": ["jpg", "png", "pdf"],
+    "max_size": "5MB"
+  },
+  {
+    "type": "vehicle_registration",
+    "name": "Vehicle Registration",
+    "description": "Motorcycle registration certificate",
+    "required": true,
+    "formats": ["jpg", "png", "pdf"],
+    "max_size": "5MB"
+  },
+  {
+    "type": "insurance_certificate",
+    "name": "Insurance Certificate",
+    "description": "Valid motorcycle insurance",
+    "required": true,
+    "formats": ["jpg", "png", "pdf"],
+    "max_size": "5MB"
+  }
+]
+```
+
+### Bicycle (No Additional Requirements)
+Only the base requirements (National ID, Passport Photo, Vehicle Photos) are needed for bicycles.
+
+### Complete Document Upload Example for Car
+```json
+{
+  "documents": [
+    {
+      "type": "national_id",
+      "url": "https://your-storage.com/documents/national_id.jpg",
+      "filename": "national_id.jpg"
+    },
+    {
+      "type": "passport_photo",
+      "url": "https://your-storage.com/documents/passport_photo.jpg", 
+      "filename": "passport_photo.jpg"
+    },
+    {
+      "type": "vehicle_photos",
+      "url": "https://your-storage.com/documents/vehicle_photos.jpg",
+      "filename": "vehicle_photos.jpg"
+    },
+    {
+      "type": "driver_license",
+      "url": "https://your-storage.com/documents/license.jpg",
+      "filename": "license.jpg"
+    },
+    {
+      "type": "vehicle_registration",
+      "url": "https://your-storage.com/documents/registration.pdf",
+      "filename": "registration.pdf"
+    },
+    {
+      "type": "insurance_certificate",
+      "url": "https://your-storage.com/documents/insurance.jpg",
+      "filename": "insurance.jpg"
+    }
+  ]
 }
 ```
 
 ---
+
+
 
 ## ❌ Error Responses
 
@@ -659,110 +693,6 @@ All errors follow this format:
 
 ## 🔄 Frontend Integration Flow
 
-### Driver Registration Flow
-```javascript
-// 1. Get vehicle types (no auth needed)
-const vehicleTypes = await fetch('https://olakzride.duckdns.org/api/driver-registration/vehicle-types');
-
-// 2. User selects vehicle and services, then initiate registration
-const initResponse = await fetch('https://olakzride.duckdns.org/api/driver-registration/register/initiate', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${userToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    vehicle_type: 'car',
-    service_types: ['ride', 'delivery']
-  })
-});
-
-const { registration_id } = initResponse.data;
-
-// 3. Submit personal info
-await fetch(`https://olakzride.duckdns.org/api/driver-registration/register/${registration_id}/personal-info`, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${userToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    first_name: 'John',
-    last_name: 'Doe',
-    phone: '+1234567890',
-    date_of_birth: '1990-01-01',
-    address: '123 Main St',
-    city: 'New York',
-    state: 'NY',
-    postal_code: '10001'
-  })
-});
-
-// 4. Submit vehicle details
-await fetch(`https://olakzride.duckdns.org/api/driver-registration/register/${registration_id}/vehicle-details`, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${userToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    plate_number: 'ABC123',
-    manufacturer: 'Toyota',
-    model: 'Camry',
-    year: 2020,
-    color: 'Blue',
-    vin: '1HGBH41JXMN109186'
-  })
-});
-
-// 5. Upload documents
-await fetch(`https://olakzride.duckdns.org/api/driver-registration/register/${registration_id}/documents`, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${userToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    documents: [
-      {
-        type: 'driver_license',
-        url: 'https://your-storage.com/license.jpg',
-        filename: 'license.jpg'
-      }
-    ]
-  })
-});
-
-// 6. Submit for review
-await fetch(`https://olakzride.duckdns.org/api/driver-registration/register/${registration_id}/submit`, {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${userToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({})
-});
-```
-
-### Resume Registration Flow
-```javascript
-// Check if user has an active registration
-const resumeResponse = await fetch('https://olakzride.duckdns.org/api/driver-registration/register/resume', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${userToken}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({})
-});
-
-if (resumeResponse.success) {
-  const { registration_id, current_step, progress_percentage } = resumeResponse.data;
-  // Continue from current step
-}
-```
-
----
 
 ## 📊 Rate Limits
 
@@ -779,13 +709,9 @@ if (resumeResponse.success) {
 
 ### Test Credentials
 - **Base URL**: `https://olakzride.duckdns.org`
-- **Test User**: Create via `/api/auth/register`
 
-### Postman Collection
-Import the provided Postman collection for easy testing:
-- `Phase4_Driver_Registration_Complete.postman_collection.json`
 
----
+
 
 ## 📞 Support
 

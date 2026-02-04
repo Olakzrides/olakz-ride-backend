@@ -23,7 +23,4 @@ router.get('/ride/:rideId', rideController.getRideStatus);
 // Cancel ride
 router.post('/ride/:rideId/cancel', rideController.cancelRide);
 
-// Rate driver
-router.post('/ride/:rideId/rating', rideController.rateDriver);
-
 export default router;
