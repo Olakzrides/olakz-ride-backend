@@ -16,7 +16,7 @@ export const supabase = createClient(
 // Test database connection
 export async function testDatabaseConnection(): Promise<boolean> {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await prisma.$connect();
     console.log('✅ Database connection successful');
     return true;
   } catch (error) {
