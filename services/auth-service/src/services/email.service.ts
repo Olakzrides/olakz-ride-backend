@@ -68,9 +68,75 @@ class EmailService {
   }
 
   /**
-   * Send generic email via ZeptoMail API
+   * Send generic email (public method for internal API)
    */
-  private async sendEmail(to: string, subject: string, html: string): Promise<void> {
+  async sendGenericEmail(params: {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+  }): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    if (!process.env.ZEPTO_API_URL || !process.env.ZEPTO_API_KEY) {
+      logger.warn(`Email sending skipped (API not configured): ${params.subject} to ${params.to}`);
+      return {
+        success: false,
+        error: 'Email API not configured',
+      };
+    }
+
+    try {
+      const payload = {
+        from: {
+          address: process.env.ZEPTO_FROM_EMAIL,
+          name: process.env.ZEPTO_FROM_NAME
+        },
+        to: [
+          {
+            email_address: {
+              address: params.to
+            }
+          }
+        ],
+        subject: params.subject,
+        htmlbody: params.html,
+        ...(params.text && { textbody: params.text })
+      };
+
+      const response = await axios.post(process.env.ZEPTO_API_URL, payload, {
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Authorization': `Zoho-enczapikey ${process.env.ZEPTO_API_KEY}`
+        }
+      });
+
+      logger.info(`Email sent successfully to ${params.to}`, {
+        subject: params.subject,
+        messageId: response.data?.data?.[0]?.message_id,
+      });
+
+      return {
+        success: true,
+        messageId: response.data?.data?.[0]?.message_id,
+      };
+    } catch (error: any) {
+      logger.error('Failed to send email:', {
+        to: params.to,
+        subject: params.subject,
+        error: error.response?.data || error.message,
+      });
+
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message || 'Failed to send email',
+      };
+    }
+  }
+
+  /**
+   * Send generic email via ZeptoMail API (public method for internal API)
+   */
+  async sendEmail(to: string, subject: string, html: string): Promise<void> {
     if (!process.env.ZEPTO_API_URL || !process.env.ZEPTO_API_KEY) {
       logger.warn(`Email sending skipped (API not configured): ${subject} to ${to}`);
       return;

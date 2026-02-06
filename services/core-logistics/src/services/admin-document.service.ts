@@ -13,25 +13,33 @@ export interface AdminDocumentReview {
 
 export interface DocumentWithDetails {
   id: string;
-  documentType: string;
-  fileName: string;
+  document_type: string;
+  document_url: string;
+  file_name: string;
+  file_size: number;
+  mime_type: string;
   status: string;
-  driverId?: string;
-  sessionId?: string;
-  versionNumber: number;
-  isCurrentVersion: boolean;
-  createdAt: string;
-  extractedText?: string;
-  ocrData?: any;
-  validationErrors?: any[];
+  driver_id?: string;
+  session_id?: string;
+  version_number: number;
+  is_current_version: boolean;
+  created_at: string;
+  updated_at: string;
+  verified_by?: string;
+  verified_at?: string;
+  expiry_date?: string;
+  notes?: string;
+  extracted_text?: string;
+  ocr_data?: any;
+  validation_errors?: any[];
   driver?: {
-    userId: string;
-    identificationType: string;
-    identificationNumber: string;
+    user_id: string;
+    identification_type: string;
+    identification_number: string;
   };
   session?: {
-    userId: string;
-    vehicleType: string;
+    user_id: string;
+    vehicle_type: string;
   };
 }
 
@@ -42,24 +50,20 @@ export class AdminDocumentService {
   async getPendingDocuments(
     limit: number = 50,
     offset: number = 0,
-    priority?: string
+    _priority?: string
   ): Promise<{ documents: DocumentWithDetails[]; total: number }> {
     try {
+      // **DEPRECATED**: Individual document review is deprecated
+      // Admins should now review complete driver applications instead
+      
+      // First get the basic documents without joins to avoid relationship issues
       let query = supabase
         .from('driver_documents')
-        .select(`
-          *,
-          driver:drivers(user_id, identification_type, identification_number),
-          session:driver_registration_sessions(user_id, vehicle_type)
-        `)
+        .select('*')
         .eq('status', 'pending')
         .eq('is_current_version', true)
+        .is('driver_id', null) // Only show documents not yet linked to drivers
         .order('created_at', { ascending: false });
-
-      if (priority) {
-        // Join with document_reviews to filter by priority
-        query = query.eq('reviews.priority', priority);
-      }
 
       const { data: documents, error } = await query
         .range(offset, offset + limit - 1);
@@ -74,14 +78,49 @@ export class AdminDocumentService {
         .from('driver_documents')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'pending')
-        .eq('is_current_version', true);
+        .eq('is_current_version', true)
+        .is('driver_id', null);
 
       if (countError) {
         logger.warn('Failed to get total count:', countError);
       }
 
+      // Enrich documents with driver and session data if available
+      const enrichedDocuments = await Promise.all(
+        (documents || []).map(async (doc) => {
+          let driver = null;
+          let session = null;
+
+          // Get driver info if driverId exists
+          if (doc.driver_id) {
+            const { data: driverData } = await supabase
+              .from('drivers')
+              .select('user_id, identification_type, identification_number')
+              .eq('id', doc.driver_id)
+              .single();
+            driver = driverData;
+          }
+
+          // Get session info if sessionId exists
+          if (doc.session_id) {
+            const { data: sessionData } = await supabase
+              .from('driver_registration_sessions')
+              .select('user_id, vehicle_type')
+              .eq('id', doc.session_id)
+              .single();
+            session = sessionData;
+          }
+
+          return {
+            ...doc,
+            driver,
+            session,
+          };
+        })
+      );
+
       return {
-        documents: documents || [],
+        documents: enrichedDocuments,
         total: totalCount || 0,
       };
     } catch (error: any) {
@@ -95,14 +134,10 @@ export class AdminDocumentService {
    */
   async getDocumentForReview(documentId: string): Promise<DocumentWithDetails | null> {
     try {
+      // Get the document first
       const { data: document, error } = await supabase
         .from('driver_documents')
-        .select(`
-          *,
-          driver:drivers(user_id, identification_type, identification_number),
-          session:driver_registration_sessions(user_id, vehicle_type),
-          reviews:document_reviews(*)
-        `)
+        .select('*')
         .eq('id', documentId)
         .single();
 
@@ -111,7 +146,48 @@ export class AdminDocumentService {
         return null;
       }
 
-      return document;
+      if (!document) {
+        return null;
+      }
+
+      // Enrich with related data
+      let driver = null;
+      let session = null;
+      let reviews = [];
+
+      // Get driver info if driverId exists
+      if (document.driver_id) {
+        const { data: driverData } = await supabase
+          .from('drivers')
+          .select('user_id, identification_type, identification_number')
+          .eq('id', document.driver_id)
+          .single();
+        driver = driverData;
+      }
+
+      // Get session info if sessionId exists
+      if (document.session_id) {
+        const { data: sessionData } = await supabase
+          .from('driver_registration_sessions')
+          .select('user_id, vehicle_type')
+          .eq('id', document.session_id)
+          .single();
+        session = sessionData;
+      }
+
+      // Get reviews
+      const { data: reviewsData } = await supabase
+        .from('document_reviews')
+        .select('*')
+        .eq('document_id', documentId);
+      reviews = reviewsData || [];
+
+      return {
+        ...document,
+        driver,
+        session,
+        reviews,
+      };
     } catch (error: any) {
       logger.error('Get document for review error:', error);
       return null;
@@ -205,14 +281,10 @@ export class AdminDocumentService {
     notes?: string
   ): Promise<void> {
     try {
-      // Get document and user details
+      // Get document first
       const { data: document, error } = await supabase
         .from('driver_documents')
-        .select(`
-          *,
-          driver:drivers(user_id),
-          session:driver_registration_sessions(user_id)
-        `)
+        .select('*')
         .eq('id', documentId)
         .single();
 
@@ -221,14 +293,31 @@ export class AdminDocumentService {
         return;
       }
 
-      const userId = document.driver?.user_id || document.session?.user_id;
+      let userId = null;
+
+      // Get user ID from driver or session
+      if (document.driver_id) {
+        const { data: driver } = await supabase
+          .from('drivers')
+          .select('user_id')
+          .eq('id', document.driver_id)
+          .single();
+        userId = driver?.user_id;
+      } else if (document.session_id) {
+        const { data: session } = await supabase
+          .from('driver_registration_sessions')
+          .select('user_id')
+          .eq('id', document.session_id)
+          .single();
+        userId = session?.user_id;
+      }
+
       if (!userId) {
         logger.error('No user ID found for document notification');
         return;
       }
 
-      // Get user email from auth service (we'll need to call auth service API)
-      // For now, we'll create the notification record
+      // Create notification record
       const notificationType = action === 'approve' ? 'document_approved' :
                               action === 'reject' ? 'document_rejected' :
                               'replacement_requested';

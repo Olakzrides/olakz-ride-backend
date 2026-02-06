@@ -4,7 +4,7 @@ import { logger } from '../config/logger';
 export interface DocumentAccessLog {
   documentId: string;
   userId: string;
-  action: 'upload' | 'view' | 'download' | 'delete' | 'update' | 'review';
+  action: 'upload' | 'view' | 'download' | 'delete' | 'update' | 'review' | 'driver_review';
   ipAddress?: string;
   userAgent?: string;
   metadata?: any;

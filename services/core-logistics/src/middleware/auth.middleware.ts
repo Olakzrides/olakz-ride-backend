@@ -57,18 +57,22 @@ export const authenticate = async (
 /**
  * Check if user has required role
  */
-// export const authorize = (...roles: string[]) => {
-//   return (req: Request, res: Response, next: NextFunction): void | Response => {
-//     const user = (req as AuthRequest).user;
+export const authorize = (...roles: string[]) => {
+  return (req: Request, res: Response, next: NextFunction): void | Response => {
+    const user = (req as AuthRequest).user;
 
-//     if (!user) {
-//       return ResponseUtil.unauthorized(res);
-//     }
+    if (!user) {
+      return ResponseUtil.unauthorized(res);
+    }
 
-//     if (!roles.includes(user.role)) {
-//       return ResponseUtil.forbidden(res, 'Insufficient permissions');
-//     }
+    // Handle both single role and multiple roles (admin users)
+    const userRoles = 'roles' in user ? user.roles : [user.role];
+    const hasRequiredRole = userRoles.some(userRole => roles.includes(userRole));
 
-//     next();
-//   };
-// };
+    if (!hasRequiredRole) {
+      return ResponseUtil.forbidden(res, 'Insufficient permissions');
+    }
+
+    next();
+  };
+};

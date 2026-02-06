@@ -99,19 +99,30 @@ export class AdminDocumentController {
         return;
       }
 
-      // Get secure signed URL for document viewing
-      const signedUrl = await this.documentService.getSecureDocumentUrl(
-        documentId,
-        req.user?.id || 'admin',
-        24 * 60 * 60, // 24 hours
-        req.ip,
-        req.get('User-Agent')
-      );
+      // Try to get secure signed URL for document viewing
+      let signedUrl = null;
+      try {
+        signedUrl = await this.documentService.getSecureDocumentUrl(
+          documentId,
+          req.user?.id || 'admin',
+          24 * 60 * 60, // 24 hours
+          req.ip,
+          req.get('User-Agent')
+        );
+      } catch (error: any) {
+        logger.warn('Could not generate signed URL for document:', {
+          documentId,
+          error: error.message,
+          documentUrl: (document as any).document_url,
+        });
+        // Continue without signed URL - admin can still see document metadata
+      }
 
       sendResponse(res, 200, 'Document details retrieved successfully', {
         document: {
           ...document,
           signedUrl,
+          signedUrlError: signedUrl ? null : 'Document file not accessible - may have been moved or deleted',
         },
       });
     } catch (error: any) {

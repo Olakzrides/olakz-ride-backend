@@ -52,13 +52,17 @@ export const adminAuthMiddleware = async (
     // Verify JWT token
     const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
 
-    if (!decoded || !decoded.id) {
+    if (!decoded || (!decoded.id && !decoded.userId)) {
       sendError(res, 401, 'Invalid admin token', 'INVALID_ADMIN_TOKEN');
       return;
     }
 
+    // Get user ID (support both id and userId for compatibility)
+    const userId = decoded.id || decoded.userId;
+
     // Check if user has admin role
-    const userRoles = decoded.roles || [];
+    // Handle both single role (role) and multiple roles (roles) formats
+    const userRoles = decoded.roles || (decoded.role ? [decoded.role] : []);
     const isAdmin = userRoles.includes('admin') || userRoles.includes('super_admin');
 
     if (!isAdmin) {
@@ -68,14 +72,14 @@ export const adminAuthMiddleware = async (
 
     // Add user info to request
     req.user = {
-      id: decoded.id,
+      id: userId,
       email: decoded.email,
       roles: userRoles,
       isAdmin: true,
     };
 
     logger.info('Admin authenticated:', {
-      adminId: decoded.id,
+      adminId: userId,
       email: decoded.email,
       roles: userRoles,
       endpoint: req.path,

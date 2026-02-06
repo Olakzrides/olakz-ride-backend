@@ -2,6 +2,7 @@ import { supabase } from '../config/database';
 import { logger } from '../config/logger';
 import { DocumentAccessLogService } from './document-access-log.service';
 import { OCRService } from './ocr.service';
+import { StorageUtil } from '../utils/storage.util';
 
 export interface DocumentMetadata {
   documentType: string;
@@ -332,7 +333,25 @@ export class DocumentService {
    * Generate folder path for document storage
    */
   generateDocumentPath(userId: string, documentType: string): string {
-    return `${userId}/${documentType}`;
+    // Validate inputs
+    if (!userId || !documentType) {
+      throw new Error('userId and documentType are required for path generation');
+    }
+
+    // Ensure no bucket name in path components
+    if (userId.includes('driver-documents') || documentType.includes('driver-documents')) {
+      throw new Error('Path components must not contain bucket name');
+    }
+
+    // Generate clean path
+    const path = `${userId}/${documentType}`;
+
+    // Validate format
+    if (path.includes('//') || path.startsWith('/')) {
+      throw new Error('Invalid path format generated');
+    }
+
+    return path;
   }
 
   /**
@@ -357,10 +376,39 @@ export class DocumentService {
         throw new Error('Document not found');
       }
 
+      // Get file path (prefer file_path over document_url)
+      const filePath = document.file_path || document.document_url;
+      
+      if (!filePath) {
+        throw new Error('Document file path is missing');
+      }
+
+      // Validate file path format
+      const pathValidation = StorageUtil.validateFilePath(filePath);
+      if (!pathValidation.isValid) {
+        logger.warn('Invalid file path format:', {
+          documentId,
+          filePath,
+          error: pathValidation.error,
+        });
+        throw new Error(`Invalid file path: ${pathValidation.error}`);
+      }
+
+      // Check if file exists in storage before generating signed URL
+      const fileExists = await StorageUtil.fileExists(filePath);
+      if (!fileExists) {
+        logger.warn('Document file not found in storage:', {
+          documentId,
+          filePath,
+          userId,
+        });
+        throw new Error('Document file not found in storage. The file may have been deleted or moved. Please re-upload the document.');
+      }
+
       // Generate signed URL from file path
       const { data, error: signedUrlError } = await supabase.storage
         .from('driver-documents')
-        .createSignedUrl(document.file_path || document.document_url, expiresIn);
+        .createSignedUrl(filePath, expiresIn);
 
       if (signedUrlError) {
         throw new Error(`Failed to generate signed URL: ${signedUrlError.message}`);
@@ -376,12 +424,39 @@ export class DocumentService {
         metadata: {
           expiresIn,
           fileName: document.file_name,
+          fileExists: true,
         },
+      });
+
+      logger.info('Secure document URL generated:', {
+        documentId,
+        userId,
+        fileName: document.file_name,
+        expiresIn,
       });
 
       return data.signedUrl;
     } catch (error: any) {
       logger.error('Get secure document URL error:', error);
+      
+      // Log failed access attempt with error in metadata
+      try {
+        await DocumentAccessLogService.logAccess({
+          documentId,
+          userId,
+          action: 'view',
+          ipAddress,
+          userAgent,
+          metadata: {
+            success: false,
+            error: error.message,
+          },
+        });
+      } catch (logError) {
+        // Don't throw if logging fails
+        logger.error('Failed to log access error:', logError);
+      }
+      
       throw error;
     }
   }

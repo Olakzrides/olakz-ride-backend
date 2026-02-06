@@ -6,6 +6,7 @@ import driverRoutes from './driver.routes';
 import driverRegistrationRoutes from './driver-registration.routes';
 import walletRoutes from './wallet.routes';
 import adminDocumentRoutes from './admin-document.routes';
+import adminDriverRoutes from './admin-driver.routes';
 
 const router = Router();
 
@@ -16,6 +17,7 @@ router.use('/api', variantRoutes);
 
 // Mount admin routes (with admin auth middleware)
 router.use('/api/admin/documents', adminDocumentRoutes);
+router.use('/api/admin/drivers', adminDriverRoutes);
 
 // Mount routes with global auth middleware last
 router.use('/api', cartRoutes);

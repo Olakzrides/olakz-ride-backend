@@ -1,5 +1,13 @@
 import dotenv from 'dotenv';
 dotenv.config();
+
+// Debug: Check if INTERNAL_API_KEY is loaded
+console.log('🔍 Environment check after dotenv.config():', {
+  hasInternalApiKey: !!process.env.INTERNAL_API_KEY,
+  keyLength: process.env.INTERNAL_API_KEY?.length,
+  keyPreview: process.env.INTERNAL_API_KEY?.substring(0, 10) + '...',
+});
+
 import app from './app';
 import logger from './utils/logger';
 import config from './config';

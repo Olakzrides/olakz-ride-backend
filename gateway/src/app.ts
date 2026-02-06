@@ -70,17 +70,20 @@ app.get('/', (_req: Request, res: Response) => {
     endpoints: {
       health: '/health',
       auth: '/api/auth/*',
+      users: '/api/users/*',
       ride: '/api/ride/*',
       carts: '/api/carts/*',
       variants: '/api/variants',
       drivers: '/api/drivers/*',
+      driverRegistration: '/api/driver-registration/*',
+      admin: '/api/admin/*',
       deliveries: '/api/deliveries/*',
       riders: '/api/riders/*',
       tracking: '/api/tracking/*',
       pricing: '/api/pricing/*',
       payments: '/api/payments/*',
-      store: '/store/*',
-      services: '/services/*',
+      store: '/api/store/*',
+      services: '/api/services/*',
     },
   });
 });

@@ -253,4 +253,96 @@ export class StorageUtil {
 
     return data.signedUrl;
   }
+
+  /**
+   * Check if a file exists in Supabase Storage
+   * @param filePath - The path to the file in storage (without bucket name)
+   * @returns Promise<boolean> - True if file exists, false otherwise
+   */
+  static async fileExists(filePath: string): Promise<boolean> {
+    try {
+      if (!filePath) {
+        console.warn('File existence check: empty file path provided');
+        return false;
+      }
+
+      // Extract directory and filename from path
+      const pathParts = filePath.split('/');
+      const fileName = pathParts.pop();
+      const directory = pathParts.join('/') || '';
+
+      // Use Supabase Storage list API to check file existence
+      const { data, error } = await supabase.storage
+        .from(this.BUCKET_NAME)
+        .list(directory, {
+          search: fileName,
+        });
+
+      if (error) {
+        console.warn('File existence check failed:', { 
+          filePath, 
+          error: error.message 
+        });
+        return false;
+      }
+
+      // Check if file was found in the list
+      const fileFound = data && data.some(file => file.name === fileName);
+      
+      console.log('File existence check:', { 
+        filePath, 
+        exists: fileFound,
+        directory,
+        fileName 
+      });
+
+      return fileFound;
+    } catch (error: any) {
+      console.error('File existence check error:', { 
+        filePath, 
+        error: error.message 
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Validate file path format
+   * @param filePath - The path to validate
+   * @returns Object with validation result and error message if invalid
+   */
+  static validateFilePath(filePath: string): { isValid: boolean; error?: string } {
+    if (!filePath) {
+      return { isValid: false, error: 'File path is required' };
+    }
+
+    // Check for bucket name in path (should not be there)
+    if (filePath.includes(this.BUCKET_NAME)) {
+      return { 
+        isValid: false, 
+        error: `Path must not contain bucket name "${this.BUCKET_NAME}"` 
+      };
+    }
+
+    // Check for double slashes
+    if (filePath.includes('//')) {
+      return { isValid: false, error: 'Path contains invalid double slashes' };
+    }
+
+    // Check if path starts with slash (should be relative)
+    if (filePath.startsWith('/')) {
+      return { isValid: false, error: 'Path must be relative (should not start with /)' };
+    }
+
+    // Check for valid format: userId/documentType/filename
+    const pathParts = filePath.split('/');
+    if (pathParts.length < 3) {
+      return { 
+        isValid: false, 
+        error: 'Path must follow format: userId/documentType/filename' 
+      };
+    }
+
+    return { isValid: true };
+  }
 }

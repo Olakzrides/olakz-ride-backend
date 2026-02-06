@@ -10,6 +10,7 @@ import { AppError } from './utils/errors';
 // Routes
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
+import emailRoutes from './routes/email.routes';
 
 const app: Application = express();
 
@@ -64,6 +65,7 @@ app.get('/', (_req: Request, res: Response) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/auth', emailRoutes);
 app.use('/api/users', userRoutes);
 
 // 404 handler

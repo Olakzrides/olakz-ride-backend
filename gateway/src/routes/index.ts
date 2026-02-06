@@ -142,6 +142,21 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))
   );
 
+  // Admin routes for core-logistics (document verification, driver review, etc.)
+  app.use(
+    '/api/admin',
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+  );
+
+  // Legacy core-logistics admin routes (for backward compatibility)
+  app.use(
+    '/api/core-logistics',
+    createProxyMiddleware(createProxyOptions(
+      config.services.logistics.url,
+      { '^/api/core-logistics': '/api' }
+    ))
+  );
+
   // Legacy logistics routes (for future phases)
   app.use(
     '/api/deliveries',

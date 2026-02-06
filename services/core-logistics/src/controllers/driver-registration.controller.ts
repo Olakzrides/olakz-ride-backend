@@ -1,13 +1,15 @@
 import { Request, Response } from 'express';
 import { VehicleTypeService } from '../services/vehicle-type.service';
 import { VehicleValidationService } from '../services/vehicle-validation.service';
-import { RegistrationSessionService } from '../services/registration-session.service';
+import { RegistrationSessionService, RegistrationSessionData } from '../services/registration-session.service';
 import { ComprehensiveValidationService } from '../services/comprehensive-validation.service';
 import { DocumentService } from '../services/document.service';
+import { NotificationService } from '../services/notification.service';
 import { StorageUtil } from '../utils/storage.util';
 import { ResponseUtil } from '../utils/response.util';
 import { DriverRegistrationErrorCode } from '../types/error-codes.types';
 import { logger } from '../config/logger';
+import { supabase } from '../config/database';
 
 interface AuthRequest extends Request {
   user?: {
@@ -24,6 +26,7 @@ export class DriverRegistrationController {
   private registrationSessionService: RegistrationSessionService;
   private comprehensiveValidationService: ComprehensiveValidationService;
   private documentService: DocumentService;
+  private notificationService: NotificationService;
 
   constructor() {
     this.vehicleTypeService = new VehicleTypeService();
@@ -31,6 +34,7 @@ export class DriverRegistrationController {
     this.registrationSessionService = new RegistrationSessionService();
     this.comprehensiveValidationService = new ComprehensiveValidationService();
     this.documentService = new DocumentService();
+    this.notificationService = new NotificationService();
   }
 
   getVehicleTypes = async (_req: Request, res: Response): Promise<void> => {
@@ -664,16 +668,24 @@ export class DriverRegistrationController {
         return;
       }
 
+      // **NEW: Create Driver Record**
+      const driver = await this.createDriverFromSession(session);
+
+      // **NEW: Link Documents to Driver**
+      await this.linkDocumentsToDriver(sessionId, driver.id);
+
       // Complete the session
       const completedSession = await this.registrationSessionService.completeSession(sessionId);
 
       const response: any = {
         registration_id: completedSession.id,
+        driver_id: driver.id,
         status: completedSession.status,
         current_step: completedSession.currentStep,
         progress_percentage: completedSession.progressPercentage,
         submitted_at: completedSession.submittedAt,
-        message: 'Registration submitted successfully. You will be notified once your application is reviewed.',
+        driver_status: driver.status,
+        message: 'Registration submitted successfully. Your driver application is now pending admin review.',
       };
 
       // Add warnings if any
@@ -681,9 +693,27 @@ export class DriverRegistrationController {
         response.warnings = completeValidation.warnings;
       }
 
+      logger.info('Driver registration completed:', {
+        sessionId,
+        userId,
+        driverId: driver.id,
+        vehicleType: session.vehicleType,
+      });
+
+      // Send admin notification email (async, don't wait)
+      this.sendAdminNotification({
+        driverName: session.personalInfoData?.full_name || 'New Driver',
+        driverEmail: req.user?.email || '',
+        vehicleType: session.vehicleType,
+        serviceTypes: session.serviceTypes,
+        registrationId: completedSession.id,
+      }).catch(error => {
+        logger.error('Failed to send admin notification:', error);
+      });
+
       ResponseUtil.success(res, response);
     } catch (error: any) {
-      console.error('Error submitting registration:', error);
+      logger.error('Error submitting registration:', error);
       ResponseUtil.standardizedError(
         res,
         DriverRegistrationErrorCode.INTERNAL_SERVER_ERROR,
@@ -1023,4 +1053,143 @@ export class DriverRegistrationController {
       );
     }
   };
+
+  /**
+   * Create driver record from completed registration session
+   */
+  private async createDriverFromSession(session: RegistrationSessionData): Promise<any> {
+    try {
+      const personalInfo = session.personalInfoData;
+      const vehicleDetails = session.vehicleDetailsData;
+
+      // Get vehicle type ID
+      const vehicleType = await this.vehicleTypeService.getVehicleTypeByName(session.vehicleType);
+      if (!vehicleType) {
+        throw new Error(`Vehicle type not found: ${session.vehicleType}`);
+      }
+
+      // Create driver record
+      const { data: driver, error } = await supabase
+        .from('drivers')
+        .insert({
+          user_id: session.userId,
+          identification_type: personalInfo.identification_type || 'drivers_license',
+          identification_number: personalInfo.identification_number || personalInfo.license_number,
+          license_number: personalInfo.license_number,
+          vehicle_type_id: vehicleType.id,
+          status: 'pending', // Pending admin approval
+          rating: 0,
+          total_rides: 0,
+          total_earnings: 0,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        throw new Error(`Failed to create driver record: ${error.message}`);
+      }
+
+      // Create driver vehicle record if vehicle details exist
+      if (vehicleDetails && driver) {
+        await this.createDriverVehicle(driver.id, vehicleType.id, vehicleDetails);
+      }
+
+      logger.info('Driver record created:', {
+        driverId: driver.id,
+        userId: session.userId,
+        vehicleType: session.vehicleType,
+      });
+
+      return driver;
+    } catch (error: any) {
+      logger.error('Error creating driver from session:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create driver vehicle record
+   */
+  private async createDriverVehicle(driverId: string, vehicleTypeId: string, vehicleDetails: any): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('driver_vehicles')
+        .insert({
+          driver_id: driverId,
+          vehicle_type_id: vehicleTypeId,
+          plate_number: vehicleDetails.plate_number || vehicleDetails.registration_number,
+          manufacturer: vehicleDetails.manufacturer || vehicleDetails.make,
+          model: vehicleDetails.model,
+          year: vehicleDetails.year ? parseInt(vehicleDetails.year) : new Date().getFullYear(),
+          color: vehicleDetails.color || 'Unknown',
+          is_active: true,
+        });
+
+      if (error) {
+        logger.error('Failed to create driver vehicle:', error);
+        // Don't throw error - vehicle details are optional
+      }
+    } catch (error: any) {
+      logger.error('Error creating driver vehicle:', error);
+      // Don't throw error - vehicle details are optional
+    }
+  }
+
+  /**
+   * Link session documents to newly created driver
+   */
+  private async linkDocumentsToDriver(sessionId: string, driverId: string): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('driver_documents')
+        .update({
+          driver_id: driverId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('session_id', sessionId)
+        .is('driver_id', null);
+
+      if (error) {
+        throw new Error(`Failed to link documents to driver: ${error.message}`);
+      }
+
+      logger.info('Documents linked to driver:', {
+        sessionId,
+        driverId,
+      });
+    } catch (error: any) {
+      logger.error('Error linking documents to driver:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send admin notification for new driver registration
+   */
+  private async sendAdminNotification(params: {
+    driverName: string;
+    driverEmail: string;
+    vehicleType: string;
+    serviceTypes: string[];
+    registrationId: string;
+  }): Promise<void> {
+    try {
+      const result = await this.notificationService.sendAdminNewDriverNotification(params);
+      
+      if (result.success) {
+        logger.info('Admin notification sent successfully:', {
+          driverName: params.driverName,
+          registrationId: params.registrationId,
+        });
+      } else {
+        logger.warn('Admin notification failed:', {
+          error: result.error,
+          driverName: params.driverName,
+        });
+      }
+    } catch (error: any) {
+      logger.error('Error sending admin notification:', error);
+      // Don't throw - this is a non-critical operation
+    }
+  }
 }
