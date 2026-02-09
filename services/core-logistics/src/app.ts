@@ -10,6 +10,9 @@ import { logger } from './config/logger';
 export function createApp(): Application {
   const app = express();
 
+  // Trust proxy - required when behind gateway/reverse proxy
+  app.set('trust proxy', true);
+
   // Initialize storage bucket
   StorageUtil.initializeBucket().catch(error => {
     logger.error('Failed to initialize storage bucket:', error);
