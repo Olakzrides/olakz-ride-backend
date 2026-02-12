@@ -1,0 +1,764 @@
+# UI/UX Flow Analysis & Implementation Plan
+
+## Date: February 12, 2026
+
+---
+
+## 📊 COMPLETE UI FLOW ANALYSIS
+
+### **UI Flow Screens Analyzed:**
+
+#### **Phase 1: Ride Setup (Screens 1-4)**
+1. Map view with pickup/dropoff selection
+2. Pickup location entry
+3. Destination entry with stops
+4. Ride Now vs Schedule selection
+
+#### **Phase 2: Booking Details (Screens 5-8)**
+5. Schedule date/time picker
+6. Book for Me vs Book for Friend
+7. Recipient details (name, contact)
+8. Vehicle type selection (Standard/Premium/VIP)
+
+#### **Phase 3: Payment & Confirmation (Screens 9-11)**
+9. Payment method selection (Wallet/Card/Cash)
+10. Saved cards management
+11. Ride confirmation with details
+
+#### **Phase 4: Driver Matching (Screens 12-15)**
+12. Searching for driver (loading state)
+13. Driver found - connecting
+14. Driver details shown
+15. Driver arriving notification
+
+#### **Phase 5: Trip Progress (Screens 16-19)**
+16. Driver at pickup
+17. Trip in progress
+18. Trip completed
+19. Rating & tip screen
+
+#### **Phase 6: Cancellation Flow (Screens 20-22)**
+20. Cancel ride confirmation
+21. Cancellation reason selection
+22. Order cancelled confirmation
+
+---
+
+## ✅ WHAT MATCHES CURRENT IMPLEMENTATION
+
+### **1. Core Ride Booking** ✅
+| Feature | UI Shows | Implementation | Status |
+|---------|----------|----------------|--------|
+| Pickup location | ✅ | `ride_carts.pickup_*` | ✅ MATCH |
+| Dropoff location | ✅ | `ride_carts.dropoff_*` | ✅ MATCH |
+| Create cart | ✅ | `POST /api/ride/cart` | ✅ MATCH |
+| Update dropoff | ✅ | `PUT /api/carts/:id/dropoff` | ✅ MATCH |
+
+### **2. Vehicle Selection** ✅
+| Feature | UI Shows | Implementation | Status |
+|---------|----------|----------------|--------|
+| Standard/Premium/VIP | ✅ | `ride_variants` table | ✅ MATCH |
+| Price display | ✅ | `FareService` | ✅ MATCH |
+| Seat capacity | ✅ | `vehicle_types.capacity` | ✅ MATCH |
+| Vehicle icons | ✅ | `vehicle_types.icon_url` | ✅ MATCH |
+
+### **3. Driver Matching** ✅
+| Feature | UI Shows | Implementation | Status |
+|---------|----------|----------------|--------|
+| Searching state | ✅ | `rides.status = 'searching'` | ✅ MATCH |
+| Driver assignment | ✅ | `RideMatchingService` | ✅ MATCH |
+| Driver details | ✅ | Driver profile data | ✅ MATCH |
+| Real-time updates | ✅ | Socket.IO | ✅ MATCH |
+
+### **4. Trip Progress** ✅
+| Feature | UI Shows | Implementation | Status |
+|---------|----------|----------------|--------|
+| Driver arriving | ✅ | `status = 'driver_assigned'` | ✅ MATCH |
+| Driver at pickup | ✅ | `status = 'driver_arrived'` | ✅ MATCH |
+| Trip in progress | ✅ | `status = 'in_progress'` | ✅ MATCH |
+| Trip completed | ✅ | `status = 'completed'` | ✅ MATCH |
+
+### **5. Rating System** ✅
+| Feature | UI Shows | Implementation | Status |
+|---------|----------|----------------|--------|
+| Star rating | ✅ | `rides.driver_rating` | ✅ MATCH |
+| Feedback text | ✅ | `rides.driver_feedback` | ✅ MATCH |
+| Rate driver API | ✅ | `POST /api/ride/:id/rate` | ✅ MATCH |
+
+### **6. Payment Methods** ✅
+| Feature | UI Shows | Implementation | Status |
+|---------|----------|----------------|--------|
+| Wallet | ✅ | `payment_method = 'wallet'` | ✅ MATCH |
+| Cash | ✅ | `payment_method = 'cash'` | ✅ MATCH |
+| Card | ✅ | `payment_method = 'card'` | ✅ MATCH |
+
+### **7. Cancellation** ✅
+| Feature | UI Shows | Implementation | Status |
+|---------|----------|----------------|--------|
+| Cancel ride | ✅ | `status = 'cancelled'` | ✅ MATCH |
+| Cancellation reason | ✅ | `rides.cancellation_reason` | ✅ MATCH |
+
+---
+
+## ❌ WHAT'S MISSING FROM IMPLEMENTATION
+
+### **1. Multiple Stops/Waypoints** ❌ CRITICAL
+**UI Shows:** Screen 3 - Stop between pickup and dropoff
+**Current:** Only single pickup → dropoff
+**Impact:** HIGH - Major feature gap
+
+**Missing:**
+- No `ride_stops` table
+- No API to add/remove stops
+- No fare calculation for multiple stops
+- No route optimization
+
+### **2. Scheduled Rides** ❌ CRITICAL
+**UI Shows:** Screens 4-5 - Date/time picker for future rides
+**Current:** Schema has `scheduled_at` but no API implementation
+**Impact:** HIGH - Advertised feature not working
+
+**Missing:**
+- No scheduling API endpoint
+- No validation for future timestamps
+- No scheduled ride notifications
+- No driver assignment scheduling
+
+### **3. Book for Someone Else** ❌ CRITICAL
+**UI Shows:** Screens 6-7 - Book for friend with recipient details
+**Current:** No recipient information fields
+**Impact:** MEDIUM - Convenience feature
+
+**Missing:**
+- No `booked_for_user_id` field
+- No recipient name/phone fields
+- No API to specify recipient
+- No recipient notifications
+
+### **4. Saved Places** ❌ HIGH
+**UI Shows:** Home, Work, Favorites shortcuts
+**Current:** No saved places functionality
+**Impact:** HIGH - Major UX convenience
+
+**Missing:**
+- No `saved_places` table
+- No API to save/retrieve places
+- No quick selection mechanism
+
+### **5. Recently Visited Locations** ❌ MEDIUM
+**UI Shows:** List of recent addresses
+**Current:** Has recent rides but not location-specific
+**Impact:** MEDIUM - UX convenience
+
+**Missing:**
+- Dedicated recent locations list
+- Location-based filtering
+- Quick selection from history
+
+### **6. Saved Payment Cards** ❌ HIGH
+**UI Shows:** Screen 10 - Saved cards with "Add new card"
+**Current:** Only payment method type, no card storage
+**Impact:** HIGH - Payment convenience
+
+**Missing:**
+- No `payment_cards` table
+- No card tokenization
+- No default card selection
+- No Stripe/Paystack integration
+
+### **7. Wallet Balance Display** ❌ MEDIUM
+**UI Shows:** Screen 9 - "₦13,000.00" wallet balance
+**Current:** Wallet transactions exist but no balance API
+**Impact:** MEDIUM - User needs to see balance
+
+**Missing:**
+- No wallet balance calculation
+- No top-up functionality
+- No wallet history API
+
+### **8. Chat with Support** ❌ MEDIUM
+**UI Shows:** "Chat with Support" button in ride details
+**Current:** No support chat system
+**Impact:** MEDIUM - Customer support
+
+**Missing:**
+- No chat/messaging system
+- No support ticket system
+- No in-app communication
+
+### **9. Share Ride Details** ❌ MEDIUM
+**UI Shows:** "Share ride details" button
+**Current:** No sharing functionality
+**Impact:** MEDIUM - Safety feature
+
+**Missing:**
+- No shareable ride link
+- No SMS/WhatsApp integration
+- No live tracking link
+
+### **10. Tip Driver** ❌ LOW
+**UI Shows:** Screen 19 - Tip amount buttons (₦100, ₦200, etc.)
+**Current:** No tipping system
+**Impact:** LOW - Nice to have
+
+**Missing:**
+- No tip amount field
+- No tip payment processing
+- No driver tip earnings
+
+### **11. Google Maps Integration** ❌ CRITICAL
+**UI Shows:** Real map with routes, pins, live tracking
+**Current:** Using mock data (`USE_MOCK_MAPS=true`)
+**Impact:** CRITICAL - Core functionality
+
+**Missing:**
+- Real distance calculation
+- Real duration with traffic
+- Route visualization
+- Live driver tracking on map
+
+### **12. Passenger Count Removed** ✅ CORRECT
+**UI Shows:** NO passenger selection
+**Current:** Has `passengers` field
+**Action:** REMOVE from API (keep in DB for analytics)
+
+---
+
+## 🔧 WHAT NEEDS REFACTORING
+
+### **1. Remove Passenger Count from API** ✅
+**Current:** Required in `POST /api/ride/cart`
+**Should Be:** Optional or removed entirely
+**Reason:** Not in UI design
+
+### **2. Simplify Cart Creation** ⚠️
+**Current:** Requires `productId`, `salesChannelId`
+**Should Be:** Frontend auto-fills these
+**Reason:** User shouldn't see internal IDs
+
+### **3. Add Service Channel Tracking** ✅
+**Current:** `salesChannelId` exists
+**Should Be:** Properly integrated with `service_channels` table
+**Reason:** Analytics and multi-service support
+
+---
+
+## 📋 3-PHASE IMPLEMENTATION PLAN
+
+---
+
+## **PHASE 1: CRITICAL MISSING FEATURES** (Week 1-2)
+**Goal:** Implement features that are shown in UI but completely missing
+
+### **1.1 Scheduled Rides** 🔴 CRITICAL
+**Priority:** P0 - Blocking feature
+
+**Database Changes:**
+```sql
+-- Already exists in schema
+-- rides.scheduled_at TIMESTAMPTZ
+-- Just need to implement API
+```
+
+**API Implementation:**
+- Update `POST /api/ride/request` to accept `scheduledAt`
+- Validate future timestamp (min 30 mins, max 7 days)
+- Create scheduled ride with `status = 'scheduled'`
+- Background job to activate ride at scheduled time
+- Push notification before scheduled time
+
+**Files to Create/Modify:**
+- `services/core-logistics/src/services/scheduled-ride.service.ts` (NEW)
+- `services/core-logistics/src/controllers/ride.controller.ts` (UPDATE)
+- `services/core-logistics/src/validators/ride.validator.ts` (UPDATE)
+
+**Estimated Time:** 2 days
+
+---
+
+### **1.2 Book for Someone Else** 🔴 CRITICAL
+**Priority:** P0 - Shown in UI
+
+**Database Migration:**
+```sql
+-- Add to rides table
+ALTER TABLE rides ADD COLUMN booked_for_user_id UUID;
+ALTER TABLE rides ADD COLUMN recipient_name VARCHAR(100);
+ALTER TABLE rides ADD COLUMN recipient_phone VARCHAR(20);
+ALTER TABLE rides ADD COLUMN booking_type VARCHAR(20) DEFAULT 'self'; -- 'self' or 'friend'
+```
+
+**API Implementation:**
+- Update `POST /api/ride/request` to accept recipient details
+- Validate recipient phone number
+- Send ride details to recipient via SMS
+- Show recipient info to driver
+
+**Files to Create/Modify:**
+- Migration: `20260212_add_recipient_fields_to_rides.sql` (NEW)
+- `services/core-logistics/src/controllers/ride.controller.ts` (UPDATE)
+- `services/core-logistics/src/services/ride.service.ts` (UPDATE)
+
+**Estimated Time:** 1 day
+
+---
+
+### **1.3 Multiple Stops/Waypoints** 🔴 CRITICAL
+**Priority:** P0 - Major feature
+
+**Database Migration:**
+```sql
+CREATE TABLE ride_stops (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ride_id UUID REFERENCES rides(id) ON DELETE CASCADE,
+  cart_id UUID REFERENCES ride_carts(id) ON DELETE CASCADE,
+  stop_order INT NOT NULL,
+  stop_type VARCHAR(20) NOT NULL, -- 'pickup', 'waypoint', 'dropoff'
+  latitude DECIMAL(10,8) NOT NULL,
+  longitude DECIMAL(11,8) NOT NULL,
+  address TEXT NOT NULL,
+  arrival_time TIMESTAMPTZ,
+  departure_time TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_ride_stops_ride_id ON ride_stops(ride_id);
+CREATE INDEX idx_ride_stops_cart_id ON ride_stops(cart_id);
+CREATE INDEX idx_ride_stops_order ON ride_stops(ride_id, stop_order);
+```
+
+**API Implementation:**
+- `POST /api/carts/:id/stops` - Add stop to cart
+- `DELETE /api/carts/:id/stops/:stopId` - Remove stop
+- `PUT /api/carts/:id/stops/reorder` - Reorder stops
+- Update fare calculation for multiple stops
+- Update route optimization
+
+**Files to Create/Modify:**
+- Migration: `20260212_create_ride_stops_table.sql` (NEW)
+- `services/core-logistics/src/services/ride-stops.service.ts` (NEW)
+- `services/core-logistics/src/controllers/cart.controller.ts` (UPDATE)
+- `services/core-logistics/src/services/fare.service.ts` (UPDATE)
+- Update Prisma schema
+
+**Estimated Time:** 3 days
+
+---
+
+### **1.4 Google Maps API Integration** 🔴 CRITICAL
+**Priority:** P0 - Core functionality
+
+**Implementation:**
+- Replace mock data with real Google Maps API
+- Distance Matrix API for distance/duration
+- Directions API for route visualization
+- Geocoding API for address ↔ coordinates
+- Real-time traffic data
+
+**Environment Variables:**
+```env
+GOOGLE_MAPS_API_KEY=your_api_key_here
+USE_MOCK_MAPS=false
+```
+
+**Files to Modify:**
+- `services/core-logistics/src/utils/maps.util.ts` (MAJOR UPDATE)
+- `services/core-logistics/src/services/fare.service.ts` (UPDATE)
+- `services/core-logistics/src/services/ride-matching.service.ts` (UPDATE)
+
+**Estimated Time:** 2 days
+
+---
+
+### **1.5 Saved Places** 🟡 HIGH
+**Priority:** P1 - Major UX feature
+
+**Database Migration:**
+```sql
+CREATE TABLE saved_places (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  place_type VARCHAR(20) NOT NULL, -- 'home', 'work', 'favorite'
+  label VARCHAR(100),
+  latitude DECIMAL(10,8) NOT NULL,
+  longitude DECIMAL(11,8) NOT NULL,
+  address TEXT NOT NULL,
+  is_default BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_saved_places_user_id ON saved_places(user_id);
+CREATE INDEX idx_saved_places_type ON saved_places(user_id, place_type);
+```
+
+**API Implementation:**
+- `GET /api/saved-places` - Get user's saved places
+- `POST /api/saved-places` - Save new place
+- `PUT /api/saved-places/:id` - Update place
+- `DELETE /api/saved-places/:id` - Delete place
+- `POST /api/saved-places/:id/set-default` - Set as default
+
+**Files to Create/Modify:**
+- Migration: `20260212_create_saved_places_table.sql` (NEW)
+- `services/core-logistics/src/services/saved-places.service.ts` (NEW)
+- `services/core-logistics/src/controllers/saved-places.controller.ts` (NEW)
+- `services/core-logistics/src/routes/saved-places.routes.ts` (NEW)
+- Update Prisma schema
+
+**Estimated Time:** 2 days
+
+---
+
+### **Phase 1 Summary:**
+- **Duration:** 10 days (2 weeks)
+- **Features:** 5 critical features
+- **Database Migrations:** 3 new tables
+- **New Services:** 3
+- **API Endpoints:** ~15 new endpoints
+
+---
+
+## **PHASE 2: PAYMENT & WALLET FEATURES** (Week 3-4)
+**Goal:** Complete payment system with cards and wallet
+
+### **2.1 Saved Payment Cards** 🟡 HIGH
+**Priority:** P1 - Payment convenience
+
+**Database Migration:**
+```sql
+CREATE TABLE payment_cards (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  card_token VARCHAR(255) NOT NULL, -- Stripe/Paystack token
+  card_last4 VARCHAR(4) NOT NULL,
+  card_brand VARCHAR(20) NOT NULL, -- visa, mastercard, etc.
+  card_exp_month INT NOT NULL,
+  card_exp_year INT NOT NULL,
+  cardholder_name VARCHAR(100),
+  is_default BOOLEAN DEFAULT false,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_payment_cards_user_id ON payment_cards(user_id);
+CREATE INDEX idx_payment_cards_default ON payment_cards(user_id, is_default);
+```
+
+**API Implementation:**
+- `GET /api/payment/cards` - Get saved cards
+- `POST /api/payment/cards` - Add new card (tokenize)
+- `DELETE /api/payment/cards/:id` - Remove card
+- `POST /api/payment/cards/:id/set-default` - Set default
+- Integrate Stripe/Paystack for tokenization
+
+**Files to Create/Modify:**
+- Migration: `20260213_create_payment_cards_table.sql` (NEW)
+- `services/core-logistics/src/services/payment-cards.service.ts` (NEW)
+- `services/core-logistics/src/controllers/payment.controller.ts` (NEW)
+- `services/core-logistics/src/routes/payment.routes.ts` (NEW)
+- Update Prisma schema
+
+**Estimated Time:** 3 days
+
+---
+
+### **2.2 Wallet Balance & Top-up** 🟡 HIGH
+**Priority:** P1 - User needs to see balance
+
+**API Implementation:**
+- `GET /api/wallet/balance` - Get current balance
+- `POST /api/wallet/topup` - Add funds to wallet
+- `GET /api/wallet/transactions` - Transaction history
+- Calculate balance from `wallet_transactions` table
+
+**Files to Create/Modify:**
+- `services/core-logistics/src/services/wallet.service.ts` (UPDATE)
+- `services/core-logistics/src/controllers/wallet.controller.ts` (UPDATE)
+
+**Estimated Time:** 2 days
+
+---
+
+### **2.3 Payment Method Selection** 🟡 HIGH
+**Priority:** P1 - UI shows this
+
+**API Implementation:**
+- Update ride request to accept payment method details
+- Support: wallet, cash, saved card, new card
+- Validate wallet balance before booking
+- Process card payment on ride completion
+
+**Files to Modify:**
+- `services/core-logistics/src/controllers/ride.controller.ts` (UPDATE)
+- `services/core-logistics/src/services/payment.service.ts` (UPDATE)
+
+**Estimated Time:** 2 days
+
+---
+
+### **2.4 Refactor: Remove Passenger Count** ✅
+**Priority:** P2 - Cleanup
+
+**Changes:**
+- Make `passengers` optional in API (default to 1)
+- Remove from request validation
+- Keep in database for analytics
+- Update documentation
+
+**Files to Modify:**
+- `services/core-logistics/src/controllers/cart.controller.ts` (UPDATE)
+- `services/core-logistics/src/validators/cart.validator.ts` (UPDATE)
+- Update API documentation
+
+**Estimated Time:** 0.5 days
+
+---
+
+### **Phase 2 Summary:**
+- **Duration:** 7.5 days (~2 weeks)
+- **Features:** 4 payment features
+- **Database Migrations:** 1 new table
+- **New Services:** 2
+- **API Endpoints:** ~10 new endpoints
+
+---
+
+## **PHASE 3: CONVENIENCE & SUPPORT FEATURES** (Week 5-6)
+**Goal:** Add remaining UX and support features
+
+### **3.1 Recently Visited Locations** 🟢 MEDIUM
+**Priority:** P2 - UX convenience
+
+**Implementation:**
+- Extract unique locations from recent rides
+- Return top 10 most recent
+- Cache for performance
+
+**API Implementation:**
+- `GET /api/locations/recent` - Get recent locations
+
+**Files to Create/Modify:**
+- `services/core-logistics/src/services/location-history.service.ts` (NEW)
+- `services/core-logistics/src/controllers/location.controller.ts` (NEW)
+
+**Estimated Time:** 1 day
+
+---
+
+### **3.2 Share Ride Details** 🟢 MEDIUM
+**Priority:** P2 - Safety feature
+
+**Implementation:**
+- Generate shareable ride link
+- Public tracking page (no auth required)
+- SMS/WhatsApp sharing integration
+- Live location updates
+
+**API Implementation:**
+- `POST /api/rides/:id/share` - Generate share link
+- `GET /api/rides/track/:token` - Public tracking page
+
+**Files to Create/Modify:**
+- `services/core-logistics/src/services/ride-sharing.service.ts` (NEW)
+- `services/core-logistics/src/controllers/ride.controller.ts` (UPDATE)
+
+**Estimated Time:** 2 days
+
+---
+
+### **3.3 Chat with Support** 🟢 MEDIUM
+**Priority:** P2 - Customer support
+
+**Options:**
+1. Integrate third-party (Intercom, Zendesk)
+2. Build simple in-app chat
+3. Link to WhatsApp Business
+
+**Recommended:** WhatsApp Business integration (fastest)
+
+**Implementation:**
+- Add support WhatsApp number to config
+- Generate pre-filled message with ride details
+- Deep link to WhatsApp
+
+**Files to Modify:**
+- `services/core-logistics/src/config/env.ts` (UPDATE)
+- Add support contact endpoints
+
+**Estimated Time:** 1 day
+
+---
+
+### **3.4 Tip Driver** 🟢 LOW
+**Priority:** P3 - Nice to have
+
+**Database Migration:**
+```sql
+ALTER TABLE rides ADD COLUMN tip_amount DECIMAL(10,2) DEFAULT 0;
+ALTER TABLE rides ADD COLUMN tip_payment_status VARCHAR(20);
+```
+
+**API Implementation:**
+- `POST /api/rides/:id/tip` - Add tip after completion
+- Process tip payment
+- Add to driver earnings
+
+**Files to Modify:**
+- Migration: `20260214_add_tip_to_rides.sql` (NEW)
+- `services/core-logistics/src/controllers/ride.controller.ts` (UPDATE)
+- `services/core-logistics/src/services/payment.service.ts` (UPDATE)
+
+**Estimated Time:** 1 day
+
+---
+
+### **3.5 Cancellation Reasons** ✅ ALREADY EXISTS
+**Priority:** P2 - Feedback collection
+
+**Current:** `rides.cancellation_reason` exists
+**Action:** Just ensure UI sends reason text
+
+**Estimated Time:** 0 days (already done)
+
+---
+
+### **3.6 Service Channel Integration** 🟡 HIGH
+**Priority:** P1 - Multi-service support
+
+**Implementation:**
+- Properly link `productId` to `service_channels`
+- Track service usage in `service_analytics`
+- Support multiple services (Ride, Delivery, Food)
+
+**Files to Modify:**
+- `services/core-logistics/src/services/cart.service.ts` (UPDATE)
+- Add service channel validation
+
+**Estimated Time:** 1 day
+
+---
+
+### **Phase 3 Summary:**
+- **Duration:** 6 days (~1.5 weeks)
+- **Features:** 6 convenience features
+- **Database Migrations:** 1 minor update
+- **New Services:** 3
+- **API Endpoints:** ~8 new endpoints
+
+---
+
+## 📊 COMPLETE IMPLEMENTATION SUMMARY
+
+### **Total Timeline: 5.5 Weeks**
+
+| Phase | Duration | Features | Priority | Status |
+|-------|----------|----------|----------|--------|
+| Phase 1 | 2 weeks | Critical missing features | P0 | 🔴 URGENT |
+| Phase 2 | 2 weeks | Payment & wallet | P1 | 🟡 HIGH |
+| Phase 3 | 1.5 weeks | Convenience & support | P2-P3 | 🟢 MEDIUM |
+
+### **Database Changes:**
+- **New Tables:** 4 (ride_stops, saved_places, payment_cards, + updates)
+- **Table Updates:** 2 (rides, ride_carts)
+- **Total Migrations:** 6
+
+### **Code Changes:**
+- **New Services:** 8
+- **New Controllers:** 4
+- **Updated Controllers:** 5
+- **New Routes:** 4
+- **New API Endpoints:** ~33
+
+### **External Integrations:**
+- Google Maps API (Distance, Directions, Geocoding)
+- Stripe/Paystack (Card tokenization)
+- WhatsApp Business (Support chat)
+
+---
+
+## 🎯 RECOMMENDED EXECUTION ORDER
+
+### **Week 1-2: Phase 1 (Critical)**
+1. Day 1-2: Scheduled rides
+2. Day 3: Book for someone else
+3. Day 4-6: Multiple stops/waypoints
+4. Day 7-8: Google Maps integration
+5. Day 9-10: Saved places
+
+### **Week 3-4: Phase 2 (Payment)**
+1. Day 11-13: Saved payment cards
+2. Day 14-15: Wallet balance & top-up
+3. Day 16-17: Payment method selection
+4. Day 18: Remove passenger count
+
+### **Week 5-6: Phase 3 (Convenience)**
+1. Day 19: Recently visited locations
+2. Day 20-21: Share ride details
+3. Day 22: Chat with support
+4. Day 23: Tip driver
+5. Day 24: Service channel integration
+6. Day 25-26: Testing & bug fixes
+
+---
+
+## ✅ SUCCESS CRITERIA
+
+### **Phase 1 Complete When:**
+- ✅ User can schedule rides for future
+- ✅ User can book rides for friends
+- ✅ User can add multiple stops
+- ✅ Real Google Maps data (no mocks)
+- ✅ User can save favorite places
+
+### **Phase 2 Complete When:**
+- ✅ User can save payment cards
+- ✅ User can see wallet balance
+- ✅ User can top up wallet
+- ✅ User can select payment method
+- ✅ Passenger count removed from UI
+
+### **Phase 3 Complete When:**
+- ✅ User sees recently visited locations
+- ✅ User can share ride with friends
+- ✅ User can contact support
+- ✅ User can tip driver
+- ✅ Service analytics tracking works
+
+---
+
+## 🚨 CRITICAL NOTES
+
+### **DO NOT TOUCH:**
+- ✅ Existing working code (driver operations, real-time features)
+- ✅ Database tables that are working
+- ✅ Socket.IO implementation
+- ✅ Push notifications
+- ✅ Driver matching algorithm
+
+### **MUST REFACTOR:**
+- ⚠️ Remove passenger count from API
+- ⚠️ Replace mock Google Maps with real API
+- ⚠️ Properly integrate service channels
+
+### **TESTING REQUIREMENTS:**
+- Test each phase before moving to next
+- Ensure backward compatibility
+- Test with real Google Maps API
+- Test payment flows thoroughly
+- Test scheduled rides activation
+
+---
+
+## 📝 NEXT STEPS
+
+1. **Review this plan** - Confirm priorities and timeline
+2. **Set up Google Maps API** - Get API key and enable services
+3. **Set up Stripe/Paystack** - For card tokenization
+4. **Start Phase 1** - Begin with scheduled rides
+5. **Daily standups** - Track progress and blockers
+
+---
+
+**Ready to start implementation? Let me know which phase to begin with!**

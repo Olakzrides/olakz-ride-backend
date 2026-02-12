@@ -141,22 +141,64 @@ export class RideService {
       });
 
       // Start driver matching if not scheduled
+      logger.info('🔍 DEBUG: Checking driver matching conditions:', {
+        isScheduled: !!data.scheduled_at,
+        hasRideMatchingService: !!this.rideMatchingService,
+        rideId: rideResult.ride_id,
+      });
+
       if (!data.scheduled_at && this.rideMatchingService) {
+        logger.info('🚀 Starting driver matching for ride:', rideResult.ride_id);
+
         // Get vehicle type for driver matching
-        const { data: variant } = await supabase
+        const { data: variant, error: variantError } = await supabase
           .from('ride_variants')
           .select('vehicle_type_id')
           .eq('id', data.variant_id)
           .single();
 
+        logger.info('🔍 DEBUG: Variant query result:', {
+          variantId: data.variant_id,
+          serviceTierId: variant?.vehicle_type_id, // This is actually the service tier ID
+          error: variantError?.message,
+        });
+
         if (variant) {
-          await this.rideMatchingService.findAndNotifyDriversForRide(rideResult.ride_id, {
+          logger.info('📡 Calling findAndNotifyDriversForRide with:', {
+            rideId: rideResult.ride_id,
+            pickupLat: data.pickup_location.latitude,
+            pickupLng: data.pickup_location.longitude,
+            serviceTierId: variant.vehicle_type_id, // variant.vehicle_type_id is actually the service tier (Standard/Premium/VIP)
+            maxDistance: 15,
+            maxDrivers: 5,
+          });
+
+          const matchingResult = await this.rideMatchingService.findAndNotifyDriversForRide(rideResult.ride_id, {
             pickupLatitude: data.pickup_location.latitude,
             pickupLongitude: data.pickup_location.longitude,
-            vehicleTypeId: variant.vehicle_type_id,
+            serviceTierId: variant.vehicle_type_id, // variant.vehicle_type_id is actually the service tier
             maxDistance: 15, // 15km radius
             maxDrivers: 5,
           });
+
+          logger.info('✅ Driver matching completed:', {
+            rideId: rideResult.ride_id,
+            success: matchingResult.success,
+            driversNotified: matchingResult.driversNotified,
+            batchNumber: matchingResult.batchNumber,
+          });
+        } else {
+          logger.error('❌ Failed to get variant for driver matching:', {
+            variantId: data.variant_id,
+            error: variantError,
+          });
+        }
+      } else {
+        if (data.scheduled_at) {
+          logger.info('⏰ Ride is scheduled, skipping immediate driver matching');
+        }
+        if (!this.rideMatchingService) {
+          logger.error('❌ CRITICAL: rideMatchingService is not initialized!');
         }
       }
 

@@ -6,37 +6,48 @@ A comprehensive ride-hailing platform backend built with Node.js, TypeScript, an
 
 This is a **monorepo** containing multiple microservices:
 
+- **API Gateway** (Port 3000) - Request routing, CORS, rate limiting
+- **Core Logistics Service** (Port 3001) - Ride management, driver operations, real-time features
 - **Auth Service** (Port 3003) - User authentication and authorization
-- **Core Logistics Service** (Port 3001) - Ride management, driver matching, real-time features
-- **API Gateway** (Port 3000) - Request routing and load balancing
+- **Platform Service** (Port 3004) - Store management and platform features
+- **Payment Service** (Port 3002) - Payment processing (Stripe, Paystack)
 
 ## ✨ Features Implemented
 
 ### Phase 1: Core Ride Booking ✅
-- User registration and authentication
+- User registration and authentication (JWT, OTP, OAuth)
 - Ride cart and variant management
-- Basic fare calculation
-- Payment processing (wallet system)
+- Fare calculation with multiple pricing tiers
+- Payment processing with wallet system
+- Multi-role support (customer, driver, admin)
 
-### Phase 2: Driver Management ✅
-- Driver registration and approval workflow
-- Multi-vehicle type support (car, bike, bicycle, truck, bus)
+### Phase 2A: Driver Operations ✅
+- Driver registration with comprehensive validation
 - Document upload and verification (Supabase Storage)
-- Role-based access control (customer/driver/admin)
+- Multi-vehicle type support (car, motorcycle, bicycle, truck, bus)
+- Service tier assignment (Standard, Premium, VIP)
+- Driver availability management (online/offline)
+- Ride acceptance and lifecycle management
+- Driver and passenger rating system
+- Admin approval workflow
 
-### Phase 3: Real-time Features ✅
+### Phase 2B: Real-Time & Notifications ✅
 - **Socket.IO real-time communication**
-- **Multi-driver ride broadcasting** (Bolt/Lyft model)
+- **Push notifications (Firebase Cloud Messaging)**
+- **Multi-driver ride broadcasting**
 - **Intelligent driver matching algorithm**
 - **Real-time location tracking**
 - **First-to-accept wins logic**
-- **30-second timeout handling**
+- **Automatic timeout and retry mechanism**
+- **Device token management**
+- **Notification preferences**
+- **Notification history**
 
-### Phase 4: Advanced Features 🚧
-- Google Maps API integration
-- Surge pricing algorithms
-- Multiple stops/waypoints
-- Driver earnings & payouts
+### Phase 3: Production Features 🚧
+- Trip receipts (PDF generation, email)
+- Emergency features (SOS, trip sharing)
+- Driver earnings tracking and payouts
+- Promo codes and discounts
 - Analytics dashboard
 
 ## 🚀 Quick Start
@@ -160,15 +171,28 @@ npx prisma migrate reset
 
 ## 🧪 Testing
 
-### Real-time Features Testing
-The project includes Socket.IO testing tools:
-- Postman collection with all API endpoints
-- Comprehensive testing guides in `/docs`
-
 ### API Testing
-1. Import Postman collection
+1. Import Postman collection (if available)
 2. Set up environment variables
-3. Follow the testing sequence in the collection
+3. Follow testing guides:
+   - [Phase 2B Testing Guide](PHASE_2B_TESTING_GUIDE.md) - Complete testing workflow
+   - [Frontend API Documentation](FRONTEND_API_DOCUMENTATION.md) - All endpoints
+
+### Real-Time Features Testing
+- **Socket.IO**: Use [Socket.IO Client Tool](https://amritb.github.io/socketio-client-tool/)
+- **Push Notifications**: Requires real mobile device with Firebase SDK
+- **Driver Matching**: Test with multiple driver accounts
+
+### Running Tests
+```bash
+# Auth service tests
+cd services/auth-service
+npm test
+
+# Core logistics tests
+cd services/core-logistics
+npm test
+```
 
 ## 🔐 Security
 
@@ -181,11 +205,25 @@ The project includes Socket.IO testing tools:
 
 ## 📚 Documentation
 
-- [API Documentation](docs/API.md)
+### Essential Guides
+- **[Quick Start Guide](QUICK_START.md)** - Get started in 5 minutes
+- **[Team Setup Guide](TEAM_SETUP_GUIDE.md)** - Onboarding for new developers
+- **[Database Setup Guide](DATABASE_SETUP_GUIDE.md)** - Database configuration
+- **[Firebase Setup Guide](FIREBASE_SETUP_GUIDE.md)** - Push notifications setup
+- **[Deployment Checklist](DEPLOYMENT_CHECKLIST.md)** - Production deployment
+
+### API Documentation
+- **[Frontend API Documentation](FRONTEND_API_DOCUMENTATION.md)** - Complete API reference
+- **[Driver & Admin API Guide](DRIVER_AND_ADMIN_API_GUIDE.md)** - Driver and admin endpoints
+- **[Passenger Ride Booking Flow](PASSENGER_RIDE_BOOKING_FLOW.md)** - Passenger journey
+- **[Phase 2B Testing Guide](PHASE_2B_TESTING_GUIDE.md)** - Real-time features testing
+
+### Architecture Docs
 - [Architecture Overview](docs/ARCHITECTURE.md)
 - [Database Schema](docs/DATABASE.md)
-- [Deployment Guide](docs/DEPLOYMENT.md)
+- [API Reference](docs/API.md)
 - [Setup Instructions](docs/SETUP.md)
+- [Deployment Guide](docs/DEPLOYMENT.md)
 - [Contributing Guidelines](docs/CONTRIBUTING.md)
 
 ## 🤝 Contributing

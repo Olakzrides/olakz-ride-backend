@@ -7,6 +7,7 @@ export interface AdminDriverReview {
   driverId: string;
   reviewerId: string;
   action: 'approve' | 'reject';
+  serviceTier?: 'standard' | 'premium' | 'vip'; // Required when action is 'approve'
   notes?: string;
   rejectionReason?: string;
 }
@@ -206,7 +207,36 @@ export class AdminDriverService {
    */
   async reviewDriverApplication(reviewData: AdminDriverReview): Promise<boolean> {
     try {
-      const { driverId, reviewerId, action, notes, rejectionReason } = reviewData;
+      const { driverId, reviewerId, action, serviceTier, notes, rejectionReason } = reviewData;
+
+      // Validate service tier is provided when approving
+      if (action === 'approve' && !serviceTier) {
+        throw new Error('Service tier is required when approving a driver');
+      }
+
+      // Validate service tier value
+      if (serviceTier && !['standard', 'premium', 'vip'].includes(serviceTier)) {
+        throw new Error('Invalid service tier. Must be: standard, premium, or vip');
+      }
+
+      // Get driver details first (we need user_id)
+      const { data: driverData, error: fetchError } = await supabase
+        .from('drivers')
+        .select('user_id')
+        .eq('id', driverId)
+        .single();
+
+      if (fetchError || !driverData) {
+        logger.error('Failed to get driver data:', fetchError);
+        throw new Error('Driver not found');
+      }
+
+      // Map service tier to UUID
+      const serviceTierMap: Record<string, string> = {
+        standard: '00000000-0000-0000-0000-000000000011',
+        premium: '00000000-0000-0000-0000-000000000012',
+        vip: '00000000-0000-0000-0000-000000000013',
+      };
 
       // Update driver status
       const updateData: any = {
@@ -215,6 +245,16 @@ export class AdminDriverService {
         approved_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
+
+      // Add service tier if approving
+      if (action === 'approve' && serviceTier) {
+        updateData.service_tier_id = serviceTierMap[serviceTier];
+        logger.info('Assigning service tier to driver:', {
+          driverId,
+          serviceTier,
+          serviceTierId: updateData.service_tier_id,
+        });
+      }
 
       if (action === 'reject' && rejectionReason) {
         updateData.rejection_reason = rejectionReason;
@@ -230,6 +270,11 @@ export class AdminDriverService {
       if (driverUpdateError) {
         logger.error('Update driver status error:', driverUpdateError);
         throw new Error(`Failed to update driver: ${driverUpdateError.message}`);
+      }
+
+      // If approved, update user's role to 'driver' in auth service
+      if (action === 'approve') {
+        await this.updateUserRoleToDriver(driverData.user_id);
       }
 
       // Update all driver documents to match driver status
@@ -284,6 +329,7 @@ export class AdminDriverService {
         action: 'driver_review',
         metadata: {
           reviewAction: action,
+          serviceTier,
           notes,
           rejectionReason,
           documentsCount: documents?.length || 0,
@@ -294,6 +340,7 @@ export class AdminDriverService {
         driverId,
         reviewerId,
         action,
+        serviceTier,
         documentsUpdated: documents?.length || 0,
       });
 
@@ -301,6 +348,58 @@ export class AdminDriverService {
     } catch (error: any) {
       logger.error('Review driver application error:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Update user's role to driver in auth service
+   */
+  private async updateUserRoleToDriver(userId: string): Promise<void> {
+    try {
+      // Get current user data
+      const { data: user, error: fetchError } = await supabase
+        .from('users')
+        .select('roles, active_role, role')
+        .eq('id', userId)
+        .single();
+
+      if (fetchError || !user) {
+        logger.error('Failed to get user for role update:', fetchError);
+        return;
+      }
+
+      // Add 'driver' to roles array if not already present
+      const currentRoles = user.roles || [];
+      const updatedRoles = currentRoles.includes('driver') 
+        ? currentRoles 
+        : [...currentRoles, 'driver'];
+
+      // Update user's role (singular), roles (array), and active_role
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({
+          role: 'driver',        // Update singular role column
+          roles: updatedRoles,   // Update roles array
+          active_role: 'driver', // Update active_role
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId);
+
+      if (updateError) {
+        logger.error('Failed to update user role to driver:', updateError);
+        // Don't throw - driver approval is more important than role update
+      } else {
+        logger.info('User role updated to driver:', {
+          userId,
+          previousRole: user.role,
+          previousActiveRole: user.active_role,
+          newRole: 'driver',
+          roles: updatedRoles,
+        });
+      }
+    } catch (error: any) {
+      logger.error('Update user role to driver error:', error);
+      // Don't throw - driver approval is more important than role update
     }
   }
 

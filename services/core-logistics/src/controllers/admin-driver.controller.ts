@@ -164,7 +164,7 @@ export class AdminDriverController {
   reviewDriver = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
       const { driverId } = req.params;
-      const { action, notes, rejectionReason } = req.body;
+      const { action, serviceTier, notes, rejectionReason } = req.body;
       const reviewerId = req.user?.id;
 
       if (!reviewerId) {
@@ -178,6 +178,18 @@ export class AdminDriverController {
         return;
       }
 
+      // Validate service tier for approve action
+      if (action === 'approve' && !serviceTier) {
+        sendError(res, 400, 'Service tier is required when approving a driver', 'SERVICE_TIER_REQUIRED');
+        return;
+      }
+
+      // Validate service tier value
+      if (serviceTier && !['standard', 'premium', 'vip'].includes(serviceTier)) {
+        sendError(res, 400, 'Invalid service tier. Must be: standard, premium, or vip', 'INVALID_SERVICE_TIER');
+        return;
+      }
+
       // Validate rejection reason for reject action
       if (action === 'reject' && !rejectionReason) {
         sendError(res, 400, 'Rejection reason is required for reject action', 'REJECTION_REASON_REQUIRED');
@@ -188,6 +200,7 @@ export class AdminDriverController {
         driverId,
         reviewerId,
         action,
+        serviceTier,
         notes,
         rejectionReason,
       });
@@ -196,6 +209,7 @@ export class AdminDriverController {
         sendResponse(res, 200, `Driver application ${action}d successfully`, {
           driverId,
           action,
+          serviceTier: action === 'approve' ? serviceTier : undefined,
           reviewedBy: reviewerId,
         });
       } else {
@@ -203,7 +217,10 @@ export class AdminDriverController {
       }
     } catch (error: any) {
       logger.error('Review driver error:', error);
-      sendError(res, 500, 'Failed to review driver application', 'DRIVER_REVIEW_ERROR');
+      
+      // Return specific error message if available
+      const errorMessage = error.message || 'Failed to review driver application';
+      sendError(res, 500, errorMessage, 'DRIVER_REVIEW_ERROR');
     }
   };
 

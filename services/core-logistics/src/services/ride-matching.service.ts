@@ -20,7 +20,7 @@ interface DriverMatch {
 interface RideMatchingCriteria {
   pickupLatitude: number;
   pickupLongitude: number;
-  vehicleTypeId: string;
+  serviceTierId: string; // Changed from vehicleTypeId to serviceTierId
   maxDistance: number;
   maxDrivers: number;
 }
@@ -28,7 +28,7 @@ interface RideMatchingCriteria {
 export class RideMatchingService {
   private socketService: SocketService;
   private readonly MAX_DRIVERS_PER_REQUEST = 5;
-  private readonly REQUEST_TIMEOUT_SECONDS = 30;
+  private readonly REQUEST_TIMEOUT_SECONDS = 600;
   private readonly MAX_SEARCH_RADIUS_KM = 15;
 
   constructor(socketService: SocketService) {
@@ -43,32 +43,67 @@ export class RideMatchingService {
     criteria: RideMatchingCriteria
   ): Promise<{ success: boolean; driversNotified: number; batchNumber: number }> {
     try {
-      logger.info(`Starting driver matching for ride: ${rideId}`);
+      logger.info(`🔍 Starting driver matching for ride: ${rideId}`, {
+        criteria,
+      });
 
       // Find available drivers
       const availableDrivers = await this.findAvailableDrivers(criteria);
 
+      logger.info(`📊 Found ${availableDrivers.length} available drivers`, {
+        rideId,
+        driversFound: availableDrivers.length,
+      });
+
       if (availableDrivers.length === 0) {
-        logger.warn(`No available drivers found for ride: ${rideId}`);
+        logger.warn(`⚠️ No available drivers found for ride: ${rideId}`, {
+          criteria,
+        });
         return { success: false, driversNotified: 0, batchNumber: 0 };
       }
 
       // Rank drivers by best match
       const rankedDrivers = this.rankDriversByBestMatch(availableDrivers, criteria);
 
+      logger.info(`📈 Ranked ${rankedDrivers.length} drivers`, {
+        rideId,
+        topDriverDistance: rankedDrivers[0]?.distance,
+      });
+
       // Select top drivers for first batch
       const selectedDrivers = rankedDrivers.slice(0, this.MAX_DRIVERS_PER_REQUEST);
+
+      logger.info(`✅ Selected ${selectedDrivers.length} drivers for first batch`, {
+        rideId,
+        driverIds: selectedDrivers.map(d => d.driverId),
+      });
 
       // Create ride requests in database
       const batchNumber = await this.createRideRequests(rideId, selectedDrivers);
 
+      logger.info(`💾 Created ride requests in database`, {
+        rideId,
+        batchNumber,
+        requestCount: selectedDrivers.length,
+      });
+
       // Broadcast to selected drivers via Socket.IO
       await this.broadcastRideRequestToDrivers(rideId, selectedDrivers, batchNumber);
+
+      logger.info(`📡 Broadcasted ride requests via Socket.IO`, {
+        rideId,
+        batchNumber,
+      });
 
       // Set timeout to handle no responses
       this.scheduleRequestTimeout(rideId, batchNumber, rankedDrivers);
 
-      logger.info(`Ride request sent to ${selectedDrivers.length} drivers for ride: ${rideId}`);
+      logger.info(`⏰ Scheduled timeout for ride requests`, {
+        rideId,
+        timeoutSeconds: this.REQUEST_TIMEOUT_SECONDS,
+      });
+
+      logger.info(`✅ Ride request sent to ${selectedDrivers.length} drivers for ride: ${rideId}`);
 
       return {
         success: true,
@@ -76,7 +111,7 @@ export class RideMatchingService {
         batchNumber,
       };
     } catch (error) {
-      logger.error('Error in driver matching:', error);
+      logger.error('❌ Error in driver matching:', error);
       return { success: false, driversNotified: 0, batchNumber: 0 };
     }
   }
@@ -85,13 +120,76 @@ export class RideMatchingService {
    * Find available drivers based on criteria
    */
   private async findAvailableDrivers(criteria: RideMatchingCriteria): Promise<DriverMatch[]> {
-    const { pickupLatitude, pickupLongitude, vehicleTypeId, maxDistance } = criteria;
+    const { pickupLatitude, pickupLongitude, serviceTierId, maxDistance } = criteria;
 
     logger.info(`Searching for drivers with criteria:`, {
-      vehicleTypeId,
+      serviceTierId,
       maxDistance,
       pickup: { lat: pickupLatitude, lng: pickupLongitude }
     });
+
+    // DEBUG: Check each condition separately
+    logger.info('🔍 DEBUG: Checking driver conditions step by step...');
+    
+    // Step 1: Check approved drivers
+    const { data: approvedDrivers } = await supabase
+      .from('drivers')
+      .select('id, status, service_tier_id')
+      .eq('status', 'approved');
+    logger.info(`✅ Step 1: Found ${approvedDrivers?.length || 0} approved drivers`);
+    
+    // Step 2: Check service tier match
+    const { data: tierMatch } = await supabase
+      .from('drivers')
+      .select('id, service_tier_id')
+      .eq('status', 'approved')
+      .eq('service_tier_id', serviceTierId);
+    logger.info(`✅ Step 2: Found ${tierMatch?.length || 0} drivers with matching service tier`);
+    
+    // Step 3: Check active vehicles
+    const { data: withVehicles } = await supabase
+      .from('drivers')
+      .select(`
+        id,
+        vehicles:driver_vehicles!inner(id, is_active)
+      `)
+      .eq('status', 'approved')
+      .eq('service_tier_id', serviceTierId)
+      .eq('vehicles.is_active', true);
+    logger.info(`✅ Step 3: Found ${withVehicles?.length || 0} drivers with active vehicles`);
+    
+    // Step 4: Check availability records
+    const { data: withAvailability } = await supabase
+      .from('drivers')
+      .select(`
+        id,
+        availability:driver_availability!inner(is_online, is_available, last_seen_at)
+      `)
+      .eq('status', 'approved')
+      .eq('service_tier_id', serviceTierId);
+    logger.info(`✅ Step 4: Found ${withAvailability?.length || 0} drivers with availability records`);
+    
+    // Step 5: Check online and available
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const { data: onlineDrivers } = await supabase
+      .from('drivers')
+      .select(`
+        id,
+        availability:driver_availability!inner(is_online, is_available, last_seen_at)
+      `)
+      .eq('status', 'approved')
+      .eq('service_tier_id', serviceTierId)
+      .eq('availability.is_online', true)
+      .eq('availability.is_available', true)
+      .gte('availability.last_seen_at', fiveMinutesAgo);
+    logger.info(`✅ Step 5: Found ${onlineDrivers?.length || 0} drivers online and available (last 5 min)`);
+    
+    // Step 6: Check location data
+    const { data: withLocation } = await supabase
+      .from('driver_location_tracking')
+      .select('driver_id, latitude, longitude, created_at')
+      .in('driver_id', tierMatch?.map(d => d.id) || []);
+    logger.info(`✅ Step 6: Found ${withLocation?.length || 0} location records for these drivers`);
 
     // Get drivers with latest location and availability
     const { data: driversData, error } = await supabase
@@ -101,7 +199,7 @@ export class RideMatchingService {
         user_id,
         rating,
         total_rides,
-        vehicle_type_id,
+        service_tier_id,
         vehicles:driver_vehicles!inner(
           plate_number,
           manufacturer,
@@ -121,11 +219,11 @@ export class RideMatchingService {
         )
       `)
       .eq('status', 'approved')
-      .eq('vehicle_type_id', vehicleTypeId)
+      .eq('service_tier_id', serviceTierId)
       .eq('vehicles.is_active', true)
       .eq('availability.is_online', true)
       .eq('availability.is_available', true)
-      .gte('availability.last_seen_at', new Date(Date.now() - 5 * 60 * 1000).toISOString()); // Active in last 5 minutes
+      .gte('availability.last_seen_at', fiveMinutesAgo);
 
     logger.info(`Query result: Found ${driversData?.length || 0} drivers, Error: ${error?.message || 'none'}`);
     
@@ -165,8 +263,9 @@ export class RideMatchingService {
       // Skip if too far
       if (distance > (maxDistance || this.MAX_SEARCH_RADIUS_KM)) continue;
 
+      // TODO: Re-enable Socket.IO check when implementing Phase 2B real-time notifications
       // Check if driver is actually online via Socket.IO
-      if (!this.socketService.isDriverOnline(driver.id)) continue;
+      // if (!this.socketService.isDriverOnline(driver.id)) continue;
 
       // Estimate arrival time (assuming average speed of 30 km/h in city)
       const estimatedArrival = Math.ceil((distance / 30) * 60); // minutes

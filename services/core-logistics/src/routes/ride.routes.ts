@@ -23,4 +23,7 @@ router.get('/ride/:rideId', rideController.getRideStatus);
 // Cancel ride
 router.post('/ride/:rideId/cancel', rideController.cancelRide);
 
+// Rate driver (passenger rates driver)
+router.post('/ride/:rideId/rate', rideController.rateDriver);
+
 export default router;

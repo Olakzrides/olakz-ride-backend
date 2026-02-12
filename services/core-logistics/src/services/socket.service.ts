@@ -184,6 +184,11 @@ export class SocketService {
     socket.on('ping', () => {
       socket.emit('pong');
       this.updateLastActivity(socket.userId!);
+      
+      // CRITICAL: Update driver's last_seen_at if they're a driver
+      if (socket.userType === 'driver' && socket.driverId) {
+        this.updateDriverLastSeen(socket.driverId);
+      }
     });
   }
 
@@ -214,6 +219,14 @@ export class SocketService {
         app_version: data.appVersion,
         device_info: data.deviceInfo || {},
       });
+
+      // CRITICAL: Update last_seen_at to keep driver online
+      await supabase
+        .from('driver_availability')
+        .update({
+          last_seen_at: new Date().toISOString(),
+        })
+        .eq('driver_id', driverId);
 
       // Broadcast location to relevant customers (if driver is on a ride)
       await this.broadcastDriverLocationToCustomers(driverId, {
@@ -629,6 +642,22 @@ export class SocketService {
         .eq('is_connected', true);
     } catch (error) {
       logger.error('Error updating last activity:', error);
+    }
+  }
+
+  /**
+   * Update driver's last_seen_at (keeps them online for matching)
+   */
+  private async updateDriverLastSeen(driverId: string): Promise<void> {
+    try {
+      await supabase
+        .from('driver_availability')
+        .update({
+          last_seen_at: new Date().toISOString(),
+        })
+        .eq('driver_id', driverId);
+    } catch (error) {
+      logger.error('Error updating driver last seen:', error);
     }
   }
 

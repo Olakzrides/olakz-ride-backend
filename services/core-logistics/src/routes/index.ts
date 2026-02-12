@@ -4,9 +4,11 @@ import rideRoutes from './ride.routes';
 import variantRoutes from './variant.routes';
 import driverRoutes from './driver.routes';
 import driverRegistrationRoutes from './driver-registration.routes';
+import driverRideRoutes from './driver-ride.routes';
 import walletRoutes from './wallet.routes';
 import adminDocumentRoutes from './admin-document.routes';
 import adminDriverRoutes from './admin-driver.routes';
+import notificationRoutes from './notification.routes';
 
 const router = Router();
 
@@ -23,6 +25,8 @@ router.use('/api/admin/drivers', adminDriverRoutes);
 router.use('/api', cartRoutes);
 router.use('/api', rideRoutes);
 router.use('/api', walletRoutes);
+router.use('/api', driverRideRoutes); // Phase 2A: Driver ride operations
+router.use('/api/notifications', notificationRoutes); // Phase 2B: Push notifications
 
 // Health check
 router.get('/health', (_req, res) => {

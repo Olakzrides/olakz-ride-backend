@@ -85,7 +85,8 @@ model VehicleType {
 
   // Relations
   rideVariants     RideVariant[]
-  drivers          Driver[]
+  driversVehicleType Driver[]    @relation("DriverVehicleType") // DEPRECATED: Physical vehicle type
+  driversServiceTier Driver[]    @relation("DriverServiceTier") // Service tier (Standard/Premium/VIP)
   driverVehicles   DriverVehicle[]
   serviceCapabilities VehicleServiceCapability[]
 
@@ -383,7 +384,8 @@ model Driver {
   identificationType  String    @map("identification_type") @db.VarChar(50) // drivers_license, national_id, passport
   identificationNumber String   @unique @map("identification_number") @db.VarChar(100)
   licenseNumber       String?   @map("license_number") @db.VarChar(100) // Optional for bicycle/e-scooter
-  vehicleTypeId       String    @map("vehicle_type_id") @db.Uuid
+  vehicleTypeId       String    @map("vehicle_type_id") @db.Uuid // DEPRECATED: Use serviceTierId for matching
+  serviceTierId       String    @map("service_tier_id") @db.Uuid // Service tier: Standard/Premium/VIP
   status              String    @default("pending") @db.VarChar(50) // pending, approved, rejected, suspended, inactive
   rating              Decimal   @default(0) @db.Decimal(3, 2)
   totalRides          Int       @default(0) @map("total_rides")
@@ -395,7 +397,8 @@ model Driver {
   updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   // Relations
-  vehicleType       VehicleType          @relation(fields: [vehicleTypeId], references: [id])
+  vehicleType       VehicleType          @relation("DriverVehicleType", fields: [vehicleTypeId], references: [id])
+  serviceTier       VehicleType          @relation("DriverServiceTier", fields: [serviceTierId], references: [id])
   vehicles          DriverVehicle[]
   documents         DriverDocument[]
   availability      DriverAvailability?
@@ -406,6 +409,7 @@ model Driver {
 
   @@index([userId])
   @@index([vehicleTypeId])
+  @@index([serviceTierId])
   @@index([status])
   @@index([rating])
   @@index([createdAt])
@@ -637,4 +641,72 @@ model DocumentAccessLog {
   @@index([createdAt])
   @@index([documentId, userId])
   @@map("document_access_logs")
+}
+
+// ============================================
+// PHASE 2B: PUSH NOTIFICATIONS & REAL-TIME
+// ============================================
+
+// Device tokens for push notifications (FCM)
+model DeviceToken {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  deviceId    String   @map("device_id") @db.VarChar(255)
+  fcmToken    String   @map("fcm_token") @db.Text
+  platform    String   @db.VarChar(20) // android, ios, web
+  appVersion  String?  @map("app_version") @db.VarChar(50)
+  deviceInfo  Json     @default("{}") @map("device_info") @db.JsonB
+  isActive    Boolean  @default(true) @map("is_active")
+  lastUsedAt  DateTime @default(now()) @map("last_used_at") @db.Timestamptz(6)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, deviceId])
+  @@index([userId])
+  @@index([fcmToken])
+  @@index([isActive])
+  @@map("device_tokens")
+}
+
+// User notification preferences
+model NotificationPreference {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String   @unique @map("user_id") @db.Uuid
+  pushEnabled     Boolean  @default(true) @map("push_enabled")
+  emailEnabled    Boolean  @default(true) @map("email_enabled")
+  smsEnabled      Boolean  @default(false) @map("sms_enabled")
+  rideUpdates     Boolean  @default(true) @map("ride_updates")
+  promotional     Boolean  @default(true)
+  driverMessages  Boolean  @default(true) @map("driver_messages")
+  rideReminders   Boolean  @default(true) @map("ride_reminders")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("notification_preferences")
+}
+
+// Notification history for audit and tracking
+model NotificationHistory {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  rideId           String?   @map("ride_id") @db.Uuid
+  notificationType String    @map("notification_type") @db.VarChar(50)
+  channel          String    @db.VarChar(20) // push, email, sms, socket
+  title            String?   @db.VarChar(255)
+  body             String    @db.Text
+  data             Json      @default("{}") @db.JsonB
+  status           String    @default("sent") @db.VarChar(20) // sent, delivered, failed, read
+  errorMessage     String?   @map("error_message") @db.Text
+  sentAt           DateTime  @default(now()) @map("sent_at") @db.Timestamptz(6)
+  deliveredAt      DateTime? @map("delivered_at") @db.Timestamptz(6)
+  readAt           DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([rideId])
+  @@index([notificationType])
+  @@index([channel])
+  @@index([status])
+  @@index([sentAt])
+  @@map("notification_history")
 }

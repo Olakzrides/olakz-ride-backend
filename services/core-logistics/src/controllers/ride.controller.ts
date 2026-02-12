@@ -5,6 +5,7 @@ import { FareService } from '../services/fare.service';
 import { VariantService } from '../services/variant.service';
 import { RideTimeoutService } from '../services/ride-timeout.service';
 import { RideStateMachineService, RideStatus } from '../services/ride-state-machine.service';
+import { RatingService } from '../services/rating.service';
 import { ResponseUtil } from '../utils/response.util';
 import { logger } from '../config/logger';
 import { RideRequestRequest } from '../types';
@@ -15,6 +16,7 @@ export class RideController {
   private fareService: FareService;
   private variantService: VariantService;
   private rideTimeoutService: RideTimeoutService;
+  private ratingService: RatingService;
 
   constructor() {
     this.rideService = new RideService();
@@ -22,6 +24,7 @@ export class RideController {
     this.fareService = new FareService();
     this.variantService = new VariantService();
     this.rideTimeoutService = new RideTimeoutService();
+    this.ratingService = new RatingService();
   }
 
   /**
@@ -29,8 +32,19 @@ export class RideController {
    */
   initializeRideMatching(req: Request): void {
     const rideMatchingService = (req as any).app.get('rideMatchingService');
+    
+    logger.info('🔍 DEBUG: Initializing ride matching service:', {
+      hasRideMatchingService: !!rideMatchingService,
+      alreadySet: !!this.rideService['rideMatchingService'],
+    });
+
     if (rideMatchingService && !this.rideService['rideMatchingService']) {
       this.rideService.setRideMatchingService(rideMatchingService);
+      logger.info('✅ Ride matching service set successfully');
+    } else if (!rideMatchingService) {
+      logger.error('❌ CRITICAL: rideMatchingService not found in app!');
+    } else {
+      logger.info('ℹ️ Ride matching service already set');
     }
   }
 
@@ -270,6 +284,50 @@ export class RideController {
     } catch (error: any) {
       logger.error('Get ride history error:', error);
       return ResponseUtil.error(res, 'Failed to get ride history');
+    }
+  };
+
+  /**
+   * Rate driver (passenger rates driver)
+   * POST /api/ride/:rideId/rate
+   */
+  rateDriver = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { rideId } = req.params;
+      const { stars, feedback } = req.body;
+
+      if (!stars || stars < 1 || stars > 5) {
+        return ResponseUtil.badRequest(res, 'Rating must be between 1 and 5 stars');
+      }
+
+      const result = await this.ratingService.rateDriver(userId, rideId, {
+        stars,
+        feedback,
+      });
+
+      if (!result.success) {
+        if (result.error === 'RIDE_NOT_COMPLETED') {
+          return ResponseUtil.badRequest(res, 'Can only rate completed rides');
+        }
+        if (result.error === 'UNAUTHORIZED') {
+          return ResponseUtil.forbidden(res, 'Not authorized to rate this ride');
+        }
+        return ResponseUtil.error(res, result.error!);
+      }
+
+      logger.info(`Passenger ${userId} rated driver for ride ${rideId}`);
+
+      return ResponseUtil.success(res, {
+        message: 'Driver rated successfully',
+      });
+    } catch (error: any) {
+      logger.error('Rate driver error:', error);
+      return ResponseUtil.error(res, 'Failed to rate driver');
     }
   };
 }
