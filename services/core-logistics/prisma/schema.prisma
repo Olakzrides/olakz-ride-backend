@@ -6,8 +6,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // Regions for currency and pricing
@@ -166,6 +167,7 @@ model RideCart {
   region           Region         @relation(fields: [regionId], references: [id])
   cartLineItems    CartLineItem[]
   rides            Ride[]
+  stops            RideStop[]     @relation("CartStops")
 
   @@index([userId])
   @@index([status])
@@ -201,6 +203,12 @@ model Ride {
   driverId            String?   @map("driver_id") @db.Uuid
   variantId           String    @map("variant_id") @db.Uuid
   status              String    @default("searching") @db.VarChar(30)
+  
+  // Booking type and recipient details (for "Book for Someone Else" feature)
+  bookingType         String    @default("for_me") @map("booking_type") @db.VarChar(20) // 'for_me' or 'for_friend'
+  recipientName       String?   @map("recipient_name") @db.VarChar(100)
+  recipientPhone      String?   @map("recipient_phone") @db.VarChar(20)
+  
   pickupLatitude      Decimal   @map("pickup_latitude") @db.Decimal(10, 8)
   pickupLongitude     Decimal   @map("pickup_longitude") @db.Decimal(11, 8)
   pickupAddress       String    @map("pickup_address") @db.Text
@@ -235,10 +243,12 @@ model Ride {
   walletTransactions  WalletTransaction[]
   rideRequests        RideRequest[]
   statusUpdates       RideStatusUpdate[]  @relation("RideStatusUpdates")
+  stops               RideStop[]          @relation("RideStops")
 
   @@index([userId])
   @@index([driverId])
   @@index([status])
+  @@index([bookingType])
   @@index([createdAt])
   @@index([status, createdAt])
   @@map("rides")
@@ -269,6 +279,34 @@ model WalletTransaction {
   @@index([reference])
   @@index([userId, transactionType, status])
   @@map("wallet_transactions")
+}
+
+// Ride stops for multiple waypoints feature
+model RideStop {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  rideId          String?   @map("ride_id") @db.Uuid
+  cartId          String?   @map("cart_id") @db.Uuid
+  stopOrder       Int       @map("stop_order")
+  stopType        String    @map("stop_type") @db.VarChar(20) // 'pickup', 'waypoint', 'dropoff'
+  latitude        Decimal   @db.Decimal(10, 8)
+  longitude       Decimal   @db.Decimal(11, 8)
+  address         String    @db.Text
+  arrivalTime     DateTime? @map("arrival_time") @db.Timestamptz(6)
+  departureTime   DateTime? @map("departure_time") @db.Timestamptz(6)
+  waitTimeMinutes Int       @default(0) @map("wait_time_minutes")
+  notes           String?   @db.Text
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  ride            Ride?     @relation("RideStops", fields: [rideId], references: [id], onDelete: Cascade)
+  cart            RideCart? @relation("CartStops", fields: [cartId], references: [id], onDelete: Cascade)
+
+  @@index([rideId])
+  @@index([cartId])
+  @@index([rideId, stopOrder])
+  @@index([stopType])
+  @@map("ride_stops")
 }
 
 // ============================================
@@ -709,4 +747,51 @@ model NotificationHistory {
   @@index([status])
   @@index([sentAt])
   @@map("notification_history")
+}
+
+
+// Saved places for users (home, work, favorites)
+model SavedPlace {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  placeType   String   @map("place_type") @db.VarChar(20) // 'home', 'work', 'favorite'
+  label       String?  @db.VarChar(100)
+  latitude    Decimal  @db.Decimal(10, 8)
+  longitude   Decimal  @db.Decimal(11, 8)
+  address     String   @db.Text
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([userId, placeType])
+  @@index([userId, isDefault])
+  @@unique([userId, placeType, isDefault], name: "unique_default_place")
+  @@map("saved_places")
+}
+
+
+model payment_cards {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id            String   @db.Uuid
+  card_token         String   @unique @db.VarChar(255)
+  authorization_code String?  @db.VarChar(255)
+  card_last4         String   @db.VarChar(4)
+  card_brand         String   @db.VarChar(20)
+  card_type          String?  @db.VarChar(20)
+  card_exp_month     String   @db.VarChar(2)
+  card_exp_year      String   @db.VarChar(4)
+  cardholder_name    String?  @db.VarChar(100)
+  bank_name          String?  @db.VarChar(100)
+  country_code       String?  @db.VarChar(2)
+  is_default         Boolean  @default(false)
+  is_active          Boolean  @default(true)
+  provider           String   @default("flutterwave") @db.VarChar(20)
+  metadata           Json     @default("{}")
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([user_id])
+  @@index([user_id, is_default])
+  @@index([user_id, is_active])
 }

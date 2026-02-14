@@ -30,6 +30,8 @@ export function createApp(): Application {
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 100, // Limit each IP to 100 requests per windowMs
     message: 'Too many requests from this IP, please try again later',
+    // Validate trust proxy setting to avoid security warnings
+    validate: { trustProxy: false }, // We handle proxy trust at app level
   });
   app.use('/api', limiter);
 

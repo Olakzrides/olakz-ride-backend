@@ -252,7 +252,7 @@ export class RideMatchingService {
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       )[0];
 
-      // Calculate distance from pickup point
+      // Calculate distance from pickup point using Haversine (for filtering)
       const distance = this.calculateDistance(
         pickupLatitude,
         pickupLongitude,
@@ -267,7 +267,7 @@ export class RideMatchingService {
       // Check if driver is actually online via Socket.IO
       // if (!this.socketService.isDriverOnline(driver.id)) continue;
 
-      // Estimate arrival time (assuming average speed of 30 km/h in city)
+      // Estimate arrival time (will be refined with Google Maps if available)
       const estimatedArrival = Math.ceil((distance / 30) * 60); // minutes
 
       const vehicleInfo = driver.vehicles[0];
@@ -289,7 +289,68 @@ export class RideMatchingService {
     }
 
     logger.info(`Found ${driverMatches.length} available drivers within ${maxDistance}km`);
+    
+    // Refine ETAs using Google Maps Distance Matrix API if available
+    if (driverMatches.length > 0) {
+      await this.refineDriverETAs(driverMatches, { latitude: pickupLatitude, longitude: pickupLongitude });
+    }
+    
     return driverMatches;
+  }
+
+  /**
+   * Refine driver ETAs using Google Maps Distance Matrix API
+   */
+  private async refineDriverETAs(
+    drivers: DriverMatch[],
+    pickupLocation: { latitude: number; longitude: number }
+  ): Promise<void> {
+    try {
+      // Import MapsUtil dynamically to avoid circular dependencies
+      const { MapsUtil } = await import('../utils/maps.util');
+      
+      // Get driver locations
+      const driverLocations = await Promise.all(
+        drivers.map(async (driver) => {
+          const { data: location } = await supabase
+            .from('driver_location_tracking')
+            .select('latitude, longitude')
+            .eq('driver_id', driver.driverId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+          
+          return location ? {
+            latitude: parseFloat(location.latitude),
+            longitude: parseFloat(location.longitude),
+          } : null;
+        })
+      );
+
+      // Filter out drivers without locations
+      const validDrivers = drivers.filter((_, index) => driverLocations[index] !== null);
+      const validLocations = driverLocations.filter(loc => loc !== null) as { latitude: number; longitude: number }[];
+
+      if (validLocations.length === 0) return;
+
+      // Get distance matrix from Google Maps
+      const distanceMatrix = await MapsUtil.getDistanceMatrix(
+        validLocations,
+        [pickupLocation]
+      );
+
+      // Update driver ETAs with Google Maps data
+      validDrivers.forEach((driver, index) => {
+        const result = distanceMatrix[index][0];
+        driver.distance = result.distance;
+        driver.estimatedArrival = result.duration;
+      });
+
+      logger.info('Refined driver ETAs using Google Maps Distance Matrix API');
+    } catch (error) {
+      logger.error('Error refining driver ETAs:', error);
+      // Continue with Haversine-based estimates
+    }
   }
 
   /**

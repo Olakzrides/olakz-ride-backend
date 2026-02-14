@@ -4,11 +4,13 @@ import { testDatabaseConnection, disconnectDatabase } from './config/database';
 import { logger } from './config/logger';
 import { SocketService } from './services/socket.service';
 import { RideMatchingService } from './services/ride-matching.service';
+import { ScheduledRideService } from './services/scheduled-ride.service';
 import { createServer } from 'http';
 
 // Global services for real-time features
 let socketService: SocketService;
 let rideMatchingService: RideMatchingService;
+let scheduledRideService: ScheduledRideService;
 
 async function startServer() {
   try {
@@ -36,9 +38,16 @@ async function startServer() {
     rideMatchingService = new RideMatchingService(socketService);
     logger.info('Ride matching service initialized');
 
+    // Initialize scheduled ride service
+    scheduledRideService = new ScheduledRideService();
+    scheduledRideService.setRideMatchingService(rideMatchingService);
+    scheduledRideService.startCronJob();
+    logger.info('Scheduled ride service initialized and cron job started');
+
     // Make services available globally
     app.set('socketService', socketService);
     app.set('rideMatchingService', rideMatchingService);
+    app.set('scheduledRideService', scheduledRideService);
 
     // Start server
     server.listen(config.port, () => {
@@ -53,6 +62,11 @@ async function startServer() {
     // Graceful shutdown
     const gracefulShutdown = async (signal: string) => {
       logger.info(`${signal} received, shutting down gracefully...`);
+      
+      // Stop scheduled ride cron job
+      if (scheduledRideService) {
+        scheduledRideService.stopCronJob();
+      }
       
       server.close(async () => {
         logger.info('HTTP server closed');
@@ -80,6 +94,6 @@ async function startServer() {
 }
 
 // Export services for use in other modules
-export { socketService, rideMatchingService };
+export { socketService, rideMatchingService, scheduledRideService };
 
 startServer();

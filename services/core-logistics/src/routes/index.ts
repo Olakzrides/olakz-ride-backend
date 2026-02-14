@@ -9,6 +9,8 @@ import walletRoutes from './wallet.routes';
 import adminDocumentRoutes from './admin-document.routes';
 import adminDriverRoutes from './admin-driver.routes';
 import notificationRoutes from './notification.routes';
+import savedPlacesRoutes from './saved-places.routes';
+import paymentCardsRoutes from './payment-cards.routes';
 
 const router = Router();
 
@@ -27,6 +29,8 @@ router.use('/api', rideRoutes);
 router.use('/api', walletRoutes);
 router.use('/api', driverRideRoutes); // Phase 2A: Driver ride operations
 router.use('/api/notifications', notificationRoutes); // Phase 2B: Push notifications
+router.use('/api', savedPlacesRoutes); // Phase 1: Saved places
+router.use('/api/payment/cards', paymentCardsRoutes); // Phase 2: Payment cards
 
 // Health check
 router.get('/health', (_req, res) => {

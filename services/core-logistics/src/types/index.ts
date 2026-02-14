@@ -56,8 +56,7 @@ export interface Coordinates {
 
 // Cart types
 export interface CreateCartRequest {
-  productId: string;
-  salesChannelId: string;
+  serviceChannelId: string; // Which service: ride, food, delivery, etc.
   passengers?: number;
   searchRadius?: number;
   pickupPoint: Location;
@@ -79,11 +78,23 @@ export interface RideRequestRequest {
   dropoffLocation: Location;
   vehicleVariantId: string;
   paymentMethod: {
-    type: 'wallet';
-    walletId?: string;
+    type: 'wallet' | 'cash' | 'card';
+    cardId?: string; // For saved card
+    cardDetails?: { // For new card (one-time payment)
+      cardNumber: string;
+      cvv: string;
+      expiryMonth: string;
+      expiryYear: string;
+      cardholderName?: string;
+      pin?: string;
+    };
   };
   scheduledAt?: string;
   specialRequests?: string;
+  recipient?: {
+    name: string;
+    phone: string;
+  };
 }
 
 export interface RideStatus {

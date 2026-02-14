@@ -20,4 +20,10 @@ router.post('/carts/:cartId/line-items', cartController.addLineItemToCart);
 // Get cart details
 router.get('/carts/:cartId', cartController.getCart);
 
+// Stop management
+router.post('/carts/:id/stops', cartController.addStop);
+router.get('/carts/:id/stops', cartController.getStops);
+router.delete('/carts/:id/stops/:stopId', cartController.removeStop);
+router.put('/carts/:id/stops/reorder', cartController.reorderStops);
+
 export default router;

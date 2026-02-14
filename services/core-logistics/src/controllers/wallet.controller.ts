@@ -12,6 +12,128 @@ export class WalletController {
   }
 
   /**
+   * Top up wallet using saved card or new card (Step 1: Initiate)
+   * POST /api/wallet/topup
+   */
+  topupWallet = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      const userEmail = (req as any).user?.email;
+      
+      if (!userId || !userEmail) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { amount, currencyCode = 'NGN', cardId, cardDetails } = req.body;
+
+      // Validate amount
+      if (!amount || amount <= 0) {
+        return ResponseUtil.badRequest(res, 'Invalid amount');
+      }
+
+      if (amount < 100) {
+        return ResponseUtil.badRequest(res, 'Minimum top-up amount is ₦100');
+      }
+
+      if (amount > 500000) {
+        return ResponseUtil.badRequest(res, 'Maximum top-up amount is ₦500,000');
+      }
+
+      // Must provide either cardId or cardDetails
+      if (!cardId && !cardDetails) {
+        return ResponseUtil.badRequest(res, 'Either cardId or cardDetails is required');
+      }
+
+      const result = await this.paymentService.topupWallet({
+        userId,
+        userEmail,
+        amount,
+        currencyCode,
+        cardId,
+        cardDetails,
+      });
+
+      if (!result.success) {
+        return ResponseUtil.badRequest(res, result.message || 'Top-up failed');
+      }
+
+      // Check if authorization is required
+      if (result.requiresAuthorization) {
+        return ResponseUtil.success(res, {
+          status: 'pending_authorization',
+          message: 'Please validate the charge with OTP',
+          authorization: result.authorization,
+          flw_ref: result.flw_ref,
+          tx_ref: result.tx_ref,
+          amount,
+          currency_code: currencyCode,
+        });
+      }
+
+      return ResponseUtil.success(res, {
+        message: 'Wallet top-up successful',
+        transaction: result.transaction,
+        wallet: {
+          balance: result.newBalance,
+          currency_code: currencyCode,
+        },
+      });
+    } catch (error: any) {
+      logger.error('Wallet top-up error:', error);
+      return ResponseUtil.serverError(res, error.message || 'Failed to top up wallet');
+    }
+  };
+
+  /**
+   * Validate wallet top-up with OTP (Step 2: Complete)
+   * POST /api/wallet/topup/validate
+   */
+  validateTopup = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      const userEmail = (req as any).user?.email;
+
+      if (!userId || !userEmail) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { flwRef, otp, amount, currencyCode = 'NGN' } = req.body;
+
+      if (!flwRef || !otp) {
+        return ResponseUtil.badRequest(res, 'flwRef and otp are required');
+      }
+
+      if (!amount) {
+        return ResponseUtil.badRequest(res, 'amount is required');
+      }
+
+      const result = await this.paymentService.validateTopup({
+        userId,
+        flwRef,
+        otp,
+        amount,
+        currencyCode,
+      });
+
+      if (!result.success) {
+        return ResponseUtil.badRequest(res, result.message || 'Validation failed');
+      }
+
+      return ResponseUtil.success(res, {
+        message: 'Wallet top-up successful',
+        transaction: result.transaction,
+        wallet: {
+          balance: result.newBalance,
+          currency_code: currencyCode,
+        },
+      });
+    } catch (error: any) {
+      logger.error('Validate top-up error:', error);
+      return ResponseUtil.serverError(res, error.message || 'Failed to validate top-up');
+    }
+  };
+
+  /**
    * Add test funds to wallet (FOR TESTING ONLY)
    * POST /api/wallet/add-test-funds
    */

@@ -62,11 +62,12 @@ export class RideService {
   }
 
   /**
-   * Create a new ride with transaction atomicity and balance verification (Database function approach)
+   * Create a new ride with payment method routing
    */
   async createRide(data: {
     cart_id?: string;
     user_id: string;
+    user_email?: string;
     variant_id: string;
     pickup_location: Location;
     dropoff_location: Location;
@@ -75,151 +76,238 @@ export class RideService {
     estimated_fare: number;
     currency_code: string;
     payment_method: string;
+    payment_details?: {
+      type: 'wallet' | 'cash' | 'card';
+      cardId?: string;
+      cardDetails?: any;
+    };
     scheduled_at?: Date | null;
+    booking_type?: string;
+    recipient_name?: string;
+    recipient_phone?: string;
     metadata?: any;
-  }): Promise<{ success: boolean; ride?: any; error?: string; errorCode?: string }> {
+  }): Promise<{ success: boolean; ride?: any; rideId?: string; error?: string; errorCode?: string; authorization?: any; flw_ref?: string }> {
     try {
-      // Use database function for atomic transaction
-      const { data: result, error: rideError } = await supabase.rpc('create_ride_with_payment_hold', {
-        p_cart_id: data.cart_id,
-        p_user_id: data.user_id,
-        p_variant_id: data.variant_id,
-        p_pickup_latitude: data.pickup_location.latitude,
-        p_pickup_longitude: data.pickup_location.longitude,
-        p_pickup_address: data.pickup_location.address,
-        p_dropoff_latitude: data.dropoff_location.latitude,
-        p_dropoff_longitude: data.dropoff_location.longitude,
-        p_dropoff_address: data.dropoff_location.address,
-        p_estimated_distance: data.estimated_distance,
-        p_estimated_duration: data.estimated_duration,
-        p_estimated_fare: data.estimated_fare,
-        p_currency_code: data.currency_code,
-        p_payment_method: data.payment_method,
-        p_scheduled_at: data.scheduled_at,
-        p_metadata: data.metadata || {},
-      });
-
-      if (rideError || !result || result.length === 0) {
-        logger.error('Create ride with payment hold error:', rideError);
-        return {
-          success: false,
-          error: 'Failed to create ride and payment hold',
-          errorCode: 'RIDE_CREATION_FAILED',
-        };
-      }
-
-      const rideResult = result[0];
-
-      if (!rideResult.success) {
-        // Handle specific error cases
-        if (rideResult.error_message?.includes('Insufficient wallet balance')) {
-          return {
-            success: false,
-            error: rideResult.error_message,
-            errorCode: 'INSUFFICIENT_BALANCE',
-          };
-        }
-        if (rideResult.error_message?.includes('already has an active ride')) {
-          return {
-            success: false,
-            error: rideResult.error_message,
-            errorCode: 'CONCURRENT_RIDE_EXISTS',
-          };
-        }
-        return {
-          success: false,
-          error: rideResult.error_message || 'Unknown error occurred',
-          errorCode: 'RIDE_CREATION_FAILED',
-        };
-      }
-
-      logger.info('Ride created successfully with payment hold:', {
-        rideId: rideResult.ride_id,
-        userId: data.user_id,
-        fare: data.estimated_fare,
-        paymentHoldId: rideResult.payment_hold_id,
-      });
-
-      // Start driver matching if not scheduled
-      logger.info('🔍 DEBUG: Checking driver matching conditions:', {
-        isScheduled: !!data.scheduled_at,
-        hasRideMatchingService: !!this.rideMatchingService,
-        rideId: rideResult.ride_id,
-      });
-
-      if (!data.scheduled_at && this.rideMatchingService) {
-        logger.info('🚀 Starting driver matching for ride:', rideResult.ride_id);
-
-        // Get vehicle type for driver matching
-        const { data: variant, error: variantError } = await supabase
-          .from('ride_variants')
-          .select('vehicle_type_id')
-          .eq('id', data.variant_id)
-          .single();
-
-        logger.info('🔍 DEBUG: Variant query result:', {
-          variantId: data.variant_id,
-          serviceTierId: variant?.vehicle_type_id, // This is actually the service tier ID
-          error: variantError?.message,
-        });
-
-        if (variant) {
-          logger.info('📡 Calling findAndNotifyDriversForRide with:', {
-            rideId: rideResult.ride_id,
-            pickupLat: data.pickup_location.latitude,
-            pickupLng: data.pickup_location.longitude,
-            serviceTierId: variant.vehicle_type_id, // variant.vehicle_type_id is actually the service tier (Standard/Premium/VIP)
-            maxDistance: 15,
-            maxDrivers: 5,
-          });
-
-          const matchingResult = await this.rideMatchingService.findAndNotifyDriversForRide(rideResult.ride_id, {
-            pickupLatitude: data.pickup_location.latitude,
-            pickupLongitude: data.pickup_location.longitude,
-            serviceTierId: variant.vehicle_type_id, // variant.vehicle_type_id is actually the service tier
-            maxDistance: 15, // 15km radius
-            maxDrivers: 5,
-          });
-
-          logger.info('✅ Driver matching completed:', {
-            rideId: rideResult.ride_id,
-            success: matchingResult.success,
-            driversNotified: matchingResult.driversNotified,
-            batchNumber: matchingResult.batchNumber,
-          });
-        } else {
-          logger.error('❌ Failed to get variant for driver matching:', {
-            variantId: data.variant_id,
-            error: variantError,
-          });
-        }
-      } else {
-        if (data.scheduled_at) {
-          logger.info('⏰ Ride is scheduled, skipping immediate driver matching');
-        }
-        if (!this.rideMatchingService) {
-          logger.error('❌ CRITICAL: rideMatchingService is not initialized!');
-        }
+      // Route to appropriate payment flow
+      if (data.payment_method === 'wallet') {
+        return await this.createRideWithWalletPayment(data);
+      } else if (data.payment_method === 'cash') {
+        return await this.createRideWithCashPayment(data);
+      } else if (data.payment_method === 'card') {
+        return await this.createRideWithCardPayment(data);
       }
 
       return {
-        success: true,
-        ride: {
-          id: rideResult.ride_id,
-          status: RideStatus.SEARCHING,
-          payment_hold_id: rideResult.payment_hold_id,
-          estimated_fare: data.estimated_fare,
-          created_at: new Date().toISOString(),
-        },
+        success: false,
+        error: 'Invalid payment method',
+        errorCode: 'INVALID_PAYMENT_METHOD',
       };
     } catch (error: any) {
       logger.error('Create ride error:', error);
       return {
         success: false,
-        error: 'Failed to create ride',
-        errorCode: 'INTERNAL_ERROR',
+        error: error.message || 'Failed to create ride',
+        errorCode: 'RIDE_CREATION_FAILED',
       };
     }
+  }
+
+  /**
+   * Create ride with wallet payment (existing flow - uses database function)
+   */
+  private async createRideWithWalletPayment(data: any): Promise<any> {
+    // Use database function for atomic transaction with balance check
+    const { data: result, error: rideError } = await supabase.rpc('create_ride_with_payment_hold', {
+      p_cart_id: data.cart_id,
+      p_user_id: data.user_id,
+      p_variant_id: data.variant_id,
+      p_pickup_latitude: data.pickup_location.latitude,
+      p_pickup_longitude: data.pickup_location.longitude,
+      p_pickup_address: data.pickup_location.address,
+      p_dropoff_latitude: data.dropoff_location.latitude,
+      p_dropoff_longitude: data.dropoff_location.longitude,
+      p_dropoff_address: data.dropoff_location.address,
+      p_estimated_distance: data.estimated_distance,
+      p_estimated_duration: data.estimated_duration,
+      p_estimated_fare: data.estimated_fare,
+      p_currency_code: data.currency_code,
+      p_payment_method: data.payment_method,
+      p_scheduled_at: data.scheduled_at,
+      p_booking_type: data.booking_type || 'for_me',
+      p_recipient_name: data.recipient_name,
+      p_recipient_phone: data.recipient_phone,
+      p_metadata: data.metadata || {},
+    });
+
+    if (rideError || !result || result.length === 0) {
+      logger.error('Create ride with payment hold error:', rideError);
+      return {
+        success: false,
+        error: 'Failed to create ride and payment hold',
+        errorCode: 'RIDE_CREATION_FAILED',
+      };
+    }
+
+    const rideResult = result[0];
+
+    if (!rideResult.success) {
+      if (rideResult.error_message?.includes('Insufficient wallet balance')) {
+        return {
+          success: false,
+          error: rideResult.error_message,
+          errorCode: 'INSUFFICIENT_BALANCE',
+        };
+      }
+      if (rideResult.error_message?.includes('already has an active ride')) {
+        return {
+          success: false,
+          error: rideResult.error_message,
+          errorCode: 'CONCURRENT_RIDE_EXISTS',
+        };
+      }
+      return {
+        success: false,
+        error: rideResult.error_message || 'Unknown error occurred',
+        errorCode: 'RIDE_CREATION_FAILED',
+      };
+    }
+
+    logger.info('Ride created with wallet payment:', {
+      rideId: rideResult.ride_id,
+      paymentHoldId: rideResult.payment_hold_id,
+    });
+
+    return await this.finalizeRideCreation(rideResult.ride_id, data);
+  }
+
+  /**
+   * Create ride with cash payment (no payment hold)
+   */
+  private async createRideWithCashPayment(data: any): Promise<any> {
+    // Check for concurrent rides
+    const activeCheck = await this.hasActiveRide(data.user_id);
+    if (activeCheck.hasActive) {
+      return {
+        success: false,
+        error: `You already have an active ride (${activeCheck.status})`,
+        errorCode: 'CONCURRENT_RIDE_EXISTS',
+      };
+    }
+
+    // Create ride without payment hold
+    const { data: ride, error: rideError } = await supabase
+      .from('rides')
+      .insert({
+        cart_id: data.cart_id,
+        user_id: data.user_id,
+        variant_id: data.variant_id,
+        pickup_latitude: data.pickup_location.latitude,
+        pickup_longitude: data.pickup_location.longitude,
+        pickup_address: data.pickup_location.address,
+        dropoff_latitude: data.dropoff_location.latitude,
+        dropoff_longitude: data.dropoff_location.longitude,
+        dropoff_address: data.dropoff_location.address,
+        estimated_distance: data.estimated_distance,
+        estimated_duration: data.estimated_duration,
+        estimated_fare: data.estimated_fare,
+        currency_code: data.currency_code,
+        payment_method: 'cash',
+        status: data.scheduled_at ? 'scheduled' : RideStatus.SEARCHING,
+        scheduled_at: data.scheduled_at,
+        booking_type: data.booking_type || 'for_me',
+        recipient_name: data.recipient_name,
+        recipient_phone: data.recipient_phone,
+        metadata: data.metadata || {},
+      })
+      .select()
+      .single();
+
+    if (rideError || !ride) {
+      logger.error('Create ride with cash payment error:', rideError);
+      return {
+        success: false,
+        error: 'Failed to create ride',
+        errorCode: 'RIDE_CREATION_FAILED',
+      };
+    }
+
+    logger.info('Ride created with cash payment:', { rideId: ride.id });
+
+    return await this.finalizeRideCreation(ride.id, data);
+  }
+
+  /**
+   * Create ride with card payment (charge card first - NOT FULLY IMPLEMENTED)
+   */
+  private async createRideWithCardPayment(data: any): Promise<any> {
+    // Check for concurrent rides
+    const activeCheck = await this.hasActiveRide(data.user_id);
+    if (activeCheck.hasActive) {
+      return {
+        success: false,
+        error: `You already have an active ride (${activeCheck.status})`,
+        errorCode: 'CONCURRENT_RIDE_EXISTS',
+      };
+    }
+
+    // For now, card payment for rides is not fully implemented
+    // Return error directing user to use wallet or cash
+    return {
+      success: false,
+      error: 'Card payment for rides is not yet available. Please use wallet or cash payment.',
+      errorCode: 'CARD_PAYMENT_NOT_IMPLEMENTED',
+    };
+  }
+
+  /**
+   * Finalize ride creation (start driver matching, etc.)
+   */
+  private async finalizeRideCreation(rideId: string, data: any): Promise<any> {
+    // Get the created ride
+    const { data: ride, error: fetchError } = await supabase
+      .from('rides')
+      .select('*')
+      .eq('id', rideId)
+      .single();
+
+    if (fetchError || !ride) {
+      return {
+        success: false,
+        error: 'Failed to fetch created ride',
+        errorCode: 'RIDE_FETCH_FAILED',
+      };
+    }
+
+    // Start driver matching if not scheduled
+    if (!data.scheduled_at && this.rideMatchingService) {
+      logger.info('🚀 Starting driver matching for ride:', rideId);
+
+      const { data: variant } = await supabase
+        .from('ride_variants')
+        .select('vehicle_type_id')
+        .eq('id', data.variant_id)
+        .single();
+
+      if (variant) {
+        const matchingResult = await this.rideMatchingService.findAndNotifyDriversForRide(rideId, {
+          pickupLatitude: data.pickup_location.latitude,
+          pickupLongitude: data.pickup_location.longitude,
+          serviceTierId: variant.vehicle_type_id,
+          maxDistance: 15,
+          maxDrivers: 5,
+        });
+
+        logger.info('✅ Driver matching completed:', {
+          rideId,
+          driversNotified: matchingResult.driversNotified,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      ride,
+    };
   }
 
   /**

@@ -56,8 +56,7 @@ curl -X POST http://localhost:3001/api/ride/cart \
   -H "Authorization: Bearer YOUR_PASSENGER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "productId": "00000000-0000-0000-0000-000000000021",
-    "salesChannelId": "mobile-app",
+    "serviceChannelId": "88eea5ae-b3ac-4a4d-ad22-84224f4c03a0",
     "passengers": 1,
     "searchRadius": 10,
     "pickupPoint": {
@@ -69,8 +68,7 @@ curl -X POST http://localhost:3001/api/ride/cart \
 ```
 
 **Request Body:**
-- `productId`: Always use `"00000000-0000-0000-0000-000000000021"` (Olakz Ride product)
-- `salesChannelId`: Any string like `"mobile-app"` or `"web"`
+- `serviceChannelId`: Service channel ID (get from platform service or use hardcoded value)
 - `passengers`: Number of passengers (optional, default: 1)
 - `searchRadius`: Search radius in km (optional, default: 10)
 - `pickupPoint`: **Object** containing:
@@ -467,8 +465,7 @@ CART_RESPONSE=$(curl -X POST http://localhost:3001/api/ride/cart \
   -H "Authorization: Bearer $PASSENGER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "productId": "00000000-0000-0000-0000-000000000021",
-    "salesChannelId": "mobile-app",
+    "serviceChannelId": "88eea5ae-b3ac-4a4d-ad22-84224f4c03a0",
     "passengers": 1,
     "pickupPoint": {
       "latitude": 6.5244,

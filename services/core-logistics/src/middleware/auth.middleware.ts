@@ -36,6 +36,9 @@ export const authenticate = async (
 
     try {
       const decoded = jwt.verify(token, config.jwtSecret) as any;
+      
+      // Log decoded token for debugging
+      logger.info('Decoded JWT token:', { decoded });
 
       (req as AuthRequest).user = {
         id: decoded.userId || decoded.id,

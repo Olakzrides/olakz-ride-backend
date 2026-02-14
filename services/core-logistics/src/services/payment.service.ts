@@ -1,8 +1,279 @@
 import { supabase } from '../config/database';
 import { logger } from '../config/logger';
 import { PaymentHoldResult, PaymentProcessResult } from '../types';
+import { FlutterwaveService } from './flutterwave.service';
+import { PaymentCardsService } from './payment-cards.service';
 
 export class PaymentService {
+  private flutterwaveService: FlutterwaveService;
+  private paymentCardsService: PaymentCardsService;
+
+  constructor() {
+    this.flutterwaveService = new FlutterwaveService();
+    this.paymentCardsService = new PaymentCardsService();
+  }
+
+  /**
+   * Top up wallet using saved card or new card
+   */
+  async topupWallet(params: {
+    userId: string;
+    userEmail: string;
+    amount: number;
+    currencyCode: string;
+    cardId?: string;
+    cardDetails?: {
+      cardNumber: string;
+      cvv: string;
+      expiryMonth: string;
+      expiryYear: string;
+      cardholderName?: string;
+      pin?: string;
+    };
+  }): Promise<{
+    success: boolean;
+    message?: string;
+    transaction?: any;
+    newBalance?: number;
+    requiresAuthorization?: boolean;
+    authorization?: any;
+    flw_ref?: string;
+    tx_ref?: string;
+  }> {
+    try {
+      const { userId, userEmail, amount, currencyCode, cardId, cardDetails } = params;
+
+      let chargeResult: any;
+
+      if (cardId) {
+        // Charge saved card
+        const txRef = `topup_${userId}_${Date.now()}`;
+        
+        chargeResult = await this.paymentCardsService.chargeCard({
+          cardId,
+          userId,
+          amount,
+          currency: currencyCode,
+          email: userEmail,
+          txRef,
+        });
+      } else if (cardDetails) {
+        // Charge new card (one-time payment, not saved)
+        const txRef = `topup_${userId}_${Date.now()}`;
+        
+        chargeResult = await this.flutterwaveService.tokenizeCard({
+          card_number: cardDetails.cardNumber,
+          cvv: cardDetails.cvv,
+          expiry_month: cardDetails.expiryMonth,
+          expiry_year: cardDetails.expiryYear,
+          currency: currencyCode,
+          amount,
+          email: userEmail,
+          fullname: cardDetails.cardholderName,
+          tx_ref: txRef,
+          authorization: cardDetails.pin ? { mode: 'pin', pin: cardDetails.pin } : { mode: 'pin' },
+        });
+      } else {
+        return {
+          success: false,
+          message: 'Payment method required',
+        };
+      }
+
+      // Check charge status
+      if (chargeResult.status !== 'success') {
+        return {
+          success: false,
+          message: chargeResult.message || 'Payment failed',
+        };
+      }
+
+      // Check if charge requires authorization (OTP, 3D Secure, etc.)
+      if (chargeResult.data?.status === 'pending') {
+        logger.info('Charge requires authorization:', {
+          status: chargeResult.data.status,
+          flw_ref: chargeResult.data.flw_ref,
+        });
+        
+        return {
+          success: true,
+          requiresAuthorization: true,
+          authorization: chargeResult.data.authorization,
+          flw_ref: chargeResult.data.flw_ref,
+          tx_ref: chargeResult.data.tx_ref,
+          message: 'Charge initiated. Please validate with OTP.',
+        };
+      }
+
+      // Only proceed if charge is successful
+      if (chargeResult.data?.status !== 'successful') {
+        return {
+          success: false,
+          message: chargeResult.message || 'Payment not completed',
+        };
+      }
+
+      // Create credit transaction in wallet
+      const reference = `topup_${Date.now()}_${userId}`;
+
+      const { data: transaction, error } = await supabase
+        .from('wallet_transactions')
+        .insert({
+          user_id: userId,
+          transaction_type: 'credit',
+          amount,
+          currency_code: currencyCode,
+          status: 'completed',
+          description: 'Wallet top-up via card',
+          reference,
+          metadata: {
+            funding_type: 'card_payment',
+            flw_ref: chargeResult.data.flw_ref,
+            payment_method: cardId ? 'saved_card' : 'new_card',
+            card_last4: chargeResult.data.card?.last_4digits,
+            charged_at: new Date().toISOString(),
+          },
+        })
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Create wallet transaction error:', error);
+        return {
+          success: false,
+          message: 'Failed to credit wallet',
+        };
+      }
+
+      // Get updated balance
+      const newBalance = await this.getUserWalletBalance(userId, currencyCode);
+
+      logger.info('Wallet top-up successful:', {
+        userId,
+        amount,
+        newBalance,
+        reference,
+      });
+
+      return {
+        success: true,
+        transaction: {
+          id: transaction.id,
+          amount,
+          currency_code: currencyCode,
+          reference,
+          created_at: transaction.created_at,
+        },
+        newBalance,
+      };
+    } catch (error: any) {
+      logger.error('Wallet top-up error:', error);
+      return {
+        success: false,
+        message: error.message || 'Top-up failed',
+      };
+    }
+  }
+
+  /**
+   * Validate wallet top-up with OTP
+   */
+  async validateTopup(params: {
+    userId: string;
+    flwRef: string;
+    otp: string;
+    amount: number;
+    currencyCode: string;
+  }): Promise<{
+    success: boolean;
+    message?: string;
+    transaction?: any;
+    newBalance?: number;
+  }> {
+    try {
+      const { userId, flwRef, otp, amount, currencyCode } = params;
+
+      // Validate the charge with Flutterwave
+      const validationResult = await this.flutterwaveService.validateCharge(flwRef, otp);
+
+      if (validationResult.status !== 'success') {
+        return {
+          success: false,
+          message: validationResult.message || 'Validation failed',
+        };
+      }
+
+      // Check if charge is now successful
+      if (validationResult.data?.status !== 'successful') {
+        return {
+          success: false,
+          message: 'Charge validation incomplete',
+        };
+      }
+
+      // Create credit transaction in wallet
+      const reference = `topup_${Date.now()}_${userId}`;
+
+      const { data: transaction, error } = await supabase
+        .from('wallet_transactions')
+        .insert({
+          user_id: userId,
+          transaction_type: 'credit',
+          amount,
+          currency_code: currencyCode,
+          status: 'completed',
+          description: 'Wallet top-up via card',
+          reference,
+          metadata: {
+            funding_type: 'card_payment',
+            flw_ref: flwRef,
+            payment_method: 'card_with_otp',
+            card_last4: validationResult.data.card?.last_4digits,
+            charged_at: new Date().toISOString(),
+          },
+        })
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Create wallet transaction error:', error);
+        return {
+          success: false,
+          message: 'Failed to credit wallet',
+        };
+      }
+
+      // Get updated balance
+      const newBalance = await this.getUserWalletBalance(userId, currencyCode);
+
+      logger.info('Wallet top-up validated and completed:', {
+        userId,
+        amount,
+        newBalance,
+        reference,
+        flwRef,
+      });
+
+      return {
+        success: true,
+        transaction: {
+          id: transaction.id,
+          amount,
+          currency_code: currencyCode,
+          reference,
+          created_at: transaction.created_at,
+        },
+        newBalance,
+      };
+    } catch (error: any) {
+      logger.error('Validate top-up error:', error);
+      return {
+        success: false,
+        message: error.message || 'Validation failed',
+      };
+    }
+  }
+
   /**
    * Get user's current wallet balance
    */

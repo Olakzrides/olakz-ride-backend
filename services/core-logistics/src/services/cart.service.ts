@@ -9,7 +9,7 @@ export class CartService {
   async createRideCart(data: {
     userId: string;
     regionId: string;
-    salesChannelId: string;
+    serviceChannelId: string;
     pickupLocation: Location;
     passengers: number;
     searchRadius: number;
@@ -50,7 +50,7 @@ export class CartService {
         .insert({
           user_id: data.userId,
           region_id: data.regionId,
-          sales_channel_id: data.salesChannelId,
+          sales_channel_id: data.serviceChannelId,
           currency_code: data.currencyCode,
           pickup_latitude: data.pickupLocation.latitude,
           pickup_longitude: data.pickupLocation.longitude,

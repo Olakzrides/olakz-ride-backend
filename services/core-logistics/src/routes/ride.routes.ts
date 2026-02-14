@@ -14,6 +14,9 @@ router.post('/ride/request', rideController.requestRide);
 // Get ride history (MUST be before :rideId routes)
 router.get('/ride/history', rideController.getRideHistory);
 
+// Get scheduled rides
+router.get('/ride/scheduled', rideController.getScheduledRides);
+
 // Get ride status
 router.get('/ride/:rideId/status', rideController.getRideStatus);
 
@@ -22,6 +25,9 @@ router.get('/ride/:rideId', rideController.getRideStatus);
 
 // Cancel ride
 router.post('/ride/:rideId/cancel', rideController.cancelRide);
+
+// Cancel scheduled ride
+router.post('/ride/:rideId/cancel-scheduled', rideController.cancelScheduledRide);
 
 // Rate driver (passenger rates driver)
 router.post('/ride/:rideId/rate', rideController.rateDriver);

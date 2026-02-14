@@ -75,6 +75,26 @@ export class VariantService {
   }
 
   /**
+   * Get all ride variants (Standard, Premium, VIP)
+   * Simplified method that doesn't require productId
+   */
+  async getAllRideVariants(): Promise<any[]> {
+    try {
+      const { data, error } = await supabase
+        .from('ride_variants')
+        .select('*, vehicle_type:vehicle_types(*)')
+        .eq('is_active', true)
+        .order('base_price');
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      logger.error('Get all ride variants error:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get ride product by handle
    */
   async getRideProductByHandle(handle: string): Promise<any> {

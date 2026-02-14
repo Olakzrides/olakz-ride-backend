@@ -50,6 +50,13 @@ export const config = {
     mockDistanceKm: parseFloat(process.env.MOCK_DISTANCE_KM || '10'),
     mockDurationMin: parseInt(process.env.MOCK_DURATION_MIN || '15', 10),
   },
+
+  // Multiple Stops Configuration
+  stops: {
+    feePerWaypoint: parseFloat(process.env.STOP_FEE_PER_WAYPOINT || '700'),
+    maxWaitTimeMinutes: parseInt(process.env.STOP_MAX_WAIT_TIME || '10', 10),
+    maxStopsPerRide: parseInt(process.env.MAX_STOPS_PER_RIDE || '5', 10),
+  },
 };
 
 // Validate required environment variables

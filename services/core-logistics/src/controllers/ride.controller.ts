@@ -6,6 +6,7 @@ import { VariantService } from '../services/variant.service';
 import { RideTimeoutService } from '../services/ride-timeout.service';
 import { RideStateMachineService, RideStatus } from '../services/ride-state-machine.service';
 import { RatingService } from '../services/rating.service';
+import { ScheduledRideService } from '../services/scheduled-ride.service';
 import { ResponseUtil } from '../utils/response.util';
 import { logger } from '../config/logger';
 import { RideRequestRequest } from '../types';
@@ -17,6 +18,7 @@ export class RideController {
   private variantService: VariantService;
   private rideTimeoutService: RideTimeoutService;
   private ratingService: RatingService;
+  private scheduledRideService: ScheduledRideService;
 
   constructor() {
     this.rideService = new RideService();
@@ -25,6 +27,7 @@ export class RideController {
     this.variantService = new VariantService();
     this.rideTimeoutService = new RideTimeoutService();
     this.ratingService = new RatingService();
+    this.scheduledRideService = new ScheduledRideService();
   }
 
   /**
@@ -40,12 +43,20 @@ export class RideController {
 
     if (rideMatchingService && !this.rideService['rideMatchingService']) {
       this.rideService.setRideMatchingService(rideMatchingService);
+      this.scheduledRideService.setRideMatchingService(rideMatchingService);
       logger.info('✅ Ride matching service set successfully');
     } else if (!rideMatchingService) {
       logger.error('❌ CRITICAL: rideMatchingService not found in app!');
     } else {
       logger.info('ℹ️ Ride matching service already set');
     }
+  }
+
+  /**
+   * Get scheduled ride service instance (for starting cron job)
+   */
+  getScheduledRideService(): ScheduledRideService {
+    return this.scheduledRideService;
   }
 
   /**
@@ -58,6 +69,7 @@ export class RideController {
       this.initializeRideMatching(req);
 
       const userId = (req as any).user?.id;
+      const userEmail = (req as any).user?.email;
       if (!userId) {
         return ResponseUtil.unauthorized(res);
       }
@@ -67,9 +79,48 @@ export class RideController {
         pickupLocation,
         dropoffLocation,
         vehicleVariantId,
+        paymentMethod,
         scheduledAt,
         specialRequests,
+        recipient, // New: recipient details for "Book for Someone Else"
       }: RideRequestRequest = req.body;
+
+      // Validate payment method
+      if (!paymentMethod || !paymentMethod.type) {
+        return ResponseUtil.badRequest(res, 'Payment method is required');
+      }
+
+      const validPaymentTypes = ['wallet', 'cash', 'card'];
+      if (!validPaymentTypes.includes(paymentMethod.type)) {
+        return ResponseUtil.badRequest(res, 'Invalid payment method type. Must be: wallet, cash, or card');
+      }
+
+      // Validate card payment details
+      if (paymentMethod.type === 'card') {
+        if (!paymentMethod.cardId && !paymentMethod.cardDetails) {
+          return ResponseUtil.badRequest(res, 'Card payment requires either cardId or cardDetails');
+        }
+      }
+
+      // Validate recipient details if provided
+      if (recipient) {
+        if (!recipient.name || !recipient.phone) {
+          return ResponseUtil.badRequest(res, 'Recipient name and phone are required when booking for someone else');
+        }
+        // Basic phone validation
+        if (!/^\+?[\d\s-()]+$/.test(recipient.phone)) {
+          return ResponseUtil.badRequest(res, 'Invalid recipient phone number format');
+        }
+      }
+
+      // Validate scheduled time if provided
+      if (scheduledAt) {
+        const scheduledDate = new Date(scheduledAt);
+        const validation = ScheduledRideService.validateScheduledTime(scheduledDate);
+        if (!validation.valid) {
+          return ResponseUtil.badRequest(res, validation.error!);
+        }
+      }
 
       // Verify cart ownership
       const cart = await this.cartService.getCart(cartId);
@@ -95,10 +146,11 @@ export class RideController {
         currencyCode: cart.currency_code,
       });
 
-      // Create ride with atomic transaction (includes balance check and concurrent prevention)
+      // Create ride with atomic transaction (includes balance check for wallet payments)
       const rideResult = await this.rideService.createRide({
         cart_id: cartId,
         user_id: userId,
+        user_email: userEmail,
         variant_id: vehicleVariantId,
         pickup_location: pickupLocation,
         dropoff_location: dropoffLocation,
@@ -106,8 +158,16 @@ export class RideController {
         estimated_duration: fareDetails.duration,
         estimated_fare: fareDetails.totalFare,
         currency_code: cart.currency_code,
-        payment_method: 'wallet',
+        payment_method: paymentMethod.type,
+        payment_details: {
+          type: paymentMethod.type,
+          cardId: paymentMethod.cardId,
+          cardDetails: paymentMethod.cardDetails,
+        },
         scheduled_at: scheduledAt ? new Date(scheduledAt) : null,
+        booking_type: recipient ? 'for_friend' : 'for_me',
+        recipient_name: recipient?.name,
+        recipient_phone: recipient?.phone,
         metadata: {
           special_requests: specialRequests,
           fare_breakdown: fareDetails,
@@ -122,6 +182,17 @@ export class RideController {
         if (rideResult.errorCode === 'INSUFFICIENT_BALANCE') {
           return ResponseUtil.badRequest(res, rideResult.error!);
         }
+        if (rideResult.errorCode === 'CARD_CHARGE_PENDING') {
+          // Card charge requires OTP validation
+          return ResponseUtil.success(res, {
+            status: 'pending_authorization',
+            message: 'Card charge requires OTP validation',
+            ride_id: rideResult.rideId,
+            authorization: rideResult.authorization,
+            flw_ref: rideResult.flw_ref,
+            amount: fareDetails.totalFare,
+          });
+        }
         return ResponseUtil.error(res, rideResult.error!);
       }
 
@@ -134,7 +205,9 @@ export class RideController {
         rideId: rideResult.ride!.id,
         userId,
         fare: fareDetails.totalFare,
+        paymentMethod: paymentMethod.type,
         scheduled: !!scheduledAt,
+        bookingType: recipient ? 'for_friend' : 'for_me',
       });
 
       return ResponseUtil.success(res, {
@@ -145,6 +218,12 @@ export class RideController {
           fare_breakdown: fareDetails,
           pickup_location: pickupLocation,
           dropoff_location: dropoffLocation,
+          payment_method: paymentMethod.type,
+          booking_type: recipient ? 'for_friend' : 'for_me',
+          recipient: recipient ? {
+            name: recipient.name,
+            phone: recipient.phone,
+          } : undefined,
           variant: {
             id: variant.id,
             title: variant.title,
@@ -155,8 +234,8 @@ export class RideController {
           expected_user_action: RideStateMachineService.getExpectedUserAction(RideStatus.SEARCHING),
         },
         message: scheduledAt 
-          ? 'Ride scheduled successfully' 
-          : 'Ride requested successfully. Searching for drivers...',
+          ? `Ride scheduled successfully${recipient ? ' for ' + recipient.name : ''}` 
+          : `Ride requested successfully${recipient ? ' for ' + recipient.name : ''}. Searching for drivers...`,
       });
     } catch (error: any) {
       logger.error('Request ride error:', error);
@@ -330,4 +409,79 @@ export class RideController {
       return ResponseUtil.error(res, 'Failed to rate driver');
     }
   };
-}
+
+  /**
+   * Get user's scheduled rides
+   * GET /api/ride/scheduled
+   */
+  getScheduledRides = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const rides = await this.scheduledRideService.getUserScheduledRides(userId);
+
+      return ResponseUtil.success(res, {
+        rides: rides.map(ride => ({
+          id: ride.id,
+          status: ride.status,
+          pickup_location: {
+            latitude: parseFloat(ride.pickup_latitude),
+            longitude: parseFloat(ride.pickup_longitude),
+            address: ride.pickup_address,
+          },
+          dropoff_location: ride.dropoff_latitude ? {
+            latitude: parseFloat(ride.dropoff_latitude),
+            longitude: parseFloat(ride.dropoff_longitude),
+            address: ride.dropoff_address,
+          } : null,
+          estimated_fare: parseFloat(ride.estimated_fare),
+          scheduled_at: ride.scheduled_at,
+          booking_type: ride.booking_type,
+          recipient: ride.booking_type === 'for_friend' ? {
+            name: ride.recipient_name,
+            phone: ride.recipient_phone,
+          } : undefined,
+          variant: ride.variant,
+          created_at: ride.created_at,
+        })),
+        total: rides.length,
+      });
+    } catch (error: any) {
+      logger.error('Get scheduled rides error:', error);
+      return ResponseUtil.error(res, 'Failed to get scheduled rides');
+    }
+  };
+
+  /**
+   * Cancel a scheduled ride
+   * POST /api/ride/:rideId/cancel-scheduled
+   */
+  cancelScheduledRide = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { rideId } = req.params;
+      const { reason } = req.body;
+
+      const result = await this.scheduledRideService.cancelScheduledRide(rideId, userId, reason);
+
+      if (!result.success) {
+        return ResponseUtil.badRequest(res, result.error!);
+      }
+
+      return ResponseUtil.success(res, {
+        message: 'Scheduled ride cancelled successfully',
+      });
+    } catch (error: any) {
+      logger.error('Cancel scheduled ride error:', error);
+      return ResponseUtil.error(res, 'Failed to cancel scheduled ride');
+    }
+
+  }
+  };

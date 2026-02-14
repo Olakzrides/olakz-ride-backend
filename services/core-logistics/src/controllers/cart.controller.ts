@@ -4,6 +4,7 @@ import { FareService } from '../services/fare.service';
 import { RegionService } from '../services/region.service';
 import { VariantService } from '../services/variant.service';
 import { RideService } from '../services/ride.service';
+import { RideStopsService } from '../services/ride-stops.service';
 import { ResponseUtil } from '../utils/response.util';
 import { MapsUtil } from '../utils/maps.util';
 import { logger } from '../config/logger';
@@ -15,6 +16,7 @@ export class CartController {
   private regionService: RegionService;
   private variantService: VariantService;
   private rideService: RideService;
+  private rideStopsService: RideStopsService;
 
   constructor() {
     this.cartService = new CartService();
@@ -22,6 +24,7 @@ export class CartController {
     this.regionService = new RegionService();
     this.variantService = new VariantService();
     this.rideService = new RideService();
+    this.rideStopsService = new RideStopsService();
   }
 
   /**
@@ -35,7 +38,12 @@ export class CartController {
         return ResponseUtil.unauthorized(res);
       }
 
-      const { productId, salesChannelId, passengers, searchRadius, pickupPoint }: CreateCartRequest = req.body;
+      const { serviceChannelId, passengers, searchRadius, pickupPoint }: CreateCartRequest = req.body;
+
+      // Validate required fields
+      if (!serviceChannelId) {
+        return ResponseUtil.badRequest(res, 'serviceChannelId is required');
+      }
 
       // Validate pickup location
       if (!pickupPoint || !pickupPoint.latitude || !pickupPoint.longitude) {
@@ -56,19 +64,19 @@ export class CartController {
       const cart = await this.cartService.createRideCart({
         userId,
         regionId: region.id,
-        salesChannelId,
+        serviceChannelId,
         pickupLocation: pickupPoint,
         passengers: passengers || 1,
         searchRadius: searchRadius || 10,
         currencyCode: region.currency_code,
       });
 
-      // Get ride product with variants
-      const product = await this.variantService.getRideProduct(productId);
+      // Get all ride variants (Standard, Premium, VIP)
+      const variants = await this.variantService.getAllRideVariants();
 
       // Calculate prices for each variant (no dropoff yet, so return minimum fares)
       const variantsWithPrices = await this.fareService.calculateVariantPrices(
-        product.variants,
+        variants,
         pickupPoint,
         null,
         region.currency_code
@@ -82,23 +90,16 @@ export class CartController {
           id: cart.id,
           region_id: cart.region_id,
           customer_id: userId,
-          sales_channel_id: salesChannelId,
+          service_channel_id: serviceChannelId,
           currency_code: region.currency_code,
           metadata: {
             regionId: region.id,
-            productId,
             customerId: userId,
             passengers: passengers || 1,
             pickupPoint,
             searchRadius: searchRadius || 10,
-            salesChannelId,
+            serviceChannelId,
           },
-        },
-        product: {
-          id: product.id,
-          title: product.title,
-          handle: product.handle,
-          variants: variantsWithPrices,
         },
         variants: variantsWithPrices,
         recentRides,
@@ -147,13 +148,12 @@ export class CartController {
         { latitude: dropoffPoint.latitude, longitude: dropoffPoint.longitude }
       );
 
-      // Get product variants
-      const productId = cart.metadata?.productId || '00000000-0000-0000-0000-000000000021';
-      const product = await this.variantService.getRideProduct(productId);
+      // Get all ride variants
+      const variants = await this.variantService.getAllRideVariants();
 
       // Recalculate variant prices with actual distance
       const variantsWithPrices = await this.fareService.calculateVariantPrices(
-        product.variants,
+        variants,
         {
           latitude: parseFloat(cart.pickup_latitude),
           longitude: parseFloat(cart.pickup_longitude),
@@ -272,4 +272,174 @@ export class CartController {
       return ResponseUtil.serverError(res, 'Failed to get cart');
     }
   };
-}
+
+  /**
+   * Add a stop/waypoint to cart
+   * POST /api/carts/:id/stops
+   */
+  addStop = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id: cartId } = req.params;
+      const { stopOrder, stopType, location, notes } = req.body;
+
+      // Validate input
+      if (!stopOrder || !stopType || !location) {
+        return ResponseUtil.badRequest(res, 'Missing required fields');
+      }
+
+      if (!['pickup', 'waypoint', 'dropoff'].includes(stopType)) {
+        return ResponseUtil.badRequest(res, 'Invalid stop type');
+      }
+
+      if (!MapsUtil.validateCoordinates(location.latitude, location.longitude)) {
+        return ResponseUtil.badRequest(res, 'Invalid coordinates');
+      }
+
+      // Verify cart ownership
+      const cart = await this.cartService.getCart(cartId);
+      if (!cart || cart.user_id !== userId) {
+        return ResponseUtil.forbidden(res, 'Unauthorized access to cart');
+      }
+
+      // Add stop
+      const result = await this.rideStopsService.addStopToCart(cartId, {
+        stopOrder,
+        stopType,
+        location,
+        notes,
+      });
+
+      if (!result.success) {
+        return ResponseUtil.badRequest(res, result.error!);
+      }
+
+      return ResponseUtil.success(res, {
+        stop: result.stop,
+        message: 'Stop added successfully',
+      });
+    } catch (error: any) {
+      logger.error('Add stop error:', error);
+      return ResponseUtil.error(res, 'Failed to add stop');
+    }
+  };
+
+  /**
+   * Get stops for a cart
+   * GET /api/carts/:id/stops
+   */
+  getStops = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id: cartId } = req.params;
+
+      // Verify cart ownership
+      const cart = await this.cartService.getCart(cartId);
+      if (!cart || cart.user_id !== userId) {
+        return ResponseUtil.forbidden(res, 'Unauthorized access to cart');
+      }
+
+      const stops = await this.rideStopsService.getCartStops(cartId);
+
+      return ResponseUtil.success(res, {
+        stops: stops.map(stop => ({
+          id: stop.id,
+          stopOrder: stop.stop_order,
+          stopType: stop.stop_type,
+          location: {
+            latitude: parseFloat(stop.latitude),
+            longitude: parseFloat(stop.longitude),
+            address: stop.address,
+          },
+          notes: stop.notes,
+          createdAt: stop.created_at,
+        })),
+        total: stops.length,
+      });
+    } catch (error: any) {
+      logger.error('Get stops error:', error);
+      return ResponseUtil.error(res, 'Failed to get stops');
+    }
+  };
+
+  /**
+   * Remove a stop from cart
+   * DELETE /api/carts/:id/stops/:stopId
+   */
+  removeStop = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id: cartId, stopId } = req.params;
+
+      // Verify cart ownership
+      const cart = await this.cartService.getCart(cartId);
+      if (!cart || cart.user_id !== userId) {
+        return ResponseUtil.forbidden(res, 'Unauthorized access to cart');
+      }
+
+      const result = await this.rideStopsService.removeStopFromCart(stopId, cartId);
+
+      if (!result.success) {
+        return ResponseUtil.badRequest(res, result.error!);
+      }
+
+      return ResponseUtil.success(res, {
+        message: 'Stop removed successfully',
+      });
+    } catch (error: any) {
+      logger.error('Remove stop error:', error);
+      return ResponseUtil.error(res, 'Failed to remove stop');
+    }
+  };
+
+  /**
+   * Reorder stops in cart
+   * PUT /api/carts/:id/stops/reorder
+   */
+  reorderStops = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id: cartId } = req.params;
+      const { stopOrders } = req.body; // Array of { stopId, order }
+
+      if (!Array.isArray(stopOrders)) {
+        return ResponseUtil.badRequest(res, 'stopOrders must be an array');
+      }
+
+      // Verify cart ownership
+      const cart = await this.cartService.getCart(cartId);
+      if (!cart || cart.user_id !== userId) {
+        return ResponseUtil.forbidden(res, 'Unauthorized access to cart');
+      }
+
+      const result = await this.rideStopsService.reorderStops(cartId, stopOrders);
+
+      if (!result.success) {
+        return ResponseUtil.badRequest(res, result.error!);
+      }
+
+      return ResponseUtil.success(res, {
+        message: 'Stops reordered successfully',
+      });
+    } catch (error: any) {
+      logger.error('Reorder stops error:', error);
+      return ResponseUtil.error(res, 'Failed to reorder stops');
+    }
+  }
+};
