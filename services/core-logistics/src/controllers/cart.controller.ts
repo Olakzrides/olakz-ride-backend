@@ -60,13 +60,16 @@ export class CartController {
         pickupPoint.longitude
       );
 
+      // Passengers defaults to 1 if not provided (kept in DB for analytics)
+      const passengerCount = passengers || 1;
+
       // Create cart
       const cart = await this.cartService.createRideCart({
         userId,
         regionId: region.id,
         serviceChannelId,
         pickupLocation: pickupPoint,
-        passengers: passengers || 1,
+        passengers: passengerCount,
         searchRadius: searchRadius || 10,
         currencyCode: region.currency_code,
       });
@@ -95,7 +98,7 @@ export class CartController {
           metadata: {
             regionId: region.id,
             customerId: userId,
-            passengers: passengers || 1,
+            passengers: passengerCount,
             pickupPoint,
             searchRadius: searchRadius || 10,
             serviceChannelId,
