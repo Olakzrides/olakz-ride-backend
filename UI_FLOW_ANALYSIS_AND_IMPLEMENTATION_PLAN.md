@@ -1068,7 +1068,7 @@ Response: {
 - `services/core-logistics/src/services/cart.service.ts` (UPDATE)
 - Add service channel validation
 
-**Estimated Time:** 1 day
+
 
 ---
 
