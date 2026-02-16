@@ -13,29 +13,29 @@ const locationController = new DriverLocationController();
 router.use(authenticate);
 
 // Driver Availability
-router.post('/drivers/availability/online', availabilityController.goOnline);
-router.post('/drivers/availability/offline', availabilityController.goOffline);
-router.get('/drivers/availability/status', availabilityController.getStatus);
+router.post('/availability/online', availabilityController.goOnline);
+router.post('/availability/offline', availabilityController.goOffline);
+router.get('/availability/status', availabilityController.getStatus);
 
 // Driver Ride Requests
-router.post('/drivers/rides/requests/:id/accept', rideController.acceptRideRequest);
-router.post('/drivers/rides/requests/:id/decline', rideController.declineRideRequest);
-router.get('/drivers/rides/pending', rideController.getPendingRequests);
+router.post('/rides/requests/:id/accept', rideController.acceptRideRequest);
+router.post('/rides/requests/:id/decline', rideController.declineRideRequest);
+router.get('/rides/pending', rideController.getPendingRequests);
 
 // Driver Ride Lifecycle
-router.post('/drivers/rides/:rideId/arrived', rideController.markArrived);
-router.post('/drivers/rides/:rideId/start', rideController.startTrip);
-router.post('/drivers/rides/:rideId/complete', rideController.completeTrip);
+router.post('/rides/:rideId/arrived', rideController.markArrived);
+router.post('/rides/:rideId/start', rideController.startTrip);
+router.post('/rides/:rideId/complete', rideController.completeTrip);
 
 // Driver Ride Management
-router.get('/drivers/rides/active', rideController.getActiveRide);
-router.get('/drivers/rides/history', rideController.getRideHistory);
+router.get('/rides/active', rideController.getActiveRide);
+router.get('/rides/history', rideController.getRideHistory);
 
 // Driver Rating
-router.post('/drivers/rides/:rideId/rate-passenger', rideController.ratePassenger);
+router.post('/rides/:rideId/rate-passenger', rideController.ratePassenger);
 
 // Driver Location
-router.post('/drivers/location', locationController.updateLocation);
-router.get('/drivers/location', locationController.getLocation);
+router.post('/location', locationController.updateLocation);
+router.get('/location', locationController.getLocation);
 
 export default router;

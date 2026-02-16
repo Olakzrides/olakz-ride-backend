@@ -34,7 +34,7 @@ router.use('/api/admin/drivers', adminDriverRoutes);
 router.use('/api', cartRoutes);
 router.use('/api', rideRoutes);
 router.use('/api', walletRoutes);
-router.use('/api', driverRideRoutes); // Phase 2A: Driver ride operations
+router.use('/api/drivers', driverRideRoutes); // Phase 2A: Driver ride operations (availability, location, rides)
 router.use('/api/notifications', notificationRoutes); // Phase 2B: Push notifications
 router.use('/api', savedPlacesRoutes); // Phase 1: Saved places
 router.use('/api/payment/cards', paymentCardsRoutes); // Phase 2: Payment cards
