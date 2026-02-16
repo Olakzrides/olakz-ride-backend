@@ -140,7 +140,7 @@ export function setupRoutes(app: Application): void {
 
   // Saved places routes (Phase 1)
   app.use(
-    '/api/places',
+    '/api/saved-places',
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))
   );
 
