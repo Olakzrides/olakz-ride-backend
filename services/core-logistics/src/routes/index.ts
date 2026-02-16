@@ -11,6 +11,7 @@ import adminDriverRoutes from './admin-driver.routes';
 import notificationRoutes from './notification.routes';
 import savedPlacesRoutes from './saved-places.routes';
 import paymentCardsRoutes from './payment-cards.routes';
+import supportRoutes from './support.routes';
 import { RideController } from '../controllers/ride.controller';
 
 const router = Router();
@@ -37,6 +38,7 @@ router.use('/api', driverRideRoutes); // Phase 2A: Driver ride operations
 router.use('/api/notifications', notificationRoutes); // Phase 2B: Push notifications
 router.use('/api', savedPlacesRoutes); // Phase 1: Saved places
 router.use('/api/payment/cards', paymentCardsRoutes); // Phase 2: Payment cards
+router.use('/api/support', supportRoutes); // Phase 3.3: WhatsApp support
 
 // Health check
 router.get('/health', (_req, res) => {

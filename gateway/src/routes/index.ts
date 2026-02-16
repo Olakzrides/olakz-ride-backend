@@ -156,6 +156,12 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))
   );
 
+  // Support routes (Phase 3.3)
+  app.use(
+    '/api/support',
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+  );
+
   app.use(
     '/api/carts',
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))

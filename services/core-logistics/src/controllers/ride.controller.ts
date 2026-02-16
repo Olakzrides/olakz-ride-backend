@@ -9,6 +9,7 @@ import { RatingService } from '../services/rating.service';
 import { ScheduledRideService } from '../services/scheduled-ride.service';
 import { LocationHistoryService } from '../services/location-history.service';
 import { RideSharingService } from '../services/ride-sharing.service';
+import { TipService } from '../services/tip.service';
 import { ResponseUtil } from '../utils/response.util';
 import { logger } from '../config/logger';
 import { RideRequestRequest } from '../types';
@@ -23,6 +24,7 @@ export class RideController {
   private scheduledRideService: ScheduledRideService;
   private locationHistoryService: LocationHistoryService;
   private rideSharingService: RideSharingService;
+  private tipService: TipService;
 
   constructor() {
     this.rideService = new RideService();
@@ -34,6 +36,7 @@ export class RideController {
     this.scheduledRideService = new ScheduledRideService();
     this.locationHistoryService = new LocationHistoryService();
     this.rideSharingService = new RideSharingService();
+    this.tipService = new TipService();
   }
 
   /**
@@ -604,6 +607,51 @@ export class RideController {
     } catch (error: any) {
       logger.error('Track ride by token error:', error);
       return ResponseUtil.error(res, 'Failed to fetch ride details');
+    }
+  };
+
+  /**
+   * Add tip to completed ride
+   * POST /api/rides/:rideId/tip
+   */
+  addTip = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { rideId } = req.params;
+      const { tipAmount } = req.body;
+
+      // Validate tip amount
+      if (!tipAmount || typeof tipAmount !== 'number' || tipAmount <= 0) {
+        return ResponseUtil.badRequest(res, 'Valid tip amount is required');
+      }
+
+      const result = await this.tipService.addTip({
+        rideId,
+        userId,
+        tipAmount,
+      });
+
+      if (!result.success) {
+        return ResponseUtil.badRequest(res, result.error!);
+      }
+
+      logger.info('Tip added successfully', {
+        userId,
+        rideId,
+        tipAmount,
+      });
+
+      return ResponseUtil.success(res, {
+        message: result.message,
+        tipAmount,
+      });
+    } catch (error: any) {
+      logger.error('Add tip error:', error);
+      return ResponseUtil.error(res, 'Failed to add tip');
     }
   };
 }

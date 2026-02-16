@@ -661,29 +661,6 @@ export class VehicleValidationService {
         validation: { min: 2, max: 8 }
       },
       {
-        name: 'fuel_type',
-        label: 'Fuel Type',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'gasoline', label: 'Gasoline' },
-          { value: 'diesel', label: 'Diesel' },
-          { value: 'electric', label: 'Electric' },
-          { value: 'hybrid', label: 'Hybrid' }
-        ]
-      },
-      {
-        name: 'transmission',
-        label: 'Transmission',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'manual', label: 'Manual' },
-          { value: 'automatic', label: 'Automatic' },
-          { value: 'cvt', label: 'CVT' }
-        ]
-      },
-      {
         name: 'doors',
         label: 'Number of Doors',
         type: 'select',
@@ -774,16 +751,6 @@ export class VehicleValidationService {
           { value: 'cruiser', label: 'Cruiser' },
           { value: 'touring', label: 'Touring' },
           { value: 'dirt', label: 'Dirt Bike' }
-        ]
-      },
-      {
-        name: 'fuel_type',
-        label: 'Fuel Type',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'gasoline', label: 'Gasoline' },
-          { value: 'electric', label: 'Electric' }
         ]
       },
       {
@@ -966,26 +933,6 @@ export class VehicleValidationService {
         ]
       },
       {
-        name: 'fuel_type',
-        label: 'Fuel Type',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'gasoline', label: 'Gasoline' },
-          { value: 'diesel', label: 'Diesel' }
-        ]
-      },
-      {
-        name: 'transmission',
-        label: 'Transmission',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'manual', label: 'Manual' },
-          { value: 'automatic', label: 'Automatic' }
-        ]
-      },
-      {
         name: 'has_lift_gate',
         label: 'Has Lift Gate',
         type: 'boolean',
@@ -1050,27 +997,6 @@ export class VehicleValidationService {
         type: 'number',
         required: true,
         validation: { min: 15, max: 80 }
-      },
-      {
-        name: 'fuel_type',
-        label: 'Fuel Type',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'diesel', label: 'Diesel' },
-          { value: 'electric', label: 'Electric' },
-          { value: 'hybrid', label: 'Hybrid' }
-        ]
-      },
-      {
-        name: 'transmission',
-        label: 'Transmission',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'manual', label: 'Manual' },
-          { value: 'automatic', label: 'Automatic' }
-        ]
       },
       {
         name: 'bus_type',
@@ -1155,28 +1081,6 @@ export class VehicleValidationService {
         validation: { min: 8, max: 20 }
       },
       {
-        name: 'fuel_type',
-        label: 'Fuel Type',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'gasoline', label: 'Gasoline' },
-          { value: 'diesel', label: 'Diesel' },
-          { value: 'electric', label: 'Electric' },
-          { value: 'hybrid', label: 'Hybrid' }
-        ]
-      },
-      {
-        name: 'transmission',
-        label: 'Transmission',
-        type: 'select',
-        required: true,
-        options: [
-          { value: 'manual', label: 'Manual' },
-          { value: 'automatic', label: 'Automatic' }
-        ]
-      },
-      {
         name: 'has_luggage_compartment',
         label: 'Has Luggage Compartment',
         type: 'boolean',
@@ -1200,12 +1104,6 @@ export class VehicleValidationService {
     }
     if (!data.seating_capacity || data.seating_capacity < 2 || data.seating_capacity > 8) {
       errors.push({ field: 'seating_capacity', message: 'Seating capacity must be between 2 and 8' });
-    }
-    if (!data.fuel_type || !['gasoline', 'diesel', 'electric', 'hybrid'].includes(data.fuel_type)) {
-      errors.push({ field: 'fuel_type', message: 'Invalid fuel type' });
-    }
-    if (!data.transmission || !['manual', 'automatic', 'cvt'].includes(data.transmission)) {
-      errors.push({ field: 'transmission', message: 'Invalid transmission type' });
     }
 
     return { isValid: errors.length === 0, errors };

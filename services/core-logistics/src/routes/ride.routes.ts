@@ -32,6 +32,9 @@ router.post('/ride/:rideId/cancel-scheduled', rideController.cancelScheduledRide
 // Rate driver (passenger rates driver)
 router.post('/ride/:rideId/rate', rideController.rateDriver);
 
+// Add tip to completed ride
+router.post('/ride/:rideId/tip', rideController.addTip);
+
 // Share ride
 router.post('/rides/:rideId/share', rideController.generateShareLink);
 

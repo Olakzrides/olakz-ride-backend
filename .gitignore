@@ -34,6 +34,16 @@ services/*/build/
 gateway/dist/
 gateway/build/
 
+# Compiled TypeScript files in src (should only be in dist/)
+services/*/src/**/*.js
+services/*/src/**/*.js.map
+services/*/src/**/*.d.ts
+services/*/src/**/*.d.ts.map
+gateway/src/**/*.js
+gateway/src/**/*.js.map
+gateway/src/**/*.d.ts
+gateway/src/**/*.d.ts.map
+
 # Testing
 coverage/
 .nyc_output/

@@ -234,6 +234,11 @@ model Ride {
   passengerRating     Int?      @map("passenger_rating")
   passengerFeedback   String?   @map("passenger_feedback") @db.Text
   
+  // Tip fields
+  tipAmount           Decimal?  @default(0) @map("tip_amount") @db.Decimal(10, 2)
+  tipPaymentStatus    String?   @map("tip_payment_status") @db.VarChar(20)
+  tipPaidAt           DateTime? @map("tip_paid_at") @db.Timestamptz(6)
+  
   // Ride sharing fields
   shareToken          String?   @unique @map("share_token") @db.VarChar(255)
   shareTokenCreatedAt DateTime? @map("share_token_created_at") @db.Timestamptz(6)

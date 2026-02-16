@@ -509,9 +509,18 @@ export class DriverRideService {
       }
 
       // Convert payment hold to actual payment
-      if (ride.payment_hold_id) {
+      // Find the hold transaction for this ride
+      const { data: holdTransaction } = await supabase
+        .from('wallet_transactions')
+        .select('id')
+        .eq('ride_id', rideId)
+        .eq('transaction_type', 'hold')
+        .eq('status', 'hold')
+        .single();
+
+      if (holdTransaction) {
         await this.paymentService.convertHoldToPayment({
-          holdId: ride.payment_hold_id,
+          holdId: holdTransaction.id,
           actualAmount: finalFare,
           description: `Payment for ride ${rideId}`,
           metadata: {
@@ -521,6 +530,8 @@ export class DriverRideService {
             actual_duration: data.actualDuration,
           },
         });
+      } else {
+        logger.warn('No payment hold found for ride:', { rideId });
       }
 
       // Set driver as available again

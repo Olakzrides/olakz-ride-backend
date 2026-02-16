@@ -885,26 +885,79 @@ Response: { "message": "Share link revoked successfully" }
 
 ---
 
-### **3.3 Chat with Support** 🟢 MEDIUM
+### ✅ **3.3 Chat with Support** (COMPLETED - Feb 16, 2026)
 **Priority:** P2 - Customer support
 
-**Options:**
-1. Integrate third-party (Intercom, Zendesk)
-2. Build simple in-app chat
-3. Link to WhatsApp Business
+**Implementation:** WhatsApp Business integration with real user name fetching
 
-**Recommended:** WhatsApp Business integration (fastest)
+**Changes Made**:
+1. **Updated `services/core-logistics/src/config/env.ts`**:
+   - ✅ Added `support.whatsappNumber` configuration
 
-**Implementation:**
-- Add support WhatsApp number to config
-- Generate pre-filled message with ride details
-- Deep link to WhatsApp
+2. **Created `services/core-logistics/src/services/support.service.ts`**:
+   - ✅ `generateSupportLink()` - Creates WhatsApp deep link with pre-filled message
+   - ✅ `fetchUserName()` - Fetches real user name from auth service (users table)
+   - ✅ `getSupportContactInfo()` - Returns support contact details
+   - ✅ Validates ride is active before allowing contact
+   - ✅ Includes ride details in message (ID, status, addresses)
+   - ✅ Graceful fallback to "Customer" if name fetch fails
 
-**Files to Modify:**
-- `services/core-logistics/src/config/env.ts` (UPDATE)
-- Add support contact endpoints
+3. **Created `services/core-logistics/src/controllers/support.controller.ts`**:
+   - ✅ `contactSupport()` - Generate support link endpoint
+   - ✅ `getSupportInfo()` - Get support contact info endpoint
 
-**Estimated Time:** 1 day
+4. **Created `services/core-logistics/src/routes/support.routes.ts`**:
+   - ✅ `POST /api/support/contact` - Generate WhatsApp link
+   - ✅ `GET /api/support/info` - Get support information
+
+5. **Updated environment files**:
+   - ✅ Added `SUPPORT_WHATSAPP_NUMBER=+2348063899074`
+
+**User Name Fetching (Industry Best Practice):**
+- ✅ Service-to-service communication via Supabase
+- ✅ Queries `users` table in auth database for `first_name` and `last_name`
+- ✅ Async operation with error handling
+- ✅ Graceful fallback to "Customer" if fetch fails
+- ✅ Follows microservices best practices
+
+**API Usage**:
+```json
+// Generate support link
+POST /api/support/contact
+{
+  "rideId": "uuid",
+  "issueCategory": "driver",
+  "message": "Optional custom message"
+}
+
+Response: {
+  "whatsappLink": "https://wa.me/2348063899074?text=...",
+  "message": "Support link generated successfully"
+}
+
+// Get support info
+GET /api/support/info
+Response: {
+  "support": {
+    "whatsapp": "+2348063899074",
+    "displayNumber": "+234 806 389 9074",
+    "availableFor": "Active rides only",
+    "issueCategories": [...]
+  }
+}
+```
+
+**Features**:
+- ✅ WhatsApp deep link generation
+- ✅ Pre-filled message with ride context
+- ✅ Real user name from auth service
+- ✅ Issue categorization (payment, driver, app, safety, other)
+- ✅ Only available for active rides
+- ✅ Includes ride ID, user name, and ride details
+- ✅ Custom message support
+- ✅ Same number for all users (can be changed later)
+
+**Status: COMPLETE ✅** - Build successful, ready for testing with real user names
 
 ---
 

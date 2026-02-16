@@ -294,10 +294,20 @@ export class PaymentService {
 
       let balance = 0;
       transactions?.forEach(transaction => {
-        if (transaction.transaction_type === 'credit' || transaction.transaction_type === 'refund') {
-          balance += parseFloat(transaction.amount);
-        } else if (transaction.transaction_type === 'debit' || transaction.transaction_type === 'hold') {
-          balance -= parseFloat(transaction.amount);
+        const amount = parseFloat(transaction.amount);
+        const type = transaction.transaction_type;
+        
+        // Credits and refunds: ADD (positive amounts)
+        if (type === 'credit' || type === 'refund' || type === 'tip_received') {
+          balance += amount;
+        }
+        // Debits and holds: SUBTRACT (positive amounts that reduce balance)
+        else if (type === 'debit' || type === 'hold') {
+          balance -= amount;
+        }
+        // Tip payments: already negative, so ADD (which subtracts due to negative sign)
+        else if (type === 'tip_payment') {
+          balance += amount; // amount is already negative
         }
       });
 

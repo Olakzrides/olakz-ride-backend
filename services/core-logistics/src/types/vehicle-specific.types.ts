@@ -12,8 +12,6 @@ export interface BaseVehicleData {
 export interface CarVehicleData extends BaseVehicleData {
   vin: string;
   seating_capacity: number;
-  fuel_type: 'gasoline' | 'diesel' | 'electric' | 'hybrid';
-  transmission: 'manual' | 'automatic' | 'cvt';
   engine_size?: string; // e.g., "2.0L", "1.6L"
   doors: number;
   air_conditioning: boolean;
@@ -24,7 +22,6 @@ export interface MotorcycleVehicleData extends BaseVehicleData {
   engine_capacity: number; // in CC
   engine_number: string;
   bike_type: 'sport' | 'cruiser' | 'touring' | 'standard' | 'scooter' | 'dirt';
-  fuel_type: 'gasoline' | 'electric';
   has_storage_box: boolean;
 }
 
@@ -45,8 +42,6 @@ export interface TruckVehicleData extends BaseVehicleData {
   vin: string;
   load_capacity: number; // in kg
   truck_type: 'pickup' | 'van' | 'box_truck' | 'flatbed' | 'refrigerated';
-  fuel_type: 'gasoline' | 'diesel';
-  transmission: 'manual' | 'automatic';
   has_lift_gate: boolean;
   cargo_dimensions: {
     length: number; // in meters
@@ -59,8 +54,6 @@ export interface TruckVehicleData extends BaseVehicleData {
 export interface BusVehicleData extends BaseVehicleData {
   vin: string;
   seating_capacity: number;
-  fuel_type: 'gasoline' | 'diesel' | 'electric' | 'hybrid';
-  transmission: 'manual' | 'automatic';
   bus_type: 'minibus' | 'standard' | 'articulated';
   wheelchair_accessible: boolean;
   air_conditioning: boolean;
@@ -70,8 +63,6 @@ export interface BusVehicleData extends BaseVehicleData {
 export interface MinibusVehicleData extends BaseVehicleData {
   vin: string;
   seating_capacity: number;
-  fuel_type: 'gasoline' | 'diesel' | 'electric' | 'hybrid';
-  transmission: 'manual' | 'automatic';
   has_luggage_compartment: boolean;
   air_conditioning: boolean;
 }

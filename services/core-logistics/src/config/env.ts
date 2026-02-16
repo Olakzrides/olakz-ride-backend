@@ -57,6 +57,11 @@ export const config = {
     maxWaitTimeMinutes: parseInt(process.env.STOP_MAX_WAIT_TIME || '10', 10),
     maxStopsPerRide: parseInt(process.env.MAX_STOPS_PER_RIDE || '5', 10),
   },
+
+  // Support Contact (Phase 3.3)
+  support: {
+    whatsappNumber: process.env.SUPPORT_WHATSAPP_NUMBER || '+2348063899074',
+  },
 };
 
 // Validate required environment variables
