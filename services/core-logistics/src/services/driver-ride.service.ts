@@ -4,6 +4,7 @@ import { RideStateMachineService, RideStatus } from './ride-state-machine.servic
 import { PaymentService } from './payment.service';
 import { DriverAvailabilityService } from './driver-availability.service';
 import { PushNotificationService } from './push-notification.service';
+import { LocationHistoryService } from './location-history.service';
 
 interface Location {
   latitude: number;
@@ -22,11 +23,13 @@ export class DriverRideService {
   private paymentService: PaymentService;
   private availabilityService: DriverAvailabilityService;
   private pushService: PushNotificationService;
+  private locationHistoryService: LocationHistoryService;
 
   constructor() {
     this.paymentService = new PaymentService();
     this.availabilityService = new DriverAvailabilityService();
     this.pushService = PushNotificationService.getInstance();
+    this.locationHistoryService = new LocationHistoryService();
   }
 
   /**
@@ -543,6 +546,33 @@ export class DriverRideService {
           finalFare: finalFare.toString(),
         }
       );
+
+      // Record location visits for recent locations feature
+      // Record pickup location
+      if (ride.pickup_address) {
+        await this.locationHistoryService.recordLocationVisit(
+          ride.user_id,
+          'pickup',
+          {
+            latitude: parseFloat(ride.pickup_latitude),
+            longitude: parseFloat(ride.pickup_longitude),
+            address: ride.pickup_address,
+          }
+        );
+      }
+
+      // Record dropoff location
+      if (ride.dropoff_address) {
+        await this.locationHistoryService.recordLocationVisit(
+          ride.user_id,
+          'dropoff',
+          {
+            latitude: parseFloat(ride.dropoff_latitude),
+            longitude: parseFloat(ride.dropoff_longitude),
+            address: ride.dropoff_address,
+          }
+        );
+      }
 
       logger.info(`Driver ${driverId} completed trip ${rideId} with final fare ${finalFare}`);
 

@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../node_modules/.prisma/auth-client';
 import bcrypt from 'bcryptjs';
 import logger from '../utils/logger';
 import config from '../config';

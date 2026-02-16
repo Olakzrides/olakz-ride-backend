@@ -770,43 +770,118 @@ All Phase 2 features successfully implemented:
 ## **PHASE 3: CONVENIENCE & SUPPORT FEATURES** (Week 5-6)
 **Goal:** Add remaining UX and support features
 
-### **3.1 Recently Visited Locations** 🟢 MEDIUM
+### ✅ **3.1 Recently Visited Locations** (COMPLETED - Feb 15, 2026)
 **Priority:** P2 - UX convenience
 
-**Implementation:**
-- Extract unique locations from recent rides
-- Return top 10 most recent
-- Cache for performance
+**Changes Made**:
+1. **Database Migration** (`20260215_create_recent_locations_table`):
+   - ✅ Created `recent_locations` table with user_id, location_type, coordinates, address
+   - ✅ Added indexes for efficient querying
+   - ✅ Automatic cleanup of old records (keeps last 50 per user)
 
-**API Implementation:**
-- `GET /api/locations/recent` - Get recent locations
+2. **Created `services/core-logistics/src/services/location-history.service.ts`**:
+   - ✅ `recordLocationVisit()` - Auto-records on ride completion
+   - ✅ `getRecentLocations()` - Returns top 5 most recent
+   - ✅ `getRecentLocationsByType()` - Filter by pickup/dropoff
+   - ✅ `cleanupOldLocations()` - Keeps only last 50 per user
 
-**Files to Create/Modify:**
-- `services/core-logistics/src/services/location-history.service.ts` (NEW)
-- `services/core-logistics/src/controllers/location.controller.ts` (NEW)
+3. **Updated `services/core-logistics/src/services/driver-ride.service.ts`**:
+   - ✅ Auto-records locations when trip completes
 
-**Estimated Time:** 1 day
+4. **Updated `services/core-logistics/src/controllers/ride.controller.ts`**:
+   - ✅ Added `getRecentLocations()` endpoint
+
+5. **Updated `services/core-logistics/src/routes/ride.routes.ts`**:
+   - ✅ Added route: `GET /api/locations/recent?limit=5&type=pickup|dropoff`
+
+**API Usage**:
+```json
+GET /api/locations/recent?limit=5&type=pickup
+Response: {
+  "locations": [
+    {
+      "latitude": 6.5244,
+      "longitude": 3.3792,
+      "address": "Victoria Island, Lagos",
+      "visitedAt": "2026-02-15T10:30:00Z"
+    }
+  ]
+}
+```
+
+**Status: COMPLETE ✅** - Tested and working
 
 ---
 
-### **3.2 Share Ride Details** 🟢 MEDIUM
+### ✅ **3.2 Share Ride Details** (COMPLETED - Feb 15, 2026)
 **Priority:** P2 - Safety feature
 
-**Implementation:**
-- Generate shareable ride link
-- Public tracking page (no auth required)
-- SMS/WhatsApp sharing integration
-- Live location updates
+**Changes Made**:
+1. **Database Migration** (`20260215_add_ride_share_tokens`):
+   - ✅ Added `share_token` (UUID) to rides table
+   - ✅ Added `share_token_created_at` timestamp
+   - ✅ Added `share_token_expires_at` timestamp (2 hours after ride completion)
+   - ✅ Added `share_token_revoked` boolean flag
+   - ✅ Added index on share_token for fast lookups
 
-**API Implementation:**
-- `POST /api/rides/:id/share` - Generate share link
-- `GET /api/rides/track/:token` - Public tracking page
+2. **Created `services/core-logistics/src/services/ride-sharing.service.ts`**:
+   - ✅ `generateShareLink()` - Creates unique token, expires 2 hours after ride completion
+   - ✅ `revokeShareLink()` - Revokes access immediately
+   - ✅ `getRideByShareToken()` - Public tracking endpoint (no auth)
+   - ✅ `generateWhatsAppShareLink()` - Pre-filled WhatsApp message with tracking link
 
-**Files to Create/Modify:**
-- `services/core-logistics/src/services/ride-sharing.service.ts` (NEW)
-- `services/core-logistics/src/controllers/ride.controller.ts` (UPDATE)
+3. **Updated `services/core-logistics/src/controllers/ride.controller.ts`**:
+   - ✅ Added `generateShareLink()` endpoint
+   - ✅ Added `revokeShareLink()` endpoint
+   - ✅ Added `trackRideByToken()` endpoint (public - no auth)
 
-**Estimated Time:** 2 days
+4. **Updated `services/core-logistics/src/routes/ride.routes.ts`**:
+   - ✅ Added public route: `GET /api/rides/track/:shareToken` (no auth)
+   - ✅ Added protected route: `POST /api/rides/:rideId/share`
+   - ✅ Added protected route: `POST /api/rides/:rideId/revoke-share`
+
+**API Usage**:
+```json
+// Generate share link
+POST /api/rides/:rideId/share
+Response: {
+  "shareToken": "uuid",
+  "shareUrl": "https://app.olakz.com/track/uuid",
+  "whatsappLink": "https://wa.me/?text=...",
+  "expiresAt": "2026-02-15T14:30:00Z"
+}
+
+// Public tracking (no auth required)
+GET /api/rides/track/:shareToken
+Response: {
+  "ride": {
+    "id": "uuid",
+    "status": "in_progress",
+    "pickup": {...},
+    "dropoff": {...},
+    "driver": {
+      "firstName": "John",
+      "phone": "+234...",
+      "vehicle": {...}
+    }
+  }
+}
+
+// Revoke share link
+POST /api/rides/:rideId/revoke-share
+Response: { "message": "Share link revoked successfully" }
+```
+
+**Features**:
+- ✅ Unique UUID token per ride
+- ✅ Auto-expires 2 hours after ride completion
+- ✅ Can be revoked anytime by passenger
+- ✅ Public tracking page (no login required)
+- ✅ Shows driver details and live location
+- ✅ WhatsApp integration with pre-filled message
+- ✅ Secure - only shows necessary info (hides sensitive data)
+
+**Status: COMPLETE ✅** - Build successful, ready for testing
 
 ---
 

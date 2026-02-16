@@ -120,6 +120,42 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))
   );
 
+  // Public ride tracking (Phase 3.2 - Share Ride Details)
+  app.use(
+    '/api/rides',
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+  );
+
+  // Wallet routes (Phase 2.2)
+  app.use(
+    '/api/wallet',
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+  );
+
+  // Notification routes (Phase 2B)
+  app.use(
+    '/api/notifications',
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+  );
+
+  // Saved places routes (Phase 1)
+  app.use(
+    '/api/places',
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+  );
+
+  // Location routes (Phase 3.1 - Recent locations)
+  app.use(
+    '/api/locations',
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+  );
+
+  // Payment cards routes (Phase 2.1)
+  app.use(
+    '/api/payment',
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+  );
+
   app.use(
     '/api/carts',
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))

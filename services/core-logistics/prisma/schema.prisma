@@ -3,6 +3,7 @@
 
 generator client {
   provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/logistics-client"
 }
 
 datasource db {
@@ -232,6 +233,13 @@ model Ride {
   driverFeedback      String?   @map("driver_feedback") @db.Text
   passengerRating     Int?      @map("passenger_rating")
   passengerFeedback   String?   @map("passenger_feedback") @db.Text
+  
+  // Ride sharing fields
+  shareToken          String?   @unique @map("share_token") @db.VarChar(255)
+  shareTokenCreatedAt DateTime? @map("share_token_created_at") @db.Timestamptz(6)
+  shareTokenExpiresAt DateTime? @map("share_token_expires_at") @db.Timestamptz(6)
+  shareTokenRevoked   Boolean   @default(false) @map("share_token_revoked")
+  
   metadata            Json      @default("{}")
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -249,6 +257,7 @@ model Ride {
   @@index([driverId])
   @@index([status])
   @@index([bookingType])
+  @@index([shareToken])
   @@index([createdAt])
   @@index([status, createdAt])
   @@map("rides")
@@ -768,6 +777,25 @@ model SavedPlace {
   @@index([userId, isDefault])
   @@unique([userId, placeType, isDefault], name: "unique_default_place")
   @@map("saved_places")
+}
+
+// Recently visited locations (auto-populated from completed rides)
+model RecentLocation {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  locationType   String   @map("location_type") @db.VarChar(20) // 'pickup' or 'dropoff'
+  latitude       Decimal  @db.Decimal(10, 8)
+  longitude      Decimal  @db.Decimal(11, 8)
+  address        String   @db.Text
+  visitCount     Int      @default(1) @map("visit_count")
+  lastVisitedAt  DateTime @map("last_visited_at") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId, lastVisitedAt(sort: Desc)])
+  @@index([userId, locationType])
+  @@unique([userId, address])
+  @@map("recent_locations")
 }
 
 

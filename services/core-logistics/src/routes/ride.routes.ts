@@ -32,4 +32,13 @@ router.post('/ride/:rideId/cancel-scheduled', rideController.cancelScheduledRide
 // Rate driver (passenger rates driver)
 router.post('/ride/:rideId/rate', rideController.rateDriver);
 
+// Share ride
+router.post('/rides/:rideId/share', rideController.generateShareLink);
+
+// Revoke share link
+router.post('/rides/:rideId/revoke-share', rideController.revokeShareLink);
+
+// Get recently visited locations
+router.get('/locations/recent', rideController.getRecentLocations);
+
 export default router;

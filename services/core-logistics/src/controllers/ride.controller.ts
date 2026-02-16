@@ -7,6 +7,8 @@ import { RideTimeoutService } from '../services/ride-timeout.service';
 import { RideStateMachineService, RideStatus } from '../services/ride-state-machine.service';
 import { RatingService } from '../services/rating.service';
 import { ScheduledRideService } from '../services/scheduled-ride.service';
+import { LocationHistoryService } from '../services/location-history.service';
+import { RideSharingService } from '../services/ride-sharing.service';
 import { ResponseUtil } from '../utils/response.util';
 import { logger } from '../config/logger';
 import { RideRequestRequest } from '../types';
@@ -19,6 +21,8 @@ export class RideController {
   private rideTimeoutService: RideTimeoutService;
   private ratingService: RatingService;
   private scheduledRideService: ScheduledRideService;
+  private locationHistoryService: LocationHistoryService;
+  private rideSharingService: RideSharingService;
 
   constructor() {
     this.rideService = new RideService();
@@ -28,6 +32,8 @@ export class RideController {
     this.rideTimeoutService = new RideTimeoutService();
     this.ratingService = new RatingService();
     this.scheduledRideService = new ScheduledRideService();
+    this.locationHistoryService = new LocationHistoryService();
+    this.rideSharingService = new RideSharingService();
   }
 
   /**
@@ -482,6 +488,122 @@ export class RideController {
       logger.error('Cancel scheduled ride error:', error);
       return ResponseUtil.error(res, 'Failed to cancel scheduled ride');
     }
-
-  }
   };
+
+  /**
+   * Get recently visited locations
+   * GET /api/locations/recent
+   */
+  getRecentLocations = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const limit = parseInt(req.query.limit as string) || 5;
+      const type = req.query.type as 'pickup' | 'dropoff' | undefined;
+
+      let locations;
+      if (type) {
+        locations = await this.locationHistoryService.getRecentLocationsByType(userId, type, limit);
+      } else {
+        locations = await this.locationHistoryService.getRecentLocations(userId, limit);
+      }
+
+      return ResponseUtil.success(res, {
+        locations,
+        total: locations.length,
+      });
+    } catch (error: any) {
+      logger.error('Get recent locations error:', error);
+      return ResponseUtil.error(res, 'Failed to fetch recent locations');
+    }
+  };
+
+  /**
+   * Generate share link for ride
+   * POST /api/rides/:rideId/share
+   */
+  generateShareLink = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { rideId } = req.params;
+
+      const result = await this.rideSharingService.generateShareLink(rideId, userId);
+
+      if (!result.success) {
+        return ResponseUtil.badRequest(res, result.error!);
+      }
+
+      // Generate WhatsApp share link
+      const whatsappLink = this.rideSharingService.generateWhatsAppShareLink(result.shareUrl!);
+
+      return ResponseUtil.success(res, {
+        shareToken: result.shareToken,
+        shareUrl: result.shareUrl,
+        whatsappLink,
+        expiresAt: result.expiresAt,
+        message: 'Share link generated successfully',
+      });
+    } catch (error: any) {
+      logger.error('Generate share link error:', error);
+      return ResponseUtil.error(res, 'Failed to generate share link');
+    }
+  };
+
+  /**
+   * Revoke share link
+   * POST /api/rides/:rideId/revoke-share
+   */
+  revokeShareLink = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { rideId } = req.params;
+
+      const result = await this.rideSharingService.revokeShareLink(rideId, userId);
+
+      if (!result.success) {
+        return ResponseUtil.badRequest(res, result.error!);
+      }
+
+      return ResponseUtil.success(res, {
+        message: 'Share link revoked successfully',
+      });
+    } catch (error: any) {
+      logger.error('Revoke share link error:', error);
+      return ResponseUtil.error(res, 'Failed to revoke share link');
+    }
+  };
+
+  /**
+   * Get ride details by share token (public - no auth)
+   * GET /api/rides/track/:shareToken
+   */
+  trackRideByToken = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { shareToken } = req.params;
+
+      const result = await this.rideSharingService.getRideByShareToken(shareToken);
+
+      if (!result.success) {
+        return ResponseUtil.badRequest(res, result.error!);
+      }
+
+      return ResponseUtil.success(res, {
+        ride: result.ride,
+      });
+    } catch (error: any) {
+      logger.error('Track ride by token error:', error);
+      return ResponseUtil.error(res, 'Failed to fetch ride details');
+    }
+  };
+}

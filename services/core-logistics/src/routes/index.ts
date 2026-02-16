@@ -11,8 +11,14 @@ import adminDriverRoutes from './admin-driver.routes';
 import notificationRoutes from './notification.routes';
 import savedPlacesRoutes from './saved-places.routes';
 import paymentCardsRoutes from './payment-cards.routes';
+import { RideController } from '../controllers/ride.controller';
 
 const router = Router();
+const rideController = new RideController();
+
+// PUBLIC ROUTES - No authentication required (must be first!)
+// Phase 3.2: Public ride tracking
+router.get('/api/rides/track/:shareToken', rideController.trackRideByToken);
 
 // Mount public routes first (before routes with global auth)
 router.use('/api/driver-registration', driverRegistrationRoutes);

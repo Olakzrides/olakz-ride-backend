@@ -18,6 +18,47 @@ export interface AuthRequest extends Request {
 }
 
 /**
+ * Optional authentication - doesn't fail if no token provided
+ * Used for public endpoints that can optionally use auth for enhanced features
+ */
+export const optionalAuthenticate = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      // No token provided - continue without user
+      next();
+      return;
+    }
+
+    const token = authHeader.substring(7);
+
+    try {
+      const decoded = jwt.verify(token, config.jwtSecret) as any;
+      
+      (req as AuthRequest).user = {
+        id: decoded.userId || decoded.id,
+        email: decoded.email,
+        role: decoded.role || 'customer',
+      };
+
+      next();
+    } catch (error) {
+      // Invalid token - continue without user (don't fail)
+      logger.warn('Invalid token in optional auth:', error);
+      next();
+    }
+  } catch (error) {
+    logger.error('Optional authentication error:', error);
+    next();
+  }
+};
+
+/**
  * Verify JWT token and attach user to request
  */
 export const authenticate = async (
