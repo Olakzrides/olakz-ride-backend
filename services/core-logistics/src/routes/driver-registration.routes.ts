@@ -50,13 +50,20 @@ router.post('/register/:id/vehicle-details',
 
 router.post('/register/:id/documents', 
   authenticate, 
-  upload.array('documents', 10), // Allow up to 10 files
+  upload.any(), // Accept any field names (e.g., national_id, passport_photo, bicycle_photos)
   handleUploadErrors,
   driverRegistrationController.uploadDocuments
 );
 
+// In src/routes/driver-registration.routes.ts
 router.post('/register/:id/submit', 
-  authenticate, 
+  authenticate,
+  (req, res, next) => {
+    // Extend timeout for this specific endpoint
+    req.setTimeout(120000); // 2 minutes
+    res.setTimeout(120000);
+    next();
+  },
   driverRegistrationController.submitRegistration
 );
 

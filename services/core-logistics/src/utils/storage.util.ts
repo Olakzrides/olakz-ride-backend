@@ -125,6 +125,32 @@ export class StorageUtil {
   }
 
   /**
+   * Generate signed URL for direct client upload
+   */
+  static async generateSignedUploadUrl(filePath: string): Promise<string> {
+    const { data, error } = await supabase.storage
+      .from(this.BUCKET_NAME)
+      .createSignedUploadUrl(filePath);
+
+    if (error) {
+      throw new Error(`Failed to generate signed upload URL: ${error.message}`);
+    }
+
+    return data.signedUrl;
+  }
+
+  /**
+   * Get public URL for a file (works with public buckets)
+   */
+  static getPublicUrl(filePath: string): string {
+    const { data } = supabase.storage
+      .from(this.BUCKET_NAME)
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
+  }
+
+  /**
    * Get signed URL for private file access
    */
   static async getSignedUrl(filePath: string, expiresIn: number = 3600): Promise<string> {

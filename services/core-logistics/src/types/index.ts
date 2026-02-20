@@ -294,3 +294,74 @@ export interface DriverWithDetails {
   createdAt: Date;
   updatedAt: Date;
 }
+
+// DELIVERY TYPES
+
+export interface CreateDeliveryRequest {
+  recipientName: string;
+  recipientPhone: string;
+  pickupLocation: Location;
+  dropoffLocation: Location;
+  packageDescription?: string;
+  packagePhotoUrl?: string;
+  vehicleTypeId: string;
+  deliveryType: 'instant' | 'scheduled';
+  scheduledPickupAt?: string;
+  paymentMethod: 'cash' | 'wallet' | 'card';
+  regionId: string;
+}
+
+export interface DeliveryStatus {
+  id: string;
+  orderNumber: string;
+  status: 'pending' | 'searching' | 'assigned' | 'arrived_pickup' | 'picked_up' | 'in_transit' | 'arrived_delivery' | 'delivered' | 'cancelled';
+  recipientName: string;
+  recipientPhone: string;
+  pickupLocation: Location;
+  dropoffLocation: Location;
+  packageDescription?: string;
+  estimatedFare: number;
+  finalFare?: number;
+  currencyCode: string;
+  distanceKm: number;
+  deliveryType: 'instant' | 'scheduled';
+  scheduledPickupAt?: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  pickupCode?: string;
+  deliveryCode?: string;
+  createdAt: string;
+  deliveredAt?: string;
+}
+
+export interface DeliveryFareBreakdown {
+  baseFare: number;
+  distanceFare: number;
+  scheduledSurcharge?: number;
+  totalBeforeSurge: number;
+  finalFare: number;
+  distance: number;
+  currencyCode: string;
+}
+
+export interface VerifyCodeRequest {
+  code: string;
+}
+
+export interface UpdateDeliveryStatusRequest {
+  status: string;
+  location?: Coordinates;
+  notes?: string;
+}
+
+export interface DeliveryHistoryQuery {
+  limit?: number;
+  offset?: number;
+  status?: string;
+}
+
+export interface CourierDeliveryQuery {
+  vehicleTypeId?: string;
+  regionId?: string;
+  limit?: number;
+}
