@@ -488,6 +488,70 @@ export class SocketService {
   }
 
   /**
+   * Broadcast delivery request to multiple couriers
+   */
+  async broadcastDeliveryRequestToCouriers(
+    deliveryId: string,
+    courierIds: string[],
+    deliveryDetails: any
+  ): Promise<void> {
+    const sockets = courierIds
+      .map(courierId => this.driverSockets.get(courierId))
+      .filter(Boolean);
+
+    if (sockets.length === 0) {
+      logger.warn(`No online couriers found for delivery request: ${deliveryId}`);
+      return;
+    }
+
+    const requestData = {
+      deliveryId,
+      ...deliveryDetails,
+    };
+
+    // Send to all courier sockets
+    sockets.forEach(socketId => {
+      this.io.to(socketId!).emit('delivery:request:new', requestData);
+    });
+
+    logger.info(`Delivery request broadcasted to ${sockets.length} couriers for delivery: ${deliveryId}`);
+  }
+
+  /**
+   * Broadcast delivery status update to relevant users
+   */
+  async broadcastDeliveryStatusUpdate(deliveryId: string, statusData: any): Promise<void> {
+    // Get delivery details to find customer and courier
+    const { data: delivery } = await supabase
+      .from('deliveries')
+      .select('customer_id, courier_id')
+      .eq('id', deliveryId)
+      .single();
+
+    if (!delivery) return;
+
+    // Send to customer
+    const customerSocketId = this.customerSockets.get(delivery.customer_id);
+    if (customerSocketId) {
+      this.io.to(customerSocketId).emit('delivery:status:updated', {
+        deliveryId,
+        ...statusData,
+      });
+    }
+
+    // Send to courier
+    if (delivery.courier_id) {
+      const courierSocketId = this.driverSockets.get(delivery.courier_id);
+      if (courierSocketId) {
+        this.io.to(courierSocketId).emit('delivery:status:updated', {
+          deliveryId,
+          ...statusData,
+        });
+      }
+    }
+  }
+
+  /**
    * Broadcast driver location to customers
    */
   private async broadcastDriverLocationToCustomers(driverId: string, locationData: any): Promise<void> {

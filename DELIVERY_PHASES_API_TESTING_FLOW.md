@@ -838,38 +838,6 @@ await fetch(uploadUrl, {
 
 ---
 
-### 13. Upload Package Photo (Deprecated - Use Signed URL Instead)
-
-**Endpoint**: `POST /api/delivery/upload-photo`
-
-**Headers**:
-```json
-{
-  "Authorization": "Bearer <token>",
-  "Content-Type": "application/json"
-}
-```
-
-**Request Body**:
-```json
-{
-  "photoUrl": "https://storage.url/package-photo.jpg"
-}
-```
-
-**Expected Response** (200 OK):
-```json
-{
-  "success": true,
-  "data": {
-    "message": "Photo upload endpoint - integrate with storage service",
-    "photoUrl": "https://placeholder.com/photo.jpg"
-  },
-  "timestamp": "2026-02-19T10:30:00Z"
-}
-```
-
----
 
 ## Courier Endpoints
 
@@ -1303,3 +1271,493 @@ await fetch(uploadUrl, {
 
 ---
 
+
+## Phase 3: Courier Matching & Pickup
+
+### Overview
+Phase 3 implements automatic courier matching, acceptance/rejection flow, and pickup verification.
+
+---
+
+### 1. Get Available Deliveries (Courier)
+
+**Endpoint**: `GET /api/delivery/courier/available`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>"
+}
+```
+
+**Query Parameters**:
+- `vehicleTypeId` (optional): Filter by vehicle type
+- `regionId` (optional): Filter by region
+- `limit` (optional): Number of results (default: 10)
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "deliveries": [
+      {
+        "id": "uuid",
+        "orderNumber": "ORDB0001",
+        "pickupLocation": {
+          "latitude": 6.5244,
+          "longitude": 3.3792,
+          "address": "123 Victoria Island, Lagos"
+        },
+        "dropoffLocation": {
+          "latitude": 6.4281,
+          "longitude": 3.4219,
+          "address": "456 Lekki Phase 1, Lagos"
+        },
+        "estimatedFare": 1500.00,
+        "distanceKm": 8.5,
+        "deliveryType": "instant",
+        "scheduledPickupAt": null,
+        "createdAt": "2026-02-20T10:00:00Z"
+      }
+    ],
+    "total": 5
+  }
+}
+```
+
+---
+
+### 2. Accept Delivery (Courier)
+
+**Endpoint**: `POST /api/delivery/:id/accept`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**: Empty `{}`
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "delivery": {
+      "id": "uuid",
+      "status": "assigned",
+      "assignedAt": "2026-02-20T10:05:00Z"
+    },
+    "message": "Delivery accepted successfully"
+  }
+}
+```
+
+**Error Response** (400 Bad Request) - Already Assigned:
+```json
+{
+  "success": false,
+  "error": "This delivery has already been assigned to another courier",
+  "timestamp": "2026-02-20T10:05:00Z"
+}
+```
+
+**Error Response** (400 Bad Request) - Not Enabled:
+```json
+{
+  "success": false,
+  "error": "Your driver profile is not enabled for deliveries.",
+  "timestamp": "2026-02-20T10:05:00Z"
+}
+```
+
+---
+
+### 3. Reject Delivery (Courier)
+
+**Endpoint**: `POST /api/delivery/:id/reject`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**:
+```json
+{
+  "reason": "Too far from current location"
+}
+```
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Delivery rejected successfully"
+  }
+}
+```
+
+---
+
+### 4. Arrived at Pickup Location
+
+**Endpoint**: `POST /api/delivery/:id/arrived-pickup`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**:
+```json
+{
+  "location": {
+    "latitude": 6.5244,
+    "longitude": 3.3792
+  }
+}
+```
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Arrival at pickup confirmed"
+  }
+}
+```
+
+---
+
+### 5. Verify Pickup Code
+
+**Endpoint**: `POST /api/delivery/:id/verify-pickup`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**:
+```json
+{
+  "code": "ABC123"
+}
+```
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Pickup code verified successfully",
+    "verified": true
+  }
+}
+```
+
+**Error Response** (400 Bad Request):
+```json
+{
+  "success": false,
+  "error": "Invalid or expired pickup code",
+  "timestamp": "2026-02-20T10:15:00Z"
+}
+```
+
+---
+
+### 6. Upload Pickup Photo (Optional)
+
+**Endpoint**: `POST /api/delivery/:id/pickup-photo`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**:
+```json
+{
+  "photoUrl": "https://storage.supabase.co/..."
+}
+```
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Pickup photo uploaded successfully"
+  }
+}
+```
+
+---
+
+### 7. Start Delivery (After Pickup)
+
+**Endpoint**: `POST /api/delivery/:id/start-delivery`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**: Empty `{}`
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Delivery started successfully"
+  }
+}
+```
+
+---
+
+### 8. Arrived at Delivery Location
+
+**Endpoint**: `POST /api/delivery/:id/arrived-delivery`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**:
+```json
+{
+  "location": {
+    "latitude": 6.4281,
+    "longitude": 3.4219
+  }
+}
+```
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Arrival at delivery location confirmed"
+  }
+}
+```
+
+---
+
+### 9. Verify Delivery Code
+
+**Endpoint**: `POST /api/delivery/:id/verify-delivery`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**:
+```json
+{
+  "code": "XYZ789"
+}
+```
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Delivery code verified successfully",
+    "verified": true
+  }
+}
+```
+
+---
+
+### 10. Upload Delivery Photo (Optional)
+
+**Endpoint**: `POST /api/delivery/:id/delivery-photo`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**:
+```json
+{
+  "photoUrl": "https://storage.supabase.co/..."
+}
+```
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Delivery photo uploaded successfully"
+  }
+}
+```
+
+---
+
+### 11. Get Courier Delivery History
+
+**Endpoint**: `GET /api/delivery/courier/history`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>"
+}
+```
+
+**Query Parameters**:
+- `limit` (optional): Number of results (default: 20)
+- `offset` (optional): Pagination offset (default: 0)
+- `status` (optional): Filter by status
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "deliveries": [
+      {
+        "id": "uuid",
+        "orderNumber": "ORDB0001",
+        "status": "delivered",
+        "recipientName": "John Doe",
+        "pickupAddress": "123 Victoria Island, Lagos",
+        "dropoffAddress": "456 Lekki Phase 1, Lagos",
+        "estimatedFare": 1500.00,
+        "finalFare": 1500.00,
+        "currencyCode": "NGN",
+        "deliveryType": "instant",
+        "createdAt": "2026-02-20T10:00:00Z",
+        "deliveredAt": "2026-02-20T11:30:00Z"
+      }
+    ],
+    "pagination": {
+      "total": 25,
+      "limit": 20,
+      "offset": 0
+    }
+  }
+}
+```
+
+---
+
+## Phase 3 Features
+
+### Automatic Courier Matching
+- System automatically finds nearby couriers when delivery is created
+- Matches based on:
+  - Distance from pickup (15km radius)
+  - Service types (must have "delivery" in service_types)
+  - Courier rating and experience
+  - Vehicle availability
+- Sends requests to top 5 couriers simultaneously
+- 10-minute timeout per batch
+- Re-matches with next batch if no acceptance
+
+### Service Types
+Drivers can provide multiple service types during registration:
+- `["ride"]` - Only receives ride requests
+- `["delivery"]` - Only receives delivery requests
+- `["ride", "delivery"]` - Receives both ride and delivery requests
+
+### Courier Eligibility
+- Must have `"delivery"` in `service_types` array
+- Status must be `approved` or `active`
+- Must be online and available
+- No vehicle type filtering - any vehicle can do deliveries
+
+### Delivery Status Flow
+```
+pending → searching → assigned → arrived_pickup → picked_up → 
+in_transit → arrived_delivery → delivered
+```
+
+### Socket.IO Events (Real-time)
+- `delivery:request:new` - New delivery request to courier
+- `delivery:status:updated` - Status update to customer/courier
+- `delivery:no_couriers_available` - No couriers found
+
+### Timeout & Re-matching
+- Each batch has 10-minute timeout
+- If no acceptance, system tries next batch of 5 couriers
+- Continues until all available couriers exhausted
+- If no couriers available, status becomes `no_couriers_available`
+
+---
+
+## Complete Delivery Flow (Phase 1-3)
+
+### Customer Flow:
+1. Get vehicle types → Choose vehicle
+2. Estimate fare → See cost breakdown
+3. Generate signed URL → Upload package photo (optional)
+4. Create delivery order → Payment processed
+5. System searches for courier → Status: `searching`
+6. Courier accepts → Status: `assigned`
+7. Courier arrives at pickup → Status: `arrived_pickup`
+8. Courier verifies pickup code → Status: `picked_up`
+9. Courier starts delivery → Status: `in_transit`
+10. Courier arrives at delivery → Status: `arrived_delivery`
+11. Recipient verifies delivery code → Status: `delivered`
+12. View delivery history
+
+### Courier Flow:
+1. Receive delivery request (Socket.IO notification)
+2. View available deliveries
+3. Accept or reject delivery
+4. Navigate to pickup location
+5. Arrive at pickup → Update status
+6. Verify pickup code with customer
+7. Upload pickup photo (optional)
+8. Start delivery
+9. Navigate to delivery location
+10. Arrive at delivery → Update status
+11. Verify delivery code with recipient
+12. Upload delivery photo (optional)
+13. View delivery history and earnings
+
+---

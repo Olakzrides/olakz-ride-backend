@@ -64,6 +64,9 @@ router.post('/:id/verify-delivery', deliveriesController.verifyDeliveryCode);
 // Accept delivery
 router.post('/:id/accept', deliveriesController.acceptDelivery);
 
+// Reject delivery
+router.post('/:id/reject', deliveriesController.rejectDelivery);
+
 // Arrived at pickup location
 router.post('/:id/arrived-pickup', deliveriesController.arrivedAtPickup);
 

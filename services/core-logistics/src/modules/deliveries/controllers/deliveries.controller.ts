@@ -580,7 +580,7 @@ export class DeliveriesController {
       // Get driver ID from user ID
       const { data: driver, error: driverError } = await supabase
         .from('drivers')
-        .select('id, status, can_do_deliveries')
+        .select('id, status, service_types')
         .eq('user_id', userId)
         .single();
 
@@ -592,11 +592,58 @@ export class DeliveriesController {
         return ResponseUtil.error(res, `Driver status is ${driver.status}. Only active/approved drivers can accept deliveries.`);
       }
 
-      if (!driver.can_do_deliveries) {
+      // Check if driver has delivery service type
+      if (!driver.service_types || !driver.service_types.includes('delivery')) {
         return ResponseUtil.error(res, 'Your driver profile is not enabled for deliveries.');
       }
 
+      // Check if delivery is still available
+      const { data: currentDelivery } = await supabase
+        .from('deliveries')
+        .select('status, courier_id')
+        .eq('id', id)
+        .single();
+
+      if (!currentDelivery) {
+        return ResponseUtil.error(res, 'Delivery not found');
+      }
+
+      if (currentDelivery.courier_id) {
+        return ResponseUtil.error(res, 'This delivery has already been assigned to another courier');
+      }
+
+      if (!['pending', 'searching'].includes(currentDelivery.status)) {
+        return ResponseUtil.error(res, `Cannot accept delivery with status: ${currentDelivery.status}`);
+      }
+
+      // Mark delivery request as accepted
+      const { error: requestError } = await supabase
+        .from('delivery_requests')
+        .update({
+          status: 'accepted',
+          responded_at: new Date().toISOString(),
+        })
+        .eq('delivery_id', id)
+        .eq('courier_id', driver.id)
+        .eq('status', 'pending');
+
+      if (requestError) {
+        logger.error('Error updating delivery request:', requestError);
+      }
+
+      // Assign courier to delivery
       const delivery = await DeliveryService.assignCourier(id, driver.id);
+
+      // Mark other pending requests as expired
+      await supabase
+        .from('delivery_requests')
+        .update({
+          status: 'expired',
+          responded_at: new Date().toISOString(),
+        })
+        .eq('delivery_id', id)
+        .eq('status', 'pending')
+        .neq('courier_id', driver.id);
 
       return ResponseUtil.success(res, {
         delivery: {
@@ -609,6 +656,57 @@ export class DeliveriesController {
     } catch (error: any) {
       logger.error('Accept delivery error:', error);
       return ResponseUtil.error(res, error.message || 'Failed to accept delivery');
+    }
+  };
+
+  /**
+   * Reject delivery
+   * POST /api/delivery/:id/reject
+   */
+  rejectDelivery = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id } = req.params;
+      const { reason } = req.body;
+
+      // Get driver ID from user ID
+      const { data: driver, error: driverError } = await supabase
+        .from('drivers')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      if (driverError || !driver) {
+        return ResponseUtil.error(res, 'Driver profile not found');
+      }
+
+      // Update delivery request status to declined
+      const { error: updateError } = await supabase
+        .from('delivery_requests')
+        .update({
+          status: 'declined',
+          responded_at: new Date().toISOString(),
+          rejection_reason: reason || 'No reason provided',
+        })
+        .eq('delivery_id', id)
+        .eq('courier_id', driver.id)
+        .eq('status', 'pending');
+
+      if (updateError) {
+        logger.error('Error rejecting delivery:', updateError);
+        return ResponseUtil.error(res, 'Failed to reject delivery');
+      }
+
+      return ResponseUtil.success(res, {
+        message: 'Delivery rejected successfully',
+      });
+    } catch (error: any) {
+      logger.error('Reject delivery error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to reject delivery');
     }
   };
 
@@ -866,7 +964,8 @@ export class DeliveriesController {
         return ResponseUtil.unauthorized(res);
       }
 
-      const regionId = req.query.regionId as string;
+      // Default to Lagos region if not provided
+      const regionId = (req.query.regionId as string) || '00000000-0000-0000-0000-000000000001';
 
       const { DeliveryVehicleTypeService } = await import('../services/delivery-vehicle-type.service');
       const vehicleTypes = await DeliveryVehicleTypeService.getAvailableVehicleTypes(regionId);

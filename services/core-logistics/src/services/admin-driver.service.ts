@@ -73,11 +73,12 @@ export class AdminDriverService {
   ): Promise<{ drivers: DriverApplicationWithDetails[]; total: number }> {
     try {
       // Get pending drivers with their related data
+      // Use explicit foreign key name to avoid ambiguity with service_tier_id
       const { data: drivers, error } = await supabase
         .from('drivers')
         .select(`
           *,
-          vehicle_type:vehicle_types(id, name, display_name),
+          vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(id, name, display_name),
           documents:driver_documents(
             id, document_type, document_url, file_name, status, created_at
           ),
@@ -149,7 +150,7 @@ export class AdminDriverService {
         .from('drivers')
         .select(`
           *,
-          vehicle_type:vehicle_types(id, name, display_name),
+          vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(id, name, display_name),
           documents:driver_documents(
             id, document_type, document_url, file_name, status, created_at,
             file_size, mime_type, verified_by, verified_at, notes

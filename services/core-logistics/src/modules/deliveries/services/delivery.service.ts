@@ -170,6 +170,31 @@ export class DeliveryService {
         estimatedDeliveryTime: params.scheduledPickupAt,
       });
 
+      // Step 7: Trigger courier matching for instant deliveries
+      // For scheduled deliveries, matching will be triggered closer to scheduled time
+      if (params.deliveryType === 'instant') {
+        // Trigger matching asynchronously without waiting
+        this.triggerCourierMatching(delivery.id, {
+          pickupLatitude: params.pickupLatitude,
+          pickupLongitude: params.pickupLongitude,
+          vehicleTypeId: params.vehicleTypeId,
+          regionId: regionId,
+          maxDistance: 15, // 15km radius
+          maxCouriers: 5,
+        }).catch(error => {
+          logger.error('Error triggering courier matching:', error);
+        });
+
+        // Update status to searching
+        await supabase
+          .from('deliveries')
+          .update({
+            status: 'searching',
+            searching_at: new Date().toISOString(),
+          })
+          .eq('id', delivery.id);
+      }
+
       logger.info(`Delivery created: ${delivery.id} (${delivery.order_number})`);
 
       return {
@@ -183,6 +208,33 @@ export class DeliveryService {
     } catch (error) {
       logger.error(`Error in createDelivery:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Trigger courier matching asynchronously
+   */
+  private static async triggerCourierMatching(
+    deliveryId: string,
+    criteria: {
+      pickupLatitude: number;
+      pickupLongitude: number;
+      vehicleTypeId: string;
+      regionId: string;
+      maxDistance: number;
+      maxCouriers: number;
+    }
+  ): Promise<void> {
+    try {
+      // This will be called asynchronously, so we don't block the response
+      // Socket service should be initialized at app level
+      logger.info(`Starting courier matching for delivery: ${deliveryId}`);
+      
+      // Note: Socket service integration will be completed when app initializes socket service
+      // For now, this logs the intent to match
+      logger.info(`Courier matching criteria:`, criteria);
+    } catch (error) {
+      logger.error(`Error in triggerCourierMatching:`, error);
     }
   }
 

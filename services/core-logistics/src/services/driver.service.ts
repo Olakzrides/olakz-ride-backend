@@ -178,7 +178,7 @@ export class DriverService {
       .from('drivers')
       .select(`
         *,
-        vehicle_type:vehicle_types(id, name, description, capacity),
+        vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(id, name, description, capacity),
         vehicles:driver_vehicles(*),
         documents:driver_documents(*),
         availability:driver_availability(*)
@@ -204,7 +204,7 @@ export class DriverService {
       .from('drivers')
       .select(`
         *,
-        vehicle_type:vehicle_types(id, name, description, capacity),
+        vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(id, name, description, capacity),
         vehicles:driver_vehicles(*),
         documents:driver_documents(*),
         availability:driver_availability(*)
@@ -467,7 +467,7 @@ export class DriverService {
       .from('drivers')
       .select(`
         *,
-        vehicle_type:vehicle_types(id, name, capacity),
+        vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(id, name, capacity),
         availability:driver_availability!inner(is_online, is_available, last_seen_at),
         location:driver_locations(latitude, longitude, heading, created_at)
       `)
@@ -611,7 +611,7 @@ export class DriverService {
       .from('drivers')
       .select(`
         *,
-        vehicle_type:vehicle_types(id, name),
+        vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(id, name),
         vehicles:driver_vehicles(*),
         availability:driver_availability(*)
       `, { count: 'exact' });

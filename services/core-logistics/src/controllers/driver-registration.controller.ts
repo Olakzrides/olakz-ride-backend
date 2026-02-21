@@ -1077,10 +1077,14 @@ export class DriverRegistrationController {
           identification_number: personalInfo.identification_number || personalInfo.license_number,
           license_number: personalInfo.license_number,
           vehicle_type_id: vehicleType.id,
+          service_types: session.serviceTypes || ['ride'], // Copy service types from session
           status: 'pending', // Pending admin approval
           rating: 0,
           total_rides: 0,
           total_earnings: 0,
+          total_deliveries: 0,
+          delivery_rating: 0,
+          total_delivery_earnings: 0,
         })
         .select()
         .single();
