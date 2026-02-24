@@ -343,12 +343,25 @@ export class DeliveriesController {
         return ResponseUtil.badRequest(res, 'Invalid or expired pickup code');
       }
 
+      // Get delivery details for notification
+      const delivery = await DeliveryService.getDelivery(id);
+
       // Update delivery status to picked_up
       await DeliveryService.updateDeliveryStatus({
         deliveryId: id,
         status: 'picked_up',
         notes: 'Package picked up - code verified',
         updatedBy: userId,
+      });
+
+      // Send pickup confirmation to customer
+      const { DeliveryNotificationService } = await import('../services/delivery-notification.service');
+      await DeliveryNotificationService.sendStatusUpdate({
+        customerId: delivery.customer_id,
+        deliveryId: id,
+        orderNumber: delivery.order_number,
+        status: 'picked_up',
+        statusMessage: 'Your package has been picked up and is on the way',
       });
 
       return ResponseUtil.success(res, {
@@ -385,16 +398,30 @@ export class DeliveriesController {
         return ResponseUtil.badRequest(res, 'Invalid or expired delivery code');
       }
 
-      // Update delivery status to delivered
-      await DeliveryService.updateDeliveryStatus({
+      // Get delivery details
+      const delivery = await DeliveryService.getDelivery(id);
+
+      // Complete delivery with payment and earnings
+      await DeliveryService.completeDelivery({
         deliveryId: id,
-        status: 'delivered',
-        notes: 'Package delivered - code verified',
+        courierId: delivery.courier_id,
+        customerId: delivery.customer_id,
         updatedBy: userId,
       });
 
+      // Send delivery completed notification
+      const { DeliveryNotificationService } = await import('../services/delivery-notification.service');
+      await DeliveryNotificationService.sendDeliveryCompleted({
+        customerId: delivery.customer_id,
+        customerEmail: '', // Will be fetched if needed
+        deliveryId: id,
+        orderNumber: delivery.order_number,
+        fare: parseFloat(delivery.estimated_fare),
+        currencyCode: delivery.currency_code,
+      });
+
       return ResponseUtil.success(res, {
-        message: 'Delivery code verified successfully',
+        message: 'Delivery completed successfully',
         verified: true,
       });
     } catch (error: any) {
@@ -580,7 +607,7 @@ export class DeliveriesController {
       // Get driver ID from user ID
       const { data: driver, error: driverError } = await supabase
         .from('drivers')
-        .select('id, status, service_types')
+        .select('id, status, service_types, rating, delivery_rating')
         .eq('user_id', userId)
         .single();
 
@@ -645,11 +672,36 @@ export class DeliveriesController {
         .eq('status', 'pending')
         .neq('courier_id', driver.id);
 
+      // Get courier details to return
+      const { data: courierUser } = await supabase
+        .from('users')
+        .select('first_name, last_name, phone')
+        .eq('id', userId)
+        .single();
+
+      const { data: courierVehicle } = await supabase
+        .from('driver_vehicles')
+        .select('plate_number, manufacturer, model, color')
+        .eq('driver_id', driver.id)
+        .eq('is_active', true)
+        .single();
+
       return ResponseUtil.success(res, {
         delivery: {
           id: delivery.id,
           status: delivery.status,
           assignedAt: delivery.assigned_at,
+        },
+        courier: courierUser && {
+          name: `${courierUser.first_name} ${courierUser.last_name}`,
+          phone: courierUser.phone,
+          rating: parseFloat(driver.rating) || 0,
+          vehicle: courierVehicle && {
+            plateNumber: courierVehicle.plate_number,
+            make: courierVehicle.manufacturer,
+            model: courierVehicle.model,
+            color: courierVehicle.color,
+          },
         },
         message: 'Delivery accepted successfully',
       });
@@ -724,12 +776,25 @@ export class DeliveriesController {
       const { id } = req.params;
       const { location } = req.body;
 
+      // Get delivery details for notification
+      const delivery = await DeliveryService.getDelivery(id);
+
       await DeliveryService.updateDeliveryStatus({
         deliveryId: id,
         status: 'arrived_pickup',
         location,
         notes: 'Courier arrived at pickup location',
         updatedBy: userId,
+      });
+
+      // Send notification to customer
+      const { DeliveryNotificationService } = await import('../services/delivery-notification.service');
+      await DeliveryNotificationService.sendStatusUpdate({
+        customerId: delivery.customer_id,
+        deliveryId: id,
+        orderNumber: delivery.order_number,
+        status: 'arrived_pickup',
+        statusMessage: 'Your courier has arrived at the pickup location',
       });
 
       return ResponseUtil.success(res, {
@@ -754,12 +819,33 @@ export class DeliveriesController {
 
       const { id } = req.params;
 
+      // Get delivery details for notification
+      const delivery = await DeliveryService.getDelivery(id);
+
       await DeliveryService.updateDeliveryStatus({
         deliveryId: id,
         status: 'in_transit',
         notes: 'Delivery in transit',
         updatedBy: userId,
       });
+
+      // Get courier name for notification
+      const { data: courierUser } = await supabase
+        .from('users')
+        .select('first_name, last_name')
+        .eq('id', delivery.courier.user_id)
+        .single();
+
+      if (courierUser) {
+        // Send en route notification to customer
+        const { DeliveryNotificationService } = await import('../services/delivery-notification.service');
+        await DeliveryNotificationService.sendEnRouteToDelivery({
+          customerId: delivery.customer_id,
+          deliveryId: id,
+          orderNumber: delivery.order_number,
+          courierName: `${courierUser.first_name} ${courierUser.last_name}`,
+        });
+      }
 
       return ResponseUtil.success(res, {
         message: 'Delivery started successfully',
@@ -784,6 +870,9 @@ export class DeliveriesController {
       const { id } = req.params;
       const { location } = req.body;
 
+      // Get delivery details for notification
+      const delivery = await DeliveryService.getDelivery(id);
+
       await DeliveryService.updateDeliveryStatus({
         deliveryId: id,
         status: 'arrived_delivery',
@@ -791,6 +880,24 @@ export class DeliveriesController {
         notes: 'Courier arrived at delivery location',
         updatedBy: userId,
       });
+
+      // Get courier name for notification
+      const { data: courierUser } = await supabase
+        .from('users')
+        .select('first_name, last_name')
+        .eq('id', delivery.courier.user_id)
+        .single();
+
+      if (courierUser) {
+        // Send arrived at delivery notification to customer
+        const { DeliveryNotificationService } = await import('../services/delivery-notification.service');
+        await DeliveryNotificationService.sendArrivedAtDelivery({
+          customerId: delivery.customer_id,
+          deliveryId: id,
+          orderNumber: delivery.order_number,
+          courierName: `${courierUser.first_name} ${courierUser.last_name}`,
+        });
+      }
 
       return ResponseUtil.success(res, {
         message: 'Arrival at delivery location confirmed',
@@ -1025,6 +1132,205 @@ export class DeliveriesController {
     } catch (error: any) {
       logger.error('Estimate fare error:', error);
       return ResponseUtil.error(res, error.message || 'Failed to estimate fare');
+    }
+  };
+
+  // ==================== RATING ENDPOINTS ====================
+
+  /**
+   * Customer rates courier
+   * POST /api/delivery/:id/rate-courier
+   */
+  rateCourier = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id } = req.params;
+      const { stars, feedback } = req.body;
+
+      if (!stars || stars < 1 || stars > 5) {
+        return ResponseUtil.badRequest(res, 'Rating must be between 1 and 5 stars');
+      }
+
+      const { DeliveryRatingService } = await import('../services/delivery-rating.service');
+      const result = await DeliveryRatingService.rateCourier(userId, id, {
+        stars,
+        feedback,
+      });
+
+      if (!result.success) {
+        return ResponseUtil.error(res, result.error || 'Failed to submit rating');
+      }
+
+      return ResponseUtil.success(res, {
+        message: 'Courier rated successfully',
+      });
+    } catch (error: any) {
+      logger.error('Rate courier error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to rate courier');
+    }
+  };
+
+  /**
+   * Courier rates customer
+   * POST /api/delivery/:id/rate-customer
+   */
+  rateCustomer = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id } = req.params;
+      const { stars, feedback } = req.body;
+
+      if (!stars || stars < 1 || stars > 5) {
+        return ResponseUtil.badRequest(res, 'Rating must be between 1 and 5 stars');
+      }
+
+      // Get courier ID from user ID
+      const { data: driver, error: driverError } = await supabase
+        .from('drivers')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      if (driverError || !driver) {
+        return ResponseUtil.error(res, 'Driver profile not found');
+      }
+
+      const { DeliveryRatingService } = await import('../services/delivery-rating.service');
+      const result = await DeliveryRatingService.rateCustomer(driver.id, id, {
+        stars,
+        feedback,
+      });
+
+      if (!result.success) {
+        return ResponseUtil.error(res, result.error || 'Failed to submit rating');
+      }
+
+      return ResponseUtil.success(res, {
+        message: 'Customer rated successfully',
+      });
+    } catch (error: any) {
+      logger.error('Rate customer error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to rate customer');
+    }
+  };
+
+  /**
+   * Get delivery rating
+   * GET /api/delivery/:id/rating
+   */
+  getDeliveryRating = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id } = req.params;
+
+      // Verify user has access to this delivery
+      const delivery = await DeliveryService.getDelivery(id);
+      if (delivery.customer_id !== userId && delivery.courier?.user_id !== userId) {
+        return ResponseUtil.forbidden(res, 'Unauthorized access to delivery');
+      }
+
+      const { DeliveryRatingService } = await import('../services/delivery-rating.service');
+      const rating = await DeliveryRatingService.getDeliveryRating(id);
+
+      return ResponseUtil.success(res, {
+        rating: rating || {
+          courierRating: null,
+          courierFeedback: null,
+          customerRating: null,
+          customerFeedback: null,
+        },
+      });
+    } catch (error: any) {
+      logger.error('Get delivery rating error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to fetch rating');
+    }
+  };
+
+  // ==================== TRACKING ENDPOINT ====================
+
+  /**
+   * Track delivery in real-time
+   * GET /api/delivery/:id/track
+   */
+  trackDelivery = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id } = req.params;
+
+      // Verify user has access to this delivery
+      const delivery = await DeliveryService.getDelivery(id);
+      if (delivery.customer_id !== userId && delivery.courier?.user_id !== userId) {
+        return ResponseUtil.forbidden(res, 'Unauthorized access to delivery');
+      }
+
+      const { DeliveryTrackingService } = await import('../services/delivery-tracking.service');
+      const trackingData = await DeliveryTrackingService.getTrackingInfo(id);
+
+      return ResponseUtil.success(res, trackingData);
+    } catch (error: any) {
+      logger.error('Track delivery error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to fetch tracking information');
+    }
+  };
+
+  /**
+   * Update courier location (called by courier app)
+   * POST /api/delivery/courier/location
+   */
+  updateCourierLocation = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { latitude, longitude, heading, speed } = req.body;
+
+      if (!latitude || !longitude) {
+        return ResponseUtil.badRequest(res, 'Latitude and longitude are required');
+      }
+
+      // Get courier ID from user ID
+      const { data: driver, error: driverError } = await supabase
+        .from('drivers')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      if (driverError || !driver) {
+        return ResponseUtil.error(res, 'Driver profile not found');
+      }
+
+      const { DeliveryTrackingService } = await import('../services/delivery-tracking.service');
+      await DeliveryTrackingService.updateCourierLocation(driver.id, {
+        latitude,
+        longitude,
+        heading,
+        speed,
+      });
+
+      return ResponseUtil.success(res, {
+        message: 'Location updated successfully',
+      });
+    } catch (error: any) {
+      logger.error('Update courier location error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to update location');
     }
   };
 }

@@ -214,4 +214,78 @@ export class DeliveryNotificationService {
       logger.error('Send delivery cancelled notification error:', error);
     }
   }
+
+  /**
+   * Send en route to delivery notification
+   */
+  static async sendEnRouteToDelivery(params: {
+    customerId: string;
+    deliveryId: string;
+    orderNumber: string;
+    courierName: string;
+  }): Promise<void> {
+    try {
+      const { customerId, deliveryId, orderNumber, courierName } = params;
+
+      const pushService = PushNotificationService.getInstance();
+      await pushService.sendToUser({
+        userId: customerId,
+        notificationType: 'delivery_en_route',
+        payload: {
+          title: 'Package On The Way',
+          body: `${courierName} is on the way to deliver your package ${orderNumber}`,
+          data: {
+            type: 'delivery_en_route',
+            deliveryId,
+            orderNumber,
+          },
+        },
+      });
+
+      logger.info('En route to delivery notification sent:', {
+        customerId,
+        deliveryId,
+        orderNumber,
+      });
+    } catch (error) {
+      logger.error('Send en route notification error:', error);
+    }
+  }
+
+  /**
+   * Send arrived at delivery location notification
+   */
+  static async sendArrivedAtDelivery(params: {
+    customerId: string;
+    deliveryId: string;
+    orderNumber: string;
+    courierName: string;
+  }): Promise<void> {
+    try {
+      const { customerId, deliveryId, orderNumber, courierName } = params;
+
+      const pushService = PushNotificationService.getInstance();
+      await pushService.sendToUser({
+        userId: customerId,
+        notificationType: 'delivery_arrived',
+        payload: {
+          title: 'Courier Has Arrived',
+          body: `${courierName} has arrived at your delivery location for ${orderNumber}`,
+          data: {
+            type: 'delivery_arrived',
+            deliveryId,
+            orderNumber,
+          },
+        },
+      });
+
+      logger.info('Arrived at delivery notification sent:', {
+        customerId,
+        deliveryId,
+        orderNumber,
+      });
+    } catch (error) {
+      logger.error('Send arrived at delivery notification error:', error);
+    }
+  }
 }

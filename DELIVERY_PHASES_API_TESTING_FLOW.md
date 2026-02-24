@@ -1761,3 +1761,370 @@ in_transit → arrived_delivery → delivered
 13. View delivery history and earnings
 
 ---
+
+
+---
+
+## Phase 4: Delivery Completion & Tracking
+
+### 1. Track Delivery in Real-Time
+
+**Endpoint**: `GET /api/delivery/:id/track`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <token>"
+}
+```
+
+**Example**: `GET /api/delivery/550e8400-e29b-41d4-a716-446655440000/track`
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "delivery": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "orderNumber": "ORDB0001",
+      "status": "in_transit",
+      "pickupLocation": {
+        "latitude": 6.5244,
+        "longitude": 3.3792,
+        "address": "123 Pickup Street, Lagos"
+      },
+      "dropoffLocation": {
+        "latitude": 6.4281,
+        "longitude": 3.4219,
+        "address": "456 Delivery Avenue, Lagos"
+      }
+    },
+    "courier": {
+      "id": "courier-uuid",
+      "name": "John Doe",
+      "phone": "+2348012345678",
+      "rating": 4.8,
+      "currentLocation": {
+        "latitude": 6.5000,
+        "longitude": 3.4000,
+        "heading": 45,
+        "speed": 30,
+        "timestamp": "2026-02-23T10:30:00Z"
+      },
+      "vehicle": {
+        "plateNumber": "ABC-123-XY",
+        "make": "Toyota",
+        "model": "Corolla",
+        "color": "Blue"
+      }
+    },
+    "eta": {
+      "minutes": 15,
+      "distance": 5.2,
+      "lastUpdated": "2026-02-23T10:30:00Z"
+    }
+  }
+}
+```
+
+**Notes**:
+- ETA updates in real-time as courier moves
+- Uses Google Maps Distance Matrix API for accurate ETA
+- Falls back to Haversine calculation if API unavailable
+- Both customer and courier can access this endpoint
+
+---
+
+### 2. Update Courier Location (Courier Only)
+
+**Endpoint**: `POST /api/delivery/courier/location`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**:
+```json
+{
+  "latitude": 6.5000,
+  "longitude": 3.4000,
+  "heading": 45,
+  "speed": 30
+}
+```
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Location updated successfully"
+  }
+}
+```
+
+**Notes**:
+- Should be called every 10 seconds by courier app
+- Broadcasts location update to customer via WebSocket
+- Updates ETA automatically
+
+---
+
+### 3. Customer Rates Courier
+
+**Endpoint**: `POST /api/delivery/:id/rate-courier`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <customer_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**:
+```json
+{
+  "stars": 5,
+  "feedback": "Excellent service! Very professional and on time."
+}
+```
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Courier rated successfully"
+  }
+}
+```
+
+**Validation**:
+- `stars`: Required, must be between 1 and 5
+- `feedback`: Optional, string
+- Delivery must be completed
+- Customer can only rate once (cannot edit)
+
+---
+
+### 4. Courier Rates Customer
+
+**Endpoint**: `POST /api/delivery/:id/rate-customer`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <courier_token>",
+  "Content-Type": "application/json"
+}
+```
+
+**Request Body**:
+```json
+{
+  "stars": 5,
+  "feedback": "Great customer, easy to communicate with."
+}
+```
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Customer rated successfully"
+  }
+}
+```
+
+**Validation**:
+- `stars`: Required, must be between 1 and 5
+- `feedback`: Optional, string
+- Delivery must be completed
+- Courier can only rate once (cannot edit)
+
+---
+
+### 5. Get Delivery Rating
+
+**Endpoint**: `GET /api/delivery/:id/rating`
+
+**Headers**:
+```json
+{
+  "Authorization": "Bearer <token>"
+}
+```
+
+**Example**: `GET /api/delivery/550e8400-e29b-41d4-a716-446655440000/rating`
+
+**Expected Response** (200 OK):
+```json
+{
+  "success": true,
+  "data": {
+    "rating": {
+      "courierRating": 5,
+      "courierFeedback": "Excellent service! Very professional and on time.",
+      "courierRatedAt": "2026-02-23T11:00:00Z",
+      "customerRating": 5,
+      "customerFeedback": "Great customer, easy to communicate with.",
+      "customerRatedAt": "2026-02-23T11:05:00Z"
+    }
+  }
+}
+```
+
+**Notes**:
+- Returns null values for ratings not yet submitted
+- Both customer and courier can view ratings
+- Rating is not mandatory
+
+---
+
+## Phase 4 Complete Flow
+
+### Customer Journey:
+1. Create delivery order (Phase 2)
+2. Courier accepts and picks up package (Phase 3)
+3. **Track delivery in real-time** → `GET /api/delivery/:id/track`
+4. Receive notifications:
+   - "En route to delivery" (when courier starts delivery)
+   - "Arrived at delivery" (when courier arrives)
+5. Verify delivery code (Phase 3)
+6. **Rate courier** → `POST /api/delivery/:id/rate-courier`
+
+### Courier Journey:
+1. Accept delivery request (Phase 3)
+2. Arrive at pickup and verify code (Phase 3)
+3. **Update location every 10 seconds** → `POST /api/delivery/courier/location`
+4. Start delivery → `POST /api/delivery/:id/start-delivery`
+5. Arrive at delivery location → `POST /api/delivery/:id/arrived-delivery`
+6. Customer verifies delivery code
+7. **Receive earnings** (automatically calculated)
+8. **Rate customer** → `POST /api/delivery/:id/rate-customer`
+
+---
+
+## Payment & Earnings (Phase 4)
+
+### Automatic Payment Completion
+When delivery code is verified:
+- **Cash payments**: Transaction record created, payment status set to "completed"
+- **Wallet/Card payments**: Already charged, status updated to "completed"
+
+### Earnings Calculation
+```
+Total Fare = estimated_fare (from delivery)
+Platform Earnings = service_fee + rounding_fee (from delivery_fare_config table)
+Courier Earnings = Total Fare - Platform Earnings
+```
+
+**Service Fees by Vehicle Type** (configurable by admin):
+- Bicycle: ₦200
+- Bike: ₦300
+- Car: ₦500
+- Truck: ₦700
+
+**Example**:
+- Total Fare: ₦1,500
+- Service Fee (Bike): ₦300
+- Rounding Fee: ₦0
+- Platform Earnings: ₦300
+- Courier Earnings: ₦1,200
+
+**Note**: Service fees and rounding fees are stored in the `delivery_fare_config` table and are configurable per vehicle type per region by admins.
+
+### Courier Earnings Tracking
+- `total_delivery_earnings`: Cumulative earnings from all deliveries
+- `delivery_rating`: Average rating from customers
+- `total_deliveries`: Total completed deliveries
+
+---
+
+## WebSocket Events (Phase 4)
+
+### Real-Time Location Updates
+**Event**: `delivery:location:updated`
+
+**Payload**:
+```json
+{
+  "deliveryId": "550e8400-e29b-41d4-a716-446655440000",
+  "location": {
+    "latitude": 6.5000,
+    "longitude": 3.4000,
+    "heading": 45,
+    "speed": 30,
+    "timestamp": "2026-02-23T10:30:00Z"
+  }
+}
+```
+
+**Frequency**: Every 10 seconds (when courier updates location)
+
+**Recipients**: Customer only
+
+---
+
+## Error Codes (Phase 4)
+
+| Code | Message | Description |
+|------|---------|-------------|
+| `DELIVERY_NOT_COMPLETED` | Delivery not completed | Cannot rate before delivery is completed |
+| `UNAUTHORIZED` | Unauthorized | User not authorized to rate this delivery |
+| `RATING_EXISTS` | Already rated | User has already submitted a rating |
+| `INVALID_RATING` | Invalid rating | Rating must be between 1 and 5 stars |
+
+---
+
+## Testing Checklist - Phase 4
+
+### Tracking
+- [ ] Customer can track delivery in real-time
+- [ ] Courier can track delivery
+- [ ] ETA updates as courier moves
+- [ ] Location updates broadcast via WebSocket
+- [ ] Courier location updates every 10 seconds
+
+### Ratings
+- [ ] Customer can rate courier after delivery
+- [ ] Courier can rate customer after delivery
+- [ ] Cannot rate before delivery is completed
+- [ ] Cannot rate twice (no editing)
+- [ ] Rating is optional (not mandatory)
+- [ ] Courier's average rating updates automatically
+
+### Payment & Earnings
+- [ ] Cash payment completed when delivery code verified
+- [ ] Courier earnings calculated correctly
+- [ ] Platform earnings calculated correctly
+- [ ] Total delivery earnings updated
+- [ ] Payment status set to "completed"
+
+### Notifications
+- [ ] "En route to delivery" sent when courier starts delivery
+- [ ] "Arrived at delivery" sent when courier arrives
+- [ ] "Delivery completed" sent when code verified
+
+---
+
+## Service Channel ID
+**Delivery Service**: `91f84fab-1252-47e1-960a-e498daa91c35`
+
+---
+
+## Notes
+- All timestamps are in ISO 8601 format (UTC)
+- All monetary values are in the region's currency (NGN for Lagos)
+- Rating is optional and not mandatory for completing delivery flow
+- Ratings cannot be edited after submission
+- Platform earnings come from service_fee and rounding_fee stored in `delivery_fare_config` table (configurable per vehicle type per region by admin)
+- Service fees: Bicycle (₦200), Bike (₦300), Car (₦500), Truck (₦700)
+- Courier location updates trigger real-time ETA recalculation

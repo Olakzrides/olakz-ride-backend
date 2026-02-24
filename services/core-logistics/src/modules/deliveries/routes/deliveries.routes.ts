@@ -82,4 +82,19 @@ router.post('/:id/pickup-photo', deliveriesController.uploadPickupPhoto);
 // Upload delivery photo
 router.post('/:id/delivery-photo', deliveriesController.uploadDeliveryPhoto);
 
+// Rate courier (customer rates courier)
+router.post('/:id/rate-courier', deliveriesController.rateCourier);
+
+// Rate customer (courier rates customer)
+router.post('/:id/rate-customer', deliveriesController.rateCustomer);
+
+// Get delivery rating
+router.get('/:id/rating', deliveriesController.getDeliveryRating);
+
+// Track delivery in real-time
+router.get('/:id/track', deliveriesController.trackDelivery);
+
+// Update courier location (for real-time tracking)
+router.post('/courier/location', deliveriesController.updateCourierLocation);
+
 export default router;

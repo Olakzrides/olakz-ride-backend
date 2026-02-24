@@ -213,6 +213,7 @@ export class DeliveryService {
 
   /**
    * Trigger courier matching asynchronously
+   * This method actually invokes the DeliveryMatchingService with SocketService
    */
   private static async triggerCourierMatching(
     deliveryId: string,
@@ -226,15 +227,51 @@ export class DeliveryService {
     }
   ): Promise<void> {
     try {
-      // This will be called asynchronously, so we don't block the response
-      // Socket service should be initialized at app level
       logger.info(`Starting courier matching for delivery: ${deliveryId}`);
       
-      // Note: Socket service integration will be completed when app initializes socket service
-      // For now, this logs the intent to match
-      logger.info(`Courier matching criteria:`, criteria);
+      // Dynamically import to avoid circular dependencies
+      const { socketService } = await import('../../../index');
+      const { DeliveryMatchingService } = await import('./delivery-matching.service');
+      
+      if (!socketService) {
+        logger.error('SocketService not initialized - cannot trigger courier matching');
+        return;
+      }
+
+      // Initialize delivery matching service with socket service
+      const deliveryMatchingService = new DeliveryMatchingService(socketService);
+      
+      // Trigger matching
+      const result = await deliveryMatchingService.findAndNotifyCouriersForDelivery(
+        deliveryId,
+        criteria
+      );
+
+      if (result.success) {
+        logger.info(`Successfully notified ${result.couriersNotified} couriers for delivery ${deliveryId}`);
+      } else {
+        logger.warn(`No couriers found for delivery ${deliveryId}`);
+        
+        // Update delivery status to no_couriers_available
+        await supabase
+          .from('deliveries')
+          .update({
+            status: 'no_couriers_available',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', deliveryId);
+      }
     } catch (error) {
       logger.error(`Error in triggerCourierMatching:`, error);
+      
+      // Update delivery status to indicate matching failed
+      await supabase
+        .from('deliveries')
+        .update({
+          status: 'matching_failed',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', deliveryId);
     }
   }
 
@@ -465,6 +502,9 @@ export class DeliveryService {
    * Assign courier to delivery
    */
   public static async assignCourier(deliveryId: string, courierId: string) {
+    // Get delivery details first
+    const delivery = await this.getDelivery(deliveryId);
+    
     const { data, error } = await supabase
       .from('deliveries')
       .update({
@@ -486,6 +526,35 @@ export class DeliveryService {
       status: 'assigned',
       notes: `Courier ${courierId} assigned`,
     });
+
+    // Get courier details for notification
+    const { data: courier } = await supabase
+      .from('drivers')
+      .select('user_id, rating, total_deliveries')
+      .eq('id', courierId)
+      .single();
+
+    if (courier) {
+      // Get courier user details
+      const { data: courierUser } = await supabase
+        .from('users')
+        .select('first_name, last_name, phone')
+        .eq('id', courier.user_id)
+        .single();
+
+      if (courierUser) {
+        // Send notification to customer
+        await DeliveryNotificationService.sendCourierAssigned({
+          customerId: delivery.customer_id,
+          customerEmail: '', // Will be fetched by notification service if needed
+          deliveryId,
+          orderNumber: delivery.order_number,
+          courierName: `${courierUser.first_name} ${courierUser.last_name}`,
+          courierPhone: courierUser.phone,
+          courierRating: courier.rating.toString(),
+        });
+      }
+    }
 
     logger.info(`Courier ${courierId} assigned to delivery ${deliveryId}`);
 
@@ -693,5 +762,93 @@ export class DeliveryService {
     }
 
     return data || [];
+  }
+
+  /**
+   * Complete delivery - handles payment completion and courier earnings
+   */
+  public static async completeDelivery(params: {
+    deliveryId: string;
+    courierId: string;
+    customerId: string;
+    updatedBy: string;
+  }): Promise<void> {
+    try {
+      const { deliveryId, courierId, customerId, updatedBy } = params;
+
+      // Get delivery details with vehicle type and region
+      const delivery = await this.getDelivery(deliveryId);
+
+      // Calculate courier earnings and platform earnings
+      const estimatedFare = parseFloat(delivery.estimated_fare);
+      
+      // Get delivery fare config to extract service_fee and rounding_fee
+      const { data: fareConfig, error: fareError } = await supabase
+        .from('delivery_fare_config')
+        .select('service_fee, rounding_fee')
+        .eq('vehicle_type_id', delivery.vehicle_type.id)
+        .eq('region_id', delivery.region.id)
+        .eq('is_active', true)
+        .single();
+
+      if (fareError || !fareConfig) {
+        logger.error('Error fetching fare config for earnings calculation:', fareError);
+        throw new Error('Failed to calculate earnings - fare configuration not found');
+      }
+
+      // Platform earnings = service_fee + rounding_fee
+      const serviceFee = parseFloat(fareConfig.service_fee) || 0;
+      const roundingFee = parseFloat(fareConfig.rounding_fee) || 0;
+      const platformEarnings = serviceFee + roundingFee;
+      
+      // Courier earnings = total fare - platform earnings
+      const courierEarnings = estimatedFare - platformEarnings;
+
+      // Complete cash payment if payment method is cash
+      if (delivery.payment_method === 'cash' && delivery.payment_status === 'pending') {
+        const { DeliveryPaymentService } = await import('./delivery-payment.service');
+        const paymentService = new DeliveryPaymentService();
+        
+        await paymentService.completeCashPayment({
+          deliveryId,
+          customerId,
+          courierId,
+          amount: estimatedFare,
+          currencyCode: delivery.currency_code,
+        });
+      }
+
+      // Update delivery status and earnings
+      const { error: updateError } = await supabase
+        .from('deliveries')
+        .update({
+          status: 'delivered',
+          delivered_at: new Date().toISOString(),
+          payment_status: 'completed',
+          courier_earnings: courierEarnings,
+          platform_earnings: platformEarnings,
+          final_fare: estimatedFare,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', deliveryId);
+
+      if (updateError) {
+        logger.error(`Error completing delivery:`, updateError);
+        throw new Error('Failed to complete delivery');
+      }
+
+      // Add to status history
+      await this.addStatusHistory({
+        deliveryId,
+        status: 'delivered',
+        notes: 'Package delivered - code verified',
+        updatedBy,
+      });
+
+      logger.info(`Delivery ${deliveryId} completed. Courier earnings: ${courierEarnings}, Platform earnings: ${platformEarnings} (Service Fee: ${serviceFee}, Rounding Fee: ${roundingFee})`);
+    } catch (error) {
+      logger.error(`Error in completeDelivery:`, error);
+      throw error;
+    }
   }
 }

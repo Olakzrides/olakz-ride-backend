@@ -12,6 +12,7 @@ import notificationRoutes from './notification.routes';
 import savedPlacesRoutes from './saved-places.routes';
 import paymentCardsRoutes from './payment-cards.routes';
 import supportRoutes from './support.routes';
+import locationsRoutes from './locations.routes';
 import deliveryRoutes from '../modules/deliveries/routes/deliveries.routes';
 import { RideController } from '../controllers/ride.controller';
 
@@ -40,6 +41,7 @@ router.use('/api/notifications', notificationRoutes); // Phase 2B: Push notifica
 router.use('/api', savedPlacesRoutes); // Phase 1: Saved places
 router.use('/api/payment/cards', paymentCardsRoutes); // Phase 2: Payment cards
 router.use('/api/support', supportRoutes); // Phase 3.3: WhatsApp support
+router.use('/api/locations', locationsRoutes); // Google Places API proxy
 router.use('/api/delivery', deliveryRoutes); // Phase 4: Delivery service
 
 // Health check
