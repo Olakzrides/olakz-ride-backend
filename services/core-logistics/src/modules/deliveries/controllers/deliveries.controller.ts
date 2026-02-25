@@ -981,8 +981,19 @@ export class DeliveriesController {
       const offset = parseInt(req.query.offset as string) || 0;
       const status = req.query.status as string;
 
-      // Get courier ID from user ID (you'll need to implement this lookup)
-      const result = await DeliveryService.getCourierDeliveries(userId, {
+      // Get driver ID from user ID
+      const { data: driver, error: driverError } = await supabase
+        .from('drivers')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      if (driverError || !driver) {
+        return ResponseUtil.error(res, 'Driver profile not found. Please complete driver registration first.');
+      }
+
+      // Get courier deliveries using driver ID
+      const result = await DeliveryService.getCourierDeliveries(driver.id, {
         limit,
         offset,
         status,

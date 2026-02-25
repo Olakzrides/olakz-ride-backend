@@ -167,9 +167,9 @@ export class DeliveryTrackingService {
       // Get courier's current location
       const { data: location } = await supabase
         .from('driver_locations')
-        .select('latitude, longitude, heading, speed, updated_at')
+        .select('latitude, longitude, heading, speed, created_at')
         .eq('driver_id', courierId)
-        .order('updated_at', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(1)
         .single();
 
@@ -193,7 +193,7 @@ export class DeliveryTrackingService {
           longitude: parseFloat(location.longitude),
           heading: location.heading,
           speed: location.speed,
-          timestamp: location.updated_at,
+          timestamp: location.created_at,
         } : undefined,
         vehicle: vehicle ? {
           plateNumber: vehicle.plate_number,
@@ -333,7 +333,7 @@ export class DeliveryTrackingService {
           longitude: location.longitude,
           heading: location.heading,
           speed: location.speed,
-          updated_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
         });
 
       if (error) {

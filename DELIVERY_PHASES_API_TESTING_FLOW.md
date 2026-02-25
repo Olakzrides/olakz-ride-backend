@@ -1110,6 +1110,8 @@ await fetch(uploadUrl, {
 
 **Example**: `GET /api/delivery/courier/history?limit=10&status=delivered`
 
+**Note**: This endpoint now correctly retrieves the driver ID from the user ID before fetching delivery history. Previously, it was passing the user ID directly, which caused it to return empty results.
+
 **Expected Response** (200 OK):
 ```json
 {

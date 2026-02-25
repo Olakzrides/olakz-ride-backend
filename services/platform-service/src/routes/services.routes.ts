@@ -9,7 +9,7 @@ const storeController = new StoreController();
 // Rate limiting for service endpoints
 const serviceRateLimit = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 20, // 20 requests per minute
+  max: 60, // 60 requests per minute (increased from 20)
   message: {
     success: false,
     message: 'Too many requests to service endpoints',
