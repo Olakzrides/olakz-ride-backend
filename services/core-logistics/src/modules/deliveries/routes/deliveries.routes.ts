@@ -40,6 +40,9 @@ router.get('/courier/available', deliveriesController.getAvailableDeliveries);
 // Get courier delivery history
 router.get('/courier/history', deliveriesController.getCourierHistory);
 
+// DEBUG: Get courier vehicle details
+router.get('/courier/debug-vehicle', deliveriesController.debugCourierVehicle);
+
 // ==================== DELIVERY-SPECIFIC ENDPOINTS ====================
 // NOTE: These use :id parameter and must come AFTER specific routes like /courier/*
 

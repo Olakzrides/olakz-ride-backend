@@ -59,6 +59,8 @@ export class DeliveryTrackingService {
    */
   static async getTrackingInfo(deliveryId: string): Promise<TrackingData> {
     try {
+      logger.info('Getting tracking info for delivery:', { deliveryId });
+      
       // Get delivery details
       const { data: delivery, error: deliveryError } = await supabase
         .from('deliveries')
@@ -76,6 +78,8 @@ export class DeliveryTrackingService {
         `)
         .eq('id', deliveryId)
         .single();
+
+      logger.info('Delivery query result:', { delivery, deliveryError });
 
       if (deliveryError || !delivery) {
         throw new Error('Delivery not found');
@@ -148,19 +152,33 @@ export class DeliveryTrackingService {
     };
   } | null> {
     try {
+      logger.info('Getting courier tracking data for courier:', { courierId });
+      
       // Get courier details
       const { data: courier, error: courierError } = await supabase
         .from('drivers')
-        .select(`
-          id,
-          user_id,
-          delivery_rating,
-          users!inner(first_name, last_name, phone)
-        `)
+        .select('id, user_id, delivery_rating')
         .eq('id', courierId)
         .single();
 
+      logger.info('Courier query result:', { courier, courierError });
+
       if (courierError || !courier) {
+        logger.error('Failed to get courier details:', courierError);
+        return null;
+      }
+
+      // Get user details separately
+      const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('first_name, last_name, phone')
+        .eq('id', courier.user_id)
+        .single();
+
+      logger.info('User query result:', { user, userError });
+
+      if (userError || !user) {
+        logger.error('Failed to get user details:', userError);
         return null;
       }
 
@@ -173,20 +191,38 @@ export class DeliveryTrackingService {
         .limit(1)
         .single();
 
+      logger.info('Courier location query result:', { location, courierId });
+
       // Get courier's vehicle
-      const { data: vehicle } = await supabase
+      logger.info('Querying driver_vehicles table:', { 
+        courierId, 
+        query: 'SELECT plate_number, manufacturer, model, color FROM driver_vehicles WHERE driver_id = ? AND is_active = true' 
+      });
+      
+      const { data: vehicle, error: vehicleError } = await supabase
         .from('driver_vehicles')
         .select('plate_number, manufacturer, model, color')
         .eq('driver_id', courierId)
         .eq('is_active', true)
         .single();
 
-      const courierUser = courier.users as any;
+      logger.info('Courier vehicle query result:', { 
+        vehicle, 
+        vehicleError,
+        courierId,
+        hasVehicle: !!vehicle,
+        vehicleDetails: vehicle ? {
+          plateNumber: vehicle.plate_number,
+          manufacturer: vehicle.manufacturer,
+          model: vehicle.model,
+          color: vehicle.color
+        } : null
+      });
 
-      return {
+      const result = {
         id: courier.id,
-        name: `${courierUser.first_name} ${courierUser.last_name}`,
-        phone: courierUser.phone,
+        name: `${user.first_name} ${user.last_name}`,
+        phone: user.phone,
         rating: parseFloat(courier.delivery_rating) || 0,
         currentLocation: location ? {
           latitude: parseFloat(location.latitude),
@@ -202,6 +238,10 @@ export class DeliveryTrackingService {
           color: vehicle.color,
         } : undefined,
       };
+
+      logger.info('Final courier tracking data:', result);
+      
+      return result;
     } catch (error: any) {
       logger.error('Get courier tracking data error:', error);
       return null;
@@ -324,10 +364,10 @@ export class DeliveryTrackingService {
     }
   ): Promise<void> {
     try {
-      // Update driver location
+      // Insert new location record (driver_locations table doesn't have updated_at, only created_at)
       const { error } = await supabase
         .from('driver_locations')
-        .upsert({
+        .insert({
           driver_id: courierId,
           latitude: location.latitude,
           longitude: location.longitude,

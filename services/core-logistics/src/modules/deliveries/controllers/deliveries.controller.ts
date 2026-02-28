@@ -1344,4 +1344,70 @@ export class DeliveriesController {
       return ResponseUtil.error(res, error.message || 'Failed to update location');
     }
   };
+
+  /**
+   * DEBUG: Get courier vehicle details
+   * GET /api/delivery/courier/debug-vehicle
+   */
+  debugCourierVehicle = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      // Get courier ID from user ID
+      const { data: driver, error: driverError } = await supabase
+        .from('drivers')
+        .select('id, user_id, status, service_types')
+        .eq('user_id', userId)
+        .single();
+
+      if (driverError || !driver) {
+        return ResponseUtil.error(res, 'Driver profile not found');
+      }
+
+      // Get all vehicles (including inactive)
+      const { data: allVehicles, error: allVehiclesError } = await supabase
+        .from('driver_vehicles')
+        .select('*')
+        .eq('driver_id', driver.id);
+
+      // Get only active vehicles
+      const { data: activeVehicles, error: activeVehiclesError } = await supabase
+        .from('driver_vehicles')
+        .select('plate_number, manufacturer, model, color, is_active')
+        .eq('driver_id', driver.id)
+        .eq('is_active', true);
+
+      // Get count of all vehicles in table
+      const { count: totalVehiclesCount } = await supabase
+        .from('driver_vehicles')
+        .select('*', { count: 'exact', head: true });
+
+      return ResponseUtil.success(res, {
+        driver: {
+          id: driver.id,
+          userId: driver.user_id,
+          status: driver.status,
+          serviceTypes: driver.service_types,
+        },
+        allVehicles: {
+          data: allVehicles,
+          error: allVehiclesError,
+          count: allVehicles?.length || 0,
+        },
+        activeVehicles: {
+          data: activeVehicles,
+          error: activeVehiclesError,
+          count: activeVehicles?.length || 0,
+        },
+        totalVehiclesInDatabase: totalVehiclesCount,
+        message: 'Debug information retrieved',
+      });
+    } catch (error: any) {
+      logger.error('Debug courier vehicle error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to get debug info');
+    }
+  };
 }
