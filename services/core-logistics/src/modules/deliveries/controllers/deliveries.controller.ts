@@ -444,11 +444,15 @@ export class DeliveriesController {
       const limit = parseInt(req.query.limit as string) || 20;
       const offset = parseInt(req.query.offset as string) || 0;
       const status = req.query.status as string;
+      const fromDate = req.query.from_date as string;
+      const toDate = req.query.to_date as string;
 
       const result = await DeliveryService.getCustomerDeliveries(userId, {
         limit,
         offset,
         status,
+        fromDate,
+        toDate,
       });
 
       return ResponseUtil.success(res, {
@@ -543,8 +547,8 @@ export class DeliveriesController {
   // ==================== COURIER ENDPOINTS ====================
 
   /**
-   * Get available deliveries for courier
-   * GET /api/delivery/courier/available
+   * Get available deliveries for courier with distance calculation
+   * GET /api/delivery/courier/available?sortBy=distance|fare
    */
   getAvailableDeliveries = async (req: Request, res: Response): Promise<Response> => {
     try {
@@ -555,11 +559,52 @@ export class DeliveriesController {
 
       const vehicleTypeId = req.query.vehicleTypeId as string;
       const regionId = req.query.regionId as string;
+      const sortBy = (req.query.sortBy as 'distance' | 'fare' | 'created_at') || 'created_at';
       const limit = parseInt(req.query.limit as string) || 10;
+
+      // Validate sortBy parameter
+      if (!['distance', 'fare', 'created_at'].includes(sortBy)) {
+        return ResponseUtil.badRequest(res, 'Invalid sortBy parameter. Must be: distance, fare, or created_at');
+      }
+
+      // Get driver ID from user ID
+      const { data: driver, error: driverError } = await supabase
+        .from('drivers')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      if (driverError || !driver) {
+        return ResponseUtil.error(res, 'Driver profile not found. Please complete driver registration first.');
+      }
+
+      // Get courier's most recent location from driver_locations table
+      let courierLocation: { latitude: number; longitude: number } | undefined;
+      
+      const { data: locationData, error: locationError } = await supabase
+        .from('driver_locations')
+        .select('latitude, longitude')
+        .eq('driver_id', driver.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (!locationError && locationData) {
+        courierLocation = {
+          latitude: parseFloat(locationData.latitude),
+          longitude: parseFloat(locationData.longitude),
+        };
+        logger.info(`Courier location found: ${courierLocation.latitude}, ${courierLocation.longitude}`);
+      } else {
+        logger.warn(`No location found for courier ${driver.id}. Distance sorting will not be available.`);
+      }
 
       const deliveries = await DeliveryService.getAvailableDeliveries({
         vehicleTypeId,
         regionId,
+        courierId: driver.id,
+        courierLocation,
+        sortBy,
         limit,
       });
 
@@ -579,15 +624,261 @@ export class DeliveriesController {
           },
           estimatedFare: parseFloat(delivery.estimated_fare),
           distanceKm: delivery.distance_km,
+          distanceToPickup: delivery.distance_to_pickup || null,
           deliveryType: delivery.delivery_type,
           scheduledPickupAt: delivery.scheduled_pickup_at,
           createdAt: delivery.created_at,
         })),
         total: deliveries.length,
+        sortedBy: sortBy,
+        courierLocationAvailable: !!courierLocation,
       });
     } catch (error: any) {
       logger.error('Get available deliveries error:', error);
       return ResponseUtil.error(res, error.message || 'Failed to fetch available deliveries');
+    }
+  };
+
+  /**
+   * Get scheduled deliveries
+   * GET /api/delivery/scheduled
+   */
+  getScheduledDeliveries = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const limit = parseInt(req.query.limit as string) || 20;
+      const offset = parseInt(req.query.offset as string) || 0;
+
+      // Check if user is customer or courier
+      const { data: driver } = await supabase
+        .from('drivers')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      const result = await DeliveryService.getScheduledDeliveries({
+        customerId: driver ? undefined : userId,
+        courierId: driver ? driver.id : undefined,
+        limit,
+        offset,
+      });
+
+      return ResponseUtil.success(res, {
+        deliveries: result.deliveries.map(delivery => ({
+          id: delivery.id,
+          orderNumber: delivery.order_number,
+          status: delivery.status,
+          recipientName: delivery.recipient_name,
+          pickupLocation: {
+            latitude: parseFloat(delivery.pickup_latitude),
+            longitude: parseFloat(delivery.pickup_longitude),
+            address: delivery.pickup_address,
+          },
+          dropoffLocation: {
+            latitude: parseFloat(delivery.dropoff_latitude),
+            longitude: parseFloat(delivery.dropoff_longitude),
+            address: delivery.dropoff_address,
+          },
+          scheduledPickupAt: delivery.scheduled_pickup_at,
+          estimatedFare: parseFloat(delivery.estimated_fare),
+          currencyCode: delivery.currency_code,
+          vehicleType: delivery.vehicle_type,
+          courier: delivery.courier,
+          createdAt: delivery.created_at,
+        })),
+        pagination: {
+          total: result.total,
+          limit,
+          offset,
+        },
+      });
+    } catch (error: any) {
+      logger.error('Get scheduled deliveries error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to fetch scheduled deliveries');
+    }
+  };
+
+  /**
+   * Get courier dashboard metrics
+   * GET /api/delivery/courier/dashboard
+   */
+  getCourierDashboard = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const period = (req.query.period as 'today' | '7d' | '30d' | 'all') || 'today';
+
+      // Validate period
+      if (!['today', '7d', '30d', 'all'].includes(period)) {
+        return ResponseUtil.badRequest(res, 'Invalid period. Must be: today, 7d, 30d, or all');
+      }
+
+      // Get driver ID from user ID
+      const { data: driver, error: driverError } = await supabase
+        .from('drivers')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      if (driverError || !driver) {
+        return ResponseUtil.error(res, 'Driver profile not found. Please complete driver registration first.');
+      }
+
+      // Get dashboard metrics
+      const { DeliveryDashboardService } = await import('../services/delivery-dashboard.service');
+      const metrics = await DeliveryDashboardService.getCourierDashboard(driver.id, period);
+
+      return ResponseUtil.success(res, {
+        period,
+        metrics: {
+          totalDeliveries: metrics.totalDeliveries,
+          completedDeliveries: metrics.completedDeliveries,
+          cancelledDeliveries: metrics.cancelledDeliveries,
+          deliveryEarnings: metrics.deliveryEarnings,
+          deliveryRating: metrics.deliveryRating,
+          acceptanceRate: metrics.acceptanceRate,
+          currencyCode: metrics.currencyCode,
+        },
+      });
+    } catch (error: any) {
+      logger.error('Get courier dashboard error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to fetch dashboard metrics');
+    }
+  };
+
+  /**
+   * Report courier no-show
+   * POST /api/delivery/:id/report-no-show
+   */
+  reportCourierNoShow = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id } = req.params;
+      const { reason } = req.body;
+
+      const { DeliveryTimeoutService } = await import('../services/delivery-timeout.service');
+      await DeliveryTimeoutService.markCourierNoShow({
+        deliveryId: id,
+        customerId: userId,
+        reason,
+      });
+
+      return ResponseUtil.success(res, {
+        message: 'Courier no-show reported. We are finding another courier for you.',
+      });
+    } catch (error: any) {
+      logger.error('Report courier no-show error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to report no-show');
+    }
+  };
+
+  /**
+   * Report delivery issue
+   * POST /api/delivery/:id/report-issue
+   */
+  reportIssue = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id } = req.params;
+      const { issueType, description, photoUrls } = req.body;
+
+      // Validate issue type
+      const validIssueTypes = ['package_damaged', 'recipient_unavailable', 'wrong_address', 'courier_misconduct', 'other'];
+      if (!issueType || !validIssueTypes.includes(issueType)) {
+        return ResponseUtil.badRequest(res, 'Invalid issue type');
+      }
+
+      if (!description) {
+        return ResponseUtil.badRequest(res, 'Description is required');
+      }
+
+      // Determine reporter type
+      const { data: driver } = await supabase
+        .from('drivers')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      const reporterType = driver ? 'courier' : 'customer';
+
+      const { DeliveryIssueService } = await import('../services/delivery-issue.service');
+      const issue = await DeliveryIssueService.reportIssue({
+        deliveryId: id,
+        reportedBy: userId,
+        reporterType,
+        issueType,
+        description,
+        photoUrls,
+      });
+
+      return ResponseUtil.success(res, {
+        issue: {
+          id: issue.id,
+          issueType: issue.issue_type,
+          status: issue.status,
+          createdAt: issue.created_at,
+        },
+        message: 'Issue reported successfully. Our team will review it shortly.',
+      });
+    } catch (error: any) {
+      logger.error('Report issue error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to report issue');
+    }
+  };
+
+  /**
+   * Get delivery issues
+   * GET /api/delivery/:id/issues
+   */
+  getDeliveryIssues = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return ResponseUtil.unauthorized(res);
+      }
+
+      const { id } = req.params;
+
+      // Verify user has access to this delivery
+      const delivery = await DeliveryService.getDelivery(id);
+      if (delivery.customer_id !== userId && delivery.courier?.user_id !== userId) {
+        return ResponseUtil.forbidden(res, 'Unauthorized access to delivery');
+      }
+
+      const { DeliveryIssueService } = await import('../services/delivery-issue.service');
+      const issues = await DeliveryIssueService.getDeliveryIssues(id);
+
+      return ResponseUtil.success(res, {
+        issues: issues.map(issue => ({
+          id: issue.id,
+          issueType: issue.issue_type,
+          description: issue.description,
+          status: issue.status,
+          reporterType: issue.reporter_type,
+          photoUrls: issue.photo_urls,
+          adminNotes: issue.admin_notes,
+          createdAt: issue.created_at,
+          resolvedAt: issue.resolved_at,
+        })),
+      });
+    } catch (error: any) {
+      logger.error('Get delivery issues error:', error);
+      return ResponseUtil.error(res, error.message || 'Failed to fetch issues');
     }
   };
 
@@ -980,6 +1271,8 @@ export class DeliveriesController {
       const limit = parseInt(req.query.limit as string) || 20;
       const offset = parseInt(req.query.offset as string) || 0;
       const status = req.query.status as string;
+      const fromDate = req.query.from_date as string;
+      const toDate = req.query.to_date as string;
 
       // Get driver ID from user ID
       const { data: driver, error: driverError } = await supabase
@@ -997,6 +1290,8 @@ export class DeliveriesController {
         limit,
         offset,
         status,
+        fromDate,
+        toDate,
       });
 
       return ResponseUtil.success(res, {

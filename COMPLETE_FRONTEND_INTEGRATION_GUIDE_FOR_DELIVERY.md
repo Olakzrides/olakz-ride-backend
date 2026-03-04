@@ -1576,3 +1576,876 @@ ORDB + 4 digits (e.g., ORDB0001, ORDB0002)
 **Last Updated:** February 27, 2026  
 **Service Channel ID:** 91f84fab-1252-47e1-960a-e498daa91c35  
 **Default Region:** Lagos, Nigeria (00000000-0000-0000-0000-000000000001)
+
+
+---
+
+## Phase 5: History, Analytics & Advanced Features
+
+### Customer Endpoints (Phase 5)
+
+#### 1. Get Customer Delivery History (with Date Filtering)
+
+**Endpoint:** `GET /api/delivery/history`
+
+**Query Parameters:**
+- `limit` (optional, number) - Default: 20
+- `offset` (optional, number) - Default: 0
+- `status` (optional, string) - Filter by status
+- `from_date` (optional, string) - Start date (ISO 8601 format)
+- `to_date` (optional, string) - End date (ISO 8601 format)
+
+**Example:** `GET /api/delivery/history?limit=10&from_date=2026-02-01&to_date=2026-02-28&status=delivered`
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "deliveries": [
+      {
+        "id": "uuid",
+        "orderNumber": "ORDB0001",
+        "status": "delivered",
+        "recipientName": "John Doe",
+        "pickupAddress": "111 Ketu, Lagos",
+        "dropoffAddress": "222 Yaba Phase 1, Lagos",
+        "estimatedFare": 1200.00,
+        "finalFare": 1200.00,
+        "currencyCode": "NGN",
+        "vehicleType": {
+          "id": "uuid",
+          "name": "bicycle",
+          "displayName": "Bicycle"
+        },
+        "deliveryType": "instant",
+        "createdAt": "2026-02-15T10:00:00.000Z",
+        "deliveredAt": "2026-02-15T11:30:00.000Z"
+      }
+    ],
+    "pagination": {
+      "total": 25,
+      "limit": 10,
+      "offset": 0
+    }
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- Date filtering uses `created_at` field
+- Dates must be in ISO 8601 format (e.g., "2026-02-01T00:00:00Z")
+- Both `from_date` and `to_date` are optional
+
+
+#### 2. Get Scheduled Deliveries
+
+**Endpoint:** `GET /api/delivery/scheduled`
+
+**Query Parameters:**
+- `limit` (optional, number) - Default: 20
+- `offset` (optional, number) - Default: 0
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "deliveries": [
+      {
+        "id": "uuid",
+        "orderNumber": "ORDB0002",
+        "status": "pending",
+        "recipientName": "Jane Smith",
+        "pickupLocation": {
+          "latitude": 6.5244,
+          "longitude": 3.3792,
+          "address": "123 Main St, Lagos"
+        },
+        "dropoffLocation": {
+          "latitude": 6.4281,
+          "longitude": 3.4219,
+          "address": "456 Oak Ave, Lagos"
+        },
+        "scheduledPickupAt": "2026-02-20T14:00:00Z",
+        "estimatedFare": 2000.00,
+        "currencyCode": "NGN",
+        "vehicleType": {
+          "id": "uuid",
+          "name": "car",
+          "displayName": "Car",
+          "iconUrl": "https://..."
+        },
+        "courier": null,
+        "createdAt": "2026-02-15T10:00:00.000Z"
+      }
+    ],
+    "pagination": {
+      "total": 3,
+      "limit": 20,
+      "offset": 0
+    }
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- Returns only scheduled deliveries (delivery_type = 'scheduled')
+- Shows deliveries with status: pending, searching, assigned
+- Sorted by scheduled_pickup_at (ascending)
+- Reminders sent at 1 hour and 15 minutes before pickup
+- Auto-matching starts 10-15 minutes before scheduled time
+- Can be cancelled anytime with no fees
+
+
+#### 3. Report Courier No-Show
+
+**Endpoint:** `POST /api/delivery/:id/report-no-show`
+
+**Request Body:**
+```json
+{
+  "reason": "Courier didn't arrive after 15 minutes"
+}
+```
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Courier no-show reported. We are finding another courier for you."
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Error Response (400):**
+```json
+{
+  "success": false,
+  "error": "Failed to report no-show",
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- Wait 10-15 minutes after courier arrival before reporting
+- First no-show: System auto-rematches with new courier
+- Second no-show: Delivery cancelled and refunded automatically
+- `reason` field is optional
+
+
+#### 4. Report Delivery Issue
+
+**Endpoint:** `POST /api/delivery/:id/report-issue`
+
+**Request Body:**
+```json
+{
+  "issueType": "package_damaged",
+  "description": "Package arrived with visible damage to the box",
+  "photoUrls": ["https://storage.url/photo1.jpg", "https://storage.url/photo2.jpg"]
+}
+```
+
+**Issue Types:**
+- `package_damaged` - Package was damaged during delivery
+- `recipient_unavailable` - Recipient not available at delivery location
+- `wrong_address` - Wrong delivery address provided
+- `courier_misconduct` - Courier behaved inappropriately
+- `other` - Other issues
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "issue": {
+      "id": "uuid",
+      "issueType": "package_damaged",
+      "status": "pending",
+      "createdAt": "2026-02-15T12:00:00.000Z"
+    },
+    "message": "Issue reported successfully. Our team will review it shortly."
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Error Response (400):**
+```json
+{
+  "success": false,
+  "error": "Invalid issue type",
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- `issueType` and `description` are required
+- `photoUrls` is optional (array of photo URLs)
+- Issue pauses delivery until admin review
+- Courier payout is frozen until issue is resolved
+- Both customer and courier can report issues
+
+
+#### 5. Get Delivery Issues
+
+**Endpoint:** `GET /api/delivery/:id/issues`
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "issues": [
+      {
+        "id": "uuid",
+        "issueType": "package_damaged",
+        "description": "Package arrived with visible damage",
+        "status": "resolved",
+        "reporterType": "customer",
+        "photoUrls": ["https://storage.url/photo1.jpg"],
+        "adminNotes": "Refund issued to customer",
+        "createdAt": "2026-02-15T12:00:00.000Z",
+        "resolvedAt": "2026-02-15T14:30:00.000Z"
+      }
+    ]
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Error Response (403):**
+```json
+{
+  "success": false,
+  "error": "Unauthorized access to delivery",
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- Returns all issues for the delivery
+- Available to both customer and courier
+- Shows admin notes and resolution status
+
+---
+
+### Courier Endpoints (Phase 5)
+
+#### 1. Get Available Deliveries (Enhanced with Distance)
+
+**Endpoint:** `GET /api/delivery/courier/available`
+
+**Query Parameters:**
+- `vehicleTypeId` (optional, string) - Filter by vehicle type
+- `regionId` (optional, string) - Filter by region
+- `sortBy` (optional, string) - Sort order: `distance`, `fare`, `created_at` (default: `created_at`)
+- `limit` (optional, number) - Default: 10
+
+**Example:** `GET /api/delivery/courier/available?sortBy=distance&limit=5`
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "deliveries": [
+      {
+        "id": "uuid",
+        "orderNumber": "ORDB0003",
+        "pickupLocation": {
+          "latitude": 6.5244,
+          "longitude": 3.3792,
+          "address": "123 Main St, Lagos"
+        },
+        "dropoffLocation": {
+          "latitude": 6.4281,
+          "longitude": 3.4219,
+          "address": "456 Oak Ave, Lagos"
+        },
+        "estimatedFare": 1800.00,
+        "distanceKm": "12.50",
+        "distanceToPickup": 2.3,
+        "deliveryType": "instant",
+        "scheduledPickupAt": null,
+        "createdAt": "2026-02-15T10:00:00.000Z"
+      }
+    ],
+    "total": 5,
+    "sortedBy": "distance",
+    "courierLocationAvailable": true
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Error Response (400):**
+```json
+{
+  "success": false,
+  "error": "Invalid sortBy parameter. Must be: distance, fare, or created_at",
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- `distanceToPickup`: Distance from courier's current location to pickup (in km)
+- Courier location fetched from `driver_locations` table (most recent)
+- If no location available, `distanceToPickup` will be `null`
+- Sorting by distance only works if courier location is available
+- Distance calculated using Haversine formula
+- `courierLocationAvailable` indicates if distance calculation was possible
+
+
+#### 2. Get Courier Dashboard Metrics
+
+**Endpoint:** `GET /api/delivery/courier/dashboard`
+
+**Query Parameters:**
+- `period` (optional, string) - Time period: `today`, `7d`, `30d`, `all` (default: `today`)
+
+**Example:** `GET /api/delivery/courier/dashboard?period=7d`
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "period": "7d",
+    "metrics": {
+      "totalDeliveries": 45,
+      "completedDeliveries": 42,
+      "cancelledDeliveries": 3,
+      "deliveryEarnings": 67500.00,
+      "deliveryRating": 4.8,
+      "acceptanceRate": 93.0,
+      "currencyCode": "NGN"
+    }
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Error Response (400):**
+```json
+{
+  "success": false,
+  "error": "Invalid period. Must be: today, 7d, 30d, or all",
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Error Response (400):**
+```json
+{
+  "success": false,
+  "error": "Driver profile not found. Please complete driver registration first.",
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Metrics Explanation:**
+- `totalDeliveries`: Total deliveries assigned to courier in period
+- `completedDeliveries`: Successfully completed deliveries
+- `cancelledDeliveries`: Cancelled deliveries
+- `deliveryEarnings`: Total earnings from deliveries (after platform fees)
+- `deliveryRating`: Average rating from customers (0-5)
+- `acceptanceRate`: Percentage of accepted requests (accepted / (accepted + rejected)) * 100
+- `currencyCode`: Currency code (e.g., NGN)
+
+**Notes:**
+- Results are cached for 2 minutes
+- Date filtering uses `assigned_at` for deliveries
+- Date filtering uses `responded_at` for acceptance rate
+- Only counts deliveries that were actually assigned
+
+
+#### 3. Get Courier Delivery History (with Date Filtering)
+
+**Endpoint:** `GET /api/delivery/courier/history`
+
+**Query Parameters:**
+- `limit` (optional, number) - Default: 20
+- `offset` (optional, number) - Default: 0
+- `status` (optional, string) - Filter by status
+- `from_date` (optional, string) - Start date (ISO 8601 format)
+- `to_date` (optional, string) - End date (ISO 8601 format)
+
+**Example:** `GET /api/delivery/courier/history?limit=20&from_date=2026-02-01&status=delivered`
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "deliveries": [
+      {
+        "id": "uuid",
+        "orderNumber": "ORDB0001",
+        "status": "delivered",
+        "recipientName": "John Doe",
+        "pickupAddress": "111 Ketu, Lagos",
+        "dropoffAddress": "222 Yaba Phase 1, Lagos",
+        "estimatedFare": 1200.00,
+        "finalFare": 1200.00,
+        "currencyCode": "NGN",
+        "deliveryType": "instant",
+        "createdAt": "2026-02-15T10:00:00.000Z",
+        "deliveredAt": "2026-02-15T11:30:00.000Z"
+      }
+    ],
+    "pagination": {
+      "total": 50,
+      "limit": 20,
+      "offset": 0
+    }
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Error Response (400):**
+```json
+{
+  "success": false,
+  "error": "Driver profile not found. Please complete driver registration first.",
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- Date filtering uses `created_at` field
+- Dates must be in ISO 8601 format
+- Both `from_date` and `to_date` are optional
+
+---
+
+### Admin Endpoints (Phase 5)
+
+**Note:** All admin endpoints require admin authentication with `admin` or `super_admin` role.
+
+#### 1. Get Delivery Analytics
+
+**Endpoint:** `GET /api/admin/delivery/analytics`
+
+**Headers:**
+```
+Authorization: Bearer <admin_token>
+```
+
+**Query Parameters:**
+- `city` (optional, string) - Filter by city
+- `period` (optional, string) - Time period: `daily`, `weekly`, `monthly` (default: `daily`)
+- `from_date` (optional, string) - Start date (ISO 8601 format)
+- `to_date` (optional, string) - End date (ISO 8601 format)
+- `delivery_type` (optional, string) - Filter by delivery type: `instant` or `scheduled`
+
+**Example:** `GET /api/admin/delivery/analytics?city=lagos&period=weekly`
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "analytics": {
+      "totalDeliveries": 1250,
+      "completedDeliveries": 1180,
+      "cancelledDeliveries": 70,
+      "totalRevenue": 1875000.00,
+      "averageDeliveryTime": 45,
+      "averageDistance": 8.5,
+      "completionRate": 0.944,
+      "period": "weekly",
+      "fromDate": "2026-02-08",
+      "toDate": "2026-02-15"
+    }
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Error Response (401):**
+```json
+{
+  "success": false,
+  "error": {
+    "message": "Admin authentication required",
+    "code": "ADMIN_AUTH_REQUIRED",
+    "timestamp": "2026-02-27T10:00:00.000Z"
+  }
+}
+```
+
+**Error Response (403):**
+```json
+{
+  "success": false,
+  "error": {
+    "message": "Admin access required",
+    "code": "ADMIN_ACCESS_REQUIRED",
+    "timestamp": "2026-02-27T10:00:00.000Z"
+  }
+}
+```
+
+**Notes:**
+- Results are cached for 5 minutes
+- Supports city-level aggregation
+- Date range filtering available
+- Delivery type filtering available
+
+
+#### 2. Get Volume by Vehicle Type
+
+**Endpoint:** `GET /api/admin/delivery/analytics/volume-by-vehicle`
+
+**Headers:**
+```
+Authorization: Bearer <admin_token>
+```
+
+**Query Parameters:**
+- `from_date` (optional, string) - Start date
+- `to_date` (optional, string) - End date
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "volumeByVehicle": [
+      {
+        "vehicleType": "bike",
+        "displayName": "Bike",
+        "totalDeliveries": 650,
+        "completedDeliveries": 620,
+        "totalRevenue": 975000.00,
+        "averageDistance": 6.2
+      },
+      {
+        "vehicleType": "car",
+        "displayName": "Car",
+        "totalDeliveries": 400,
+        "completedDeliveries": 380,
+        "totalRevenue": 720000.00,
+        "averageDistance": 10.5
+      }
+    ]
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- Results are cached for 5 minutes
+- Shows delivery volume breakdown by vehicle type
+
+
+#### 3. Get Popular Routes
+
+**Endpoint:** `GET /api/admin/delivery/analytics/popular-routes`
+
+**Headers:**
+```
+Authorization: Bearer <admin_token>
+```
+
+**Query Parameters:**
+- `limit` (optional, number) - Number of routes (default: 10)
+- `from_date` (optional, string) - Start date
+- `to_date` (optional, string) - End date
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "popularRoutes": [
+      {
+        "pickupArea": "Victoria Island",
+        "dropoffArea": "Lekki",
+        "deliveryCount": 145,
+        "averageFare": 1800.00,
+        "averageDistance": 12.5
+      },
+      {
+        "pickupArea": "Ikeja",
+        "dropoffArea": "Yaba",
+        "deliveryCount": 120,
+        "averageFare": 1500.00,
+        "averageDistance": 9.8
+      }
+    ]
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- Results are cached for 5 minutes
+- Shows most popular delivery routes
+
+
+#### 4. Refresh Analytics Cache
+
+**Endpoint:** `POST /api/admin/delivery/analytics/refresh`
+
+**Headers:**
+```
+Authorization: Bearer <admin_token>
+```
+
+**Request Body:** None
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Analytics cache refreshed successfully"
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- Clears all analytics cache
+- Forces fresh data calculation on next request
+- Use when you need real-time data
+
+
+#### 5. Get Disputes
+
+**Endpoint:** `GET /api/admin/delivery/disputes`
+
+**Headers:**
+```
+Authorization: Bearer <admin_token>
+```
+
+**Query Parameters:**
+- `status` (optional, string) - Filter by status: `pending`, `under_review`, `resolved`
+- `limit` (optional, number) - Default: 20
+- `offset` (optional, number) - Default: 0
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "disputes": [
+      {
+        "id": "uuid",
+        "deliveryId": "uuid",
+        "orderNumber": "ORDB0001",
+        "issueId": "uuid",
+        "issueType": "package_damaged",
+        "status": "pending",
+        "reportedBy": "customer",
+        "description": "Package damaged during delivery",
+        "createdAt": "2026-02-15T12:00:00.000Z"
+      }
+    ],
+    "pagination": {
+      "total": 15,
+      "limit": 20,
+      "offset": 0
+    }
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- Shows all disputes in the system
+- Can filter by status
+- Pagination supported
+
+
+#### 6. Resolve Dispute
+
+**Endpoint:** `POST /api/admin/delivery/disputes/:id/resolve`
+
+**Headers:**
+```
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "resolution": "refund",
+  "adminNotes": "Full refund issued to customer due to package damage",
+  "refundAmount": 1500.00
+}
+```
+
+**Resolution Types:**
+- `refund` - Full refund to customer
+- `partial_refund` - Partial refund to customer
+- `penalty` - Penalty to courier
+- `no_action` - No action taken (dispute rejected)
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Dispute resolved successfully"
+  },
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Error Response (400):**
+```json
+{
+  "success": false,
+  "error": "Invalid resolution type",
+  "timestamp": "2026-02-27T10:00:00.000Z"
+}
+```
+
+**Notes:**
+- `resolution` is required
+- `adminNotes` is optional but recommended
+- `refundAmount` is required for `refund` and `partial_refund` resolutions
+- Updates dispute status to `resolved`
+- Processes refund if applicable
+
+---
+
+## Phase 5 Features Summary
+
+### Scheduled Deliveries
+- Separate endpoint for viewing scheduled deliveries
+- Automatic reminders at 1 hour and 15 minutes before pickup
+- Auto-matching starts 10-15 minutes before scheduled time
+- No cancellation fees
+
+### Courier Dashboard
+- Period-based metrics (today, 7d, 30d, all)
+- Total/completed/cancelled deliveries
+- Delivery earnings tracking
+- Delivery rating display
+- Acceptance rate calculation
+- 2-minute cache for performance
+
+### Enhanced Available Deliveries
+- Distance calculation from courier to pickup location
+- Sorting by distance, fare, or created_at
+- Uses courier's most recent location from driver_locations table
+- Fallback when location not available
+
+### Timeout & No-Show Handling
+- Automatic timeout detection (assigned: 30 min, in_transit: 2x estimated duration)
+- Customer can report courier no-show
+- First no-show: Auto-rematch with new courier
+- Second no-show: Cancel and refund automatically
+- Admin notification on timeout
+
+### Issue Reporting & Disputes
+- Multiple issue types supported
+- Photo evidence upload capability
+- Issues pause delivery until admin review
+- Courier payout frozen during issue review
+- Admin dispute resolution workflow
+- Multiple resolution types (refund, partial refund, penalty, no action)
+
+### Admin Analytics
+- Main analytics with city/period/date filtering
+- Volume by vehicle type analysis
+- Popular routes tracking
+- 5-minute cache for performance
+- Manual cache refresh capability
+
+### Date Range Filtering
+- Customer delivery history with date filters
+- Courier delivery history with date filters
+- ISO 8601 date format support
+- Optional from_date and to_date parameters
+
+---
+
+## Updated API Integration Checklist
+
+### Customer App (Phase 5 Additions)
+
+- [ ] Get delivery history with date filtering
+- [ ] Get scheduled deliveries
+- [ ] Report courier no-show
+- [ ] Report delivery issue with photos
+- [ ] Get delivery issues
+
+### Courier App (Phase 5 Additions)
+
+- [ ] Get available deliveries with distance sorting
+- [ ] Get courier dashboard metrics (today, 7d, 30d, all)
+- [ ] Get delivery history with date filtering
+
+### Admin Panel (Phase 5 Additions)
+
+- [ ] Get delivery analytics with filters
+- [ ] Get volume by vehicle type
+- [ ] Get popular routes
+- [ ] Refresh analytics cache
+- [ ] Get disputes list
+- [ ] Resolve disputes
+
+---
+
+## Phase 5 Important Notes
+
+### Courier Location Tracking
+- Courier location is stored in `driver_locations` table
+- Each location update creates a new record (history)
+- Most recent location is used for distance calculations
+- If no location available, distance features are disabled
+
+### Dashboard Metrics Calculation
+- Uses `assigned_at` for delivery date filtering (not `created_at`)
+- Uses `responded_at` for acceptance rate calculation
+- Only counts deliveries that were actually assigned
+- Acceptance rate = (accepted / (accepted + rejected)) * 100
+
+### Scheduled Delivery Reminders
+- Reminders sent at 1 hour before pickup
+- Reminders sent at 15 minutes before pickup
+- Auto-matching triggered 10-15 minutes before pickup
+- Reminders tracked in `delivery_reminders` table to prevent duplicates
+
+### Timeout Logic
+- Assigned status: 30 minutes timeout
+- In-transit status: 2x estimated duration timeout
+- Timeout flags delivery for admin review
+- No automatic refunds on timeout
+- Admin notified when timeout occurs
+
+### Issue & Dispute Workflow
+1. Customer/Courier reports issue
+2. Issue status: `pending`
+3. Admin reviews issue
+4. If dispute created, status: `under_review`
+5. Admin resolves dispute with resolution type
+6. Dispute status: `resolved`
+7. Refund processed if applicable
+
+### Caching Strategy
+- Courier dashboard: 2 minutes TTL
+- Admin analytics: 5 minutes TTL
+- Fare configs: 10 minutes TTL (if implemented)
+- In-memory cache (Redis-ready for scaling)
+
+---
+
+**Document Version:** 2.0 (Phase 5 Complete)  
+**Last Updated:** March 4, 2026  
+**Phase 5 Status:** ✅ Completed  
+**Service Channel ID:** 91f84fab-1252-47e1-960a-e498daa91c35  
+**Default Region:** Lagos, Nigeria (00000000-0000-0000-0000-000000000001)

@@ -5,6 +5,8 @@ import { logger } from './config/logger';
 import { SocketService } from './services/socket.service';
 import { RideMatchingService } from './services/ride-matching.service';
 import { ScheduledRideService } from './services/scheduled-ride.service';
+import { DeliverySchedulerService } from './modules/deliveries/services/delivery-scheduler.service';
+import { CacheService } from './shared/utils/cache.service';
 import { createServer } from 'http';
 
 // Global services for real-time features
@@ -44,6 +46,14 @@ async function startServer() {
     scheduledRideService.startCronJob();
     logger.info('Scheduled ride service initialized and cron job started');
 
+    // Initialize cache service
+    CacheService.initialize();
+    logger.info('Cache service initialized');
+
+    // Initialize delivery scheduler service
+    DeliverySchedulerService.start();
+    logger.info('Delivery scheduler service started');
+
     // Make services available globally
     app.set('socketService', socketService);
     app.set('rideMatchingService', rideMatchingService);
@@ -67,6 +77,12 @@ async function startServer() {
       if (scheduledRideService) {
         scheduledRideService.stopCronJob();
       }
+      
+      // Stop delivery scheduler
+      DeliverySchedulerService.stop();
+      
+      // Shutdown cache service
+      CacheService.shutdown();
       
       server.close(async () => {
         logger.info('HTTP server closed');

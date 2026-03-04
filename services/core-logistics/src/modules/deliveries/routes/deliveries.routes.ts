@@ -19,6 +19,9 @@ router.get('/vehicle-types', deliveriesController.getVehicleTypes);
 // Estimate delivery fare
 router.post('/estimate-fare', deliveriesController.estimateFare);
 
+// Get scheduled deliveries (customer or courier)
+router.get('/scheduled', deliveriesController.getScheduledDeliveries);
+
 // Create delivery order (Pure JSON - no file upload)
 router.post('/order', deliveriesController.createDelivery);
 
@@ -40,6 +43,9 @@ router.get('/courier/available', deliveriesController.getAvailableDeliveries);
 // Get courier delivery history
 router.get('/courier/history', deliveriesController.getCourierHistory);
 
+// Get courier dashboard metrics
+router.get('/courier/dashboard', deliveriesController.getCourierDashboard);
+
 // DEBUG: Get courier vehicle details
 router.get('/courier/debug-vehicle', deliveriesController.debugCourierVehicle);
 
@@ -57,6 +63,15 @@ router.put('/:id/status', deliveriesController.updateStatus);
 
 // Cancel delivery
 router.post('/:id/cancel', deliveriesController.cancelDelivery);
+
+// Report courier no-show
+router.post('/:id/report-no-show', deliveriesController.reportCourierNoShow);
+
+// Report delivery issue
+router.post('/:id/report-issue', deliveriesController.reportIssue);
+
+// Get delivery issues
+router.get('/:id/issues', deliveriesController.getDeliveryIssues);
 
 // Verify pickup code
 router.post('/:id/verify-pickup', deliveriesController.verifyPickupCode);

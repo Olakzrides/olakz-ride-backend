@@ -288,4 +288,50 @@ export class DeliveryNotificationService {
       logger.error('Send arrived at delivery notification error:', error);
     }
   }
+
+  /**
+   * Send scheduled delivery reminder notification
+   */
+  static async sendScheduledDeliveryReminder(params: {
+    customerId: string;
+    deliveryId: string;
+    orderNumber: string;
+    scheduledPickupAt: string;
+    minutesUntilPickup: number;
+    pickupAddress: string;
+    dropoffAddress: string;
+  }): Promise<void> {
+    try {
+      const { customerId, deliveryId, orderNumber, minutesUntilPickup } = params;
+
+      const timeMessage = minutesUntilPickup >= 60 
+        ? 'in 1 hour' 
+        : 'in 15 minutes';
+
+      const pushService = PushNotificationService.getInstance();
+      await pushService.sendToUser({
+        userId: customerId,
+        notificationType: 'scheduled_delivery_reminder',
+        payload: {
+          title: 'Delivery Reminder',
+          body: `Your scheduled delivery ${orderNumber} is coming up ${timeMessage}`,
+          data: {
+            type: 'scheduled_delivery_reminder',
+            deliveryId,
+            orderNumber,
+            minutesUntilPickup: minutesUntilPickup.toString(),
+          },
+        },
+      });
+
+      logger.info('Scheduled delivery reminder sent:', {
+        customerId,
+        deliveryId,
+        orderNumber,
+        minutesUntilPickup,
+      });
+    } catch (error) {
+      logger.error('Send scheduled delivery reminder error:', error);
+    }
+  }
 }

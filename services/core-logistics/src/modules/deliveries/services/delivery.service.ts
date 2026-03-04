@@ -446,6 +446,18 @@ export class DeliveryService {
         updatedBy: params.updatedBy,
       });
 
+      // Set timeout for assigned and in_transit statuses
+      if (params.status === 'assigned' || params.status === 'in_transit') {
+        try {
+          const { DeliveryTimeoutService } = await import('./delivery-timeout.service');
+          await DeliveryTimeoutService.setDeliveryTimeout(params.deliveryId, params.status);
+          logger.info(`Timeout set for delivery ${params.deliveryId} with status ${params.status}`);
+        } catch (timeoutError) {
+          logger.error(`Error setting timeout for delivery ${params.deliveryId}:`, timeoutError);
+          // Don't throw - timeout is not critical for status update
+        }
+      }
+
       logger.info(`Delivery ${params.deliveryId} status updated to: ${params.status}`);
 
       return data;
@@ -526,6 +538,16 @@ export class DeliveryService {
       status: 'assigned',
       notes: `Courier ${courierId} assigned`,
     });
+
+    // Set timeout for assigned status
+    try {
+      const { DeliveryTimeoutService } = await import('./delivery-timeout.service');
+      await DeliveryTimeoutService.setDeliveryTimeout(deliveryId, 'assigned');
+      logger.info(`Timeout set for assigned delivery ${deliveryId}`);
+    } catch (timeoutError) {
+      logger.error(`Error setting timeout for delivery ${deliveryId}:`, timeoutError);
+      // Don't throw - timeout is not critical for assignment
+    }
 
     // Get courier details for notification
     const { data: courier } = await supabase
@@ -614,6 +636,8 @@ export class DeliveryService {
       limit?: number;
       offset?: number;
       status?: string;
+      fromDate?: string;
+      toDate?: string;
     } = {}
   ) {
     let query = supabase
@@ -628,6 +652,15 @@ export class DeliveryService {
 
     if (options.status) {
       query = query.eq('status', options.status);
+    }
+
+    // Date range filtering
+    if (options.fromDate) {
+      query = query.gte('created_at', options.fromDate);
+    }
+
+    if (options.toDate) {
+      query = query.lte('created_at', options.toDate);
     }
 
     if (options.limit) {
@@ -660,6 +693,8 @@ export class DeliveryService {
       limit?: number;
       offset?: number;
       status?: string;
+      fromDate?: string;
+      toDate?: string;
     } = {}
   ) {
     let query = supabase
@@ -670,6 +705,15 @@ export class DeliveryService {
 
     if (options.status) {
       query = query.eq('status', options.status);
+    }
+
+    // Date range filtering
+    if (options.fromDate) {
+      query = query.gte('created_at', options.fromDate);
+    }
+
+    if (options.toDate) {
+      query = query.lte('created_at', options.toDate);
     }
 
     if (options.limit) {
@@ -729,11 +773,14 @@ export class DeliveryService {
   }
 
   /**
-   * Get available deliveries for courier matching
+   * Get available deliveries for courier matching with distance calculation
    */
   public static async getAvailableDeliveries(options: {
     vehicleTypeId?: string;
     regionId?: string;
+    courierId?: string;
+    courierLocation?: { latitude: number; longitude: number };
+    sortBy?: 'distance' | 'fare' | 'created_at';
     limit?: number;
   } = {}) {
     let query = supabase
@@ -761,7 +808,85 @@ export class DeliveryService {
       throw new Error('Failed to fetch available deliveries');
     }
 
-    return data || [];
+    let deliveries = data || [];
+
+    // If courier location is provided, calculate distances
+    if (options.courierLocation && deliveries.length > 0) {
+      const { MapsUtil } = await import('../../../utils/maps.util');
+      
+      deliveries = deliveries.map(delivery => {
+        const distance = MapsUtil.calculateDistance(
+          options.courierLocation!,
+          {
+            latitude: parseFloat(delivery.pickup_latitude),
+            longitude: parseFloat(delivery.pickup_longitude),
+          }
+        );
+
+        return {
+          ...delivery,
+          distance_to_pickup: distance,
+        };
+      });
+
+      // Sort by distance if requested
+      if (options.sortBy === 'distance') {
+        deliveries.sort((a, b) => (a.distance_to_pickup || 0) - (b.distance_to_pickup || 0));
+      } else if (options.sortBy === 'fare') {
+        deliveries.sort((a, b) => parseFloat(b.estimated_fare) - parseFloat(a.estimated_fare));
+      }
+    }
+
+    return deliveries;
+  }
+
+  /**
+   * Get scheduled deliveries (for customer or courier)
+   */
+  public static async getScheduledDeliveries(options: {
+    customerId?: string;
+    courierId?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) {
+    let query = supabase
+      .from('deliveries')
+      .select(`
+        *,
+        vehicle_type:vehicle_types(id, name, display_name, icon_url),
+        courier:drivers(id, user_id, rating, delivery_rating)
+      `, { count: 'exact' })
+      .eq('delivery_type', 'scheduled')
+      .in('status', ['pending', 'searching', 'assigned'])
+      .order('scheduled_pickup_at', { ascending: true });
+
+    if (options.customerId) {
+      query = query.eq('customer_id', options.customerId);
+    }
+
+    if (options.courierId) {
+      query = query.eq('courier_id', options.courierId);
+    }
+
+    if (options.limit) {
+      query = query.limit(options.limit);
+    }
+
+    if (options.offset) {
+      query = query.range(options.offset, options.offset + (options.limit || 20) - 1);
+    }
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      logger.error(`Error fetching scheduled deliveries:`, error);
+      throw new Error('Failed to fetch scheduled deliveries');
+    }
+
+    return {
+      deliveries: data || [],
+      total: count || 0,
+    };
   }
 
   /**
