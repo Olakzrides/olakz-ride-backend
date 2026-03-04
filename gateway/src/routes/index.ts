@@ -205,6 +205,12 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))
   );
 
+  // Delivery Service routes (Phase 4 & 5)
+  app.use(
+    '/api/delivery',
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+  );
+
   app.use(
     '/api/riders',
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))
