@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon",
-    "build": "tsc",
+    "build": "node --max-old-space-size=4096 ./node_modules/.bin/tsc",
     "start": "node dist/index.js",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
