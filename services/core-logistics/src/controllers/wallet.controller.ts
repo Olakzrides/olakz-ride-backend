@@ -266,4 +266,189 @@ export class WalletController {
       return ResponseUtil.error(res, 'Failed to get transaction history');
     }
   };
+
+  // ==========================================
+  // INTERNAL API ENDPOINTS (Service-to-Service)
+  // ==========================================
+
+  /**
+   * Get wallet balance (Internal API)
+   * GET /api/wallet/internal/balance
+   * Requires: X-User-Id header and x-internal-api-key
+   */
+  getWalletBalanceInternal = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.headers['x-user-id'] as string;
+      
+      if (!userId) {
+        return ResponseUtil.badRequest(res, 'X-User-Id header is required');
+      }
+
+      const currencyCode = (req.query.currency as string) || 'NGN';
+
+      const balance = await this.paymentService.getUserWalletBalance(userId, currencyCode);
+
+      return ResponseUtil.success(res, {
+        wallet: {
+          balance: balance,
+          currency_code: currencyCode,
+        },
+      });
+    } catch (error: any) {
+      logger.error('Get wallet balance (internal) error:', error);
+      return ResponseUtil.error(res, 'Failed to get wallet balance');
+    }
+  };
+
+  /**
+   * Credit wallet (Internal API) - used for refunds
+   * POST /api/wallet/internal/credit
+   * Requires: X-User-Id header and x-internal-api-key
+   */
+  creditWalletInternal = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.headers['x-user-id'] as string;
+
+      if (!userId) {
+        return ResponseUtil.badRequest(res, 'X-User-Id header is required');
+      }
+
+      const { amount, currency_code = 'NGN', reference, description, transaction_type = 'credit' } = req.body;
+
+      if (!amount || amount <= 0) {
+        return ResponseUtil.badRequest(res, 'Invalid amount');
+      }
+
+      if (!reference) {
+        return ResponseUtil.badRequest(res, 'Reference is required');
+      }
+
+      const { data: transaction, error } = await supabase
+        .from('wallet_transactions')
+        .insert({
+          user_id: userId,
+          transaction_type: transaction_type,
+          amount: amount,
+          currency_code: currency_code,
+          status: 'completed',
+          description: description || 'Wallet credit',
+          reference: reference,
+          metadata: {
+            credited_by: 'platform-service',
+            credited_at: new Date().toISOString(),
+          },
+        })
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Credit wallet (internal) error:', error);
+        return ResponseUtil.error(res, 'Failed to credit wallet');
+      }
+
+      const newBalance = await this.paymentService.getUserWalletBalance(userId, currency_code);
+
+      logger.info('Wallet credit (internal) successful:', { userId, amount, reference, newBalance });
+
+      return ResponseUtil.success(res, {
+        transaction: {
+          id: transaction.id,
+          amount: amount,
+          status: transaction.status,
+          reference: reference,
+        },
+        wallet: {
+          balance: newBalance,
+          currency_code: currency_code,
+        },
+      });
+    } catch (error: any) {
+      logger.error('Credit wallet (internal) error:', error);
+      return ResponseUtil.error(res, 'Failed to credit wallet');
+    }
+  };
+
+  /**
+   * Deduct from wallet (Internal API)
+   * POST /api/wallet/internal/deduct
+   * Requires: X-User-Id header and x-internal-api-key
+   */
+  deductFromWalletInternal = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.headers['x-user-id'] as string;
+      
+      if (!userId) {
+        return ResponseUtil.badRequest(res, 'X-User-Id header is required');
+      }
+
+      const { amount, currency_code = 'NGN', reference, description, transaction_type = 'debit' } = req.body;
+
+      // Validate amount
+      if (!amount || amount <= 0) {
+        return ResponseUtil.badRequest(res, 'Invalid amount');
+      }
+
+      if (!reference) {
+        return ResponseUtil.badRequest(res, 'Reference is required');
+      }
+
+      // Check wallet balance
+      const currentBalance = await this.paymentService.getUserWalletBalance(userId, currency_code);
+
+      if (currentBalance < amount) {
+        return ResponseUtil.badRequest(res, `Insufficient wallet balance. Required: ${amount}, Available: ${currentBalance}`);
+      }
+
+      // Create debit transaction
+      const { data: transaction, error } = await supabase
+        .from('wallet_transactions')
+        .insert({
+          user_id: userId,
+          transaction_type: transaction_type,
+          amount: amount,
+          currency_code: currency_code,
+          status: 'completed',
+          description: description || 'Wallet deduction',
+          reference: reference,
+          metadata: {
+            deducted_by: 'platform-service',
+            deducted_at: new Date().toISOString(),
+          },
+        })
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Deduct from wallet error:', error);
+        return ResponseUtil.error(res, 'Failed to deduct from wallet');
+      }
+
+      // Get updated balance
+      const newBalance = await this.paymentService.getUserWalletBalance(userId, currency_code);
+
+      logger.info('Wallet deduction successful:', {
+        userId,
+        amount,
+        reference,
+        oldBalance: currentBalance,
+        newBalance,
+      });
+
+      return ResponseUtil.success(res, {
+        transaction: {
+          id: transaction.id,
+          amount: amount,
+          status: transaction.status,
+          reference: reference,
+        },
+        wallet: {
+          balance: newBalance,
+          currency_code: currency_code,
+        },
+      });
+    } catch (error: any) {
+      logger.error('Deduct from wallet (internal) error:', error);
+      return ResponseUtil.error(res, 'Failed to deduct from wallet');
+    }
+  };
 }

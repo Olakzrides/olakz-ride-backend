@@ -6,7 +6,7 @@ import ResponseUtil from '../utils/response';
 import { authRateLimiter } from '../middleware/rate-limit.middleware';
 
 // Proxy options factory
-const createProxyOptions = (target: string, pathRewrite?: any): Options => ({
+const createProxyOptions = (target: string, pathRewrite?: any, timeoutMs?: number): Options => ({
   target,
   changeOrigin: true,
   pathRewrite,
@@ -87,8 +87,8 @@ const createProxyOptions = (target: string, pathRewrite?: any): Options => ({
   },
 
   // Timeout settings
-  proxyTimeout: config.services.auth.timeout,
-  timeout: config.services.auth.timeout,
+  proxyTimeout: timeoutMs || config.services.auth.timeout,
+  timeout: timeoutMs || config.services.auth.timeout,
 });
 
 /**
@@ -241,6 +241,12 @@ export function setupRoutes(app: Application): void {
   app.use(
     '/api/services',
     createProxyMiddleware(createProxyOptions(config.services.platform.url))
+  );
+
+  // Bills Payment routes (Airtime & Data) — higher timeout for Flutterwave API calls
+  app.use(
+    '/api/bills',
+    createProxyMiddleware(createProxyOptions(config.services.platform.url, undefined, 60000))
   );
 
   logger.info('All proxy routes configured successfully');

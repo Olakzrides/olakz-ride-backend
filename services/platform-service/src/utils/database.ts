@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../node_modules/.prisma/platform-client';
 import logger from './logger';
 
 class Database {
@@ -6,7 +6,15 @@ class Database {
 
   static getInstance(): PrismaClient {
     if (!Database.instance) {
-      Database.instance = new PrismaClient();
+      Database.instance = new PrismaClient({
+        datasources: {
+          db: {
+            url: process.env.DATABASE_URL,
+          },
+        },
+        // Disable prepared statements for PgBouncer compatibility
+        log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
+      });
     }
 
     return Database.instance;

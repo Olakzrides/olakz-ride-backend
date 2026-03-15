@@ -4,8 +4,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model advertisements {
@@ -560,4 +561,109 @@ model wallet_transactions {
   @@index([transaction_type])
   @@index([user_id])
   @@index([user_id, transaction_type, status])
+}
+
+// Bills Payment Tables (Airtime & Data)
+model bill_transactions {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id                String    @map("user_id") @db.Uuid
+  transaction_type       String    @map("transaction_type") @db.VarChar(20)
+  network                String    @db.VarChar(20)
+  phone_number           String    @map("phone_number") @db.VarChar(20)
+  amount                 Decimal   @db.Decimal(10, 2)
+  currency_code          String    @default("NGN") @map("currency_code") @db.VarChar(3)
+  bundle_code            String?   @map("bundle_code") @db.VarChar(50)
+  bundle_name            String?   @map("bundle_name") @db.VarChar(100)
+  bundle_validity        String?   @map("bundle_validity") @db.VarChar(50)
+  payment_method         String    @map("payment_method") @db.VarChar(20)
+  payment_status         String    @default("pending") @map("payment_status") @db.VarChar(20)
+  wallet_transaction_id  String?   @map("wallet_transaction_id") @db.Uuid
+  wallet_balance_before  Decimal?  @map("wallet_balance_before") @db.Decimal(10, 2)
+  wallet_balance_after   Decimal?  @map("wallet_balance_after") @db.Decimal(10, 2)
+  flw_reference          String?   @unique @map("flw_reference") @db.VarChar(100)
+  flw_tx_ref             String?   @unique @map("flw_tx_ref") @db.VarChar(100)
+  flw_biller_code        String?   @map("flw_biller_code") @db.VarChar(50)
+  flw_item_code          String?   @map("flw_item_code") @db.VarChar(50)
+  flw_response           Json      @default("{}") @map("flw_response")
+  status                 String    @default("pending") @db.VarChar(20)
+  error_message          String?   @map("error_message") @db.Text
+  retry_count            Int       @default(0) @map("retry_count")
+  completed_at           DateTime? @map("completed_at") @db.Timestamptz(6)
+  failed_at              DateTime? @map("failed_at") @db.Timestamptz(6)
+  created_at             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updated_at             DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([user_id])
+  @@index([status])
+  @@index([transaction_type])
+  @@index([flw_reference])
+  @@index([created_at(sort: Desc)])
+  @@index([phone_number])
+  @@map("bill_transactions")
+}
+
+model network_providers {
+  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String                @db.VarChar(50)
+  code                String                @unique @db.VarChar(20)
+  flw_biller_code      String                @map("flw_biller_code") @db.VarChar(50)
+  flw_data_biller_code String?              @map("flw_data_biller_code") @db.VarChar(50)
+  logo_url             String?              @map("logo_url") @db.Text
+  is_active           Boolean               @default(true) @map("is_active")
+  supports_airtime    Boolean               @default(true) @map("supports_airtime")
+  supports_data       Boolean               @default(true) @map("supports_data")
+  min_airtime_amount  Decimal               @default(50.00) @map("min_airtime_amount") @db.Decimal(10, 2)
+  max_airtime_amount  Decimal               @default(500000.00) @map("max_airtime_amount") @db.Decimal(10, 2)
+  metadata            Json                  @default("{}") @db.Json
+  created_at          DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updated_at          DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
+  bill_beneficiaries  bill_beneficiaries[]
+
+  @@index([code])
+  @@index([is_active])
+  @@map("network_providers")
+}
+
+model data_bundles {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  network_code   String   @map("network_code") @db.VarChar(20)
+  bundle_code    String   @map("bundle_code") @db.VarChar(50)
+  bundle_name    String   @map("bundle_name") @db.VarChar(100)
+  amount         Decimal  @db.Decimal(10, 2)
+  validity       String?  @db.VarChar(50)
+  validity_type  String?  @map("validity_type") @db.VarChar(20)
+  data_size      String?  @map("data_size") @db.VarChar(50)
+  flw_item_code  String   @map("flw_item_code") @db.VarChar(50)
+  is_active      Boolean  @default(true) @map("is_active")
+  sort_order     Int      @default(0) @map("sort_order")
+  last_synced_at DateTime @default(now()) @map("last_synced_at") @db.Timestamptz(6)
+  created_at     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updated_at     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([network_code, bundle_code])
+  @@index([network_code])
+  @@index([validity_type])
+  @@index([is_active])
+  @@index([sort_order])
+  @@map("data_bundles")
+}
+
+model bill_beneficiaries {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String            @map("user_id") @db.Uuid
+  name             String            @db.VarChar(100)
+  phone_number     String            @map("phone_number") @db.VarChar(20)
+  network_code     String            @map("network_code") @db.VarChar(20)
+  is_favorite      Boolean           @default(false) @map("is_favorite")
+  usage_count      Int               @default(0) @map("usage_count")
+  last_used_at     DateTime?         @map("last_used_at") @db.Timestamptz(6)
+  created_at       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updated_at       DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
+  network_provider network_providers @relation(fields: [network_code], references: [code], onDelete: Cascade)
+
+  @@unique([user_id, phone_number])
+  @@index([user_id])
+  @@index([phone_number])
+  @@index([network_code])
+  @@map("bill_beneficiaries")
 }

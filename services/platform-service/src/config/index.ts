@@ -19,6 +19,17 @@ interface Config {
   cache: {
     ttlMinutes: number;
   };
+  flutterwave: {
+    publicKey: string;
+    secretKey: string;
+    encryptionKey: string;
+    baseUrl: string;
+    webhookSecret: string;
+  };
+  coreLogistics: {
+    url: string;
+    internalApiKey: string;
+  };
 }
 
 const config: Config = {
@@ -50,11 +61,32 @@ const config: Config = {
   cache: {
     ttlMinutes: parseInt(process.env.CACHE_TTL_MINUTES || '5', 10),
   },
+
+  flutterwave: {
+    publicKey: process.env.FLUTTERWAVE_PUBLIC_KEY || '',
+    secretKey: process.env.FLUTTERWAVE_SECRET_KEY || '',
+    encryptionKey: process.env.FLUTTERWAVE_ENCRYPTION_KEY || '',
+    baseUrl: process.env.FLUTTERWAVE_BASE_URL || 'https://api.flutterwave.com/v3',
+    webhookSecret: process.env.FLUTTERWAVE_WEBHOOK_SECRET || '',
+  },
+
+  coreLogistics: {
+    url: process.env.CORE_LOGISTICS_URL || 'http://localhost:3001',
+    internalApiKey: process.env.CORE_LOGISTICS_INTERNAL_API_KEY || '',
+  },
 };
 
 // Validate required config
 if (!config.supabase.url || !config.supabase.anonKey) {
   console.warn('⚠️  SUPABASE_URL and SUPABASE_ANON_KEY not configured - some features may not work');
+}
+
+if (!config.flutterwave.secretKey) {
+  console.warn('⚠️  FLUTTERWAVE_SECRET_KEY not configured - bills payment will not work');
+}
+
+if (!config.coreLogistics.internalApiKey) {
+  console.warn('⚠️  CORE_LOGISTICS_INTERNAL_API_KEY not configured - wallet integration will not work');
 }
 
 export default config;

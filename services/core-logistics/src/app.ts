@@ -5,6 +5,8 @@ import routes from './routes';
 import { errorHandler, notFoundHandler } from './middleware/error.middleware';
 import { StorageUtil } from './utils/storage.util';
 import { logger } from './config/logger';
+import { internalApiAuth } from './middleware/internal-api.middleware';
+import { WalletController } from './controllers/wallet.controller';
 
 export function createApp(): Application {
   const app = express();
@@ -36,6 +38,15 @@ export function createApp(): Application {
     });
     next();
   });
+
+  // ==========================================
+  // INTERNAL SERVICE-TO-SERVICE ROUTES
+  // Must be mounted BEFORE main routes to bypass JWT auth
+  // ==========================================
+  const walletController = new WalletController();
+  app.get('/api/wallet/internal/balance', internalApiAuth, walletController.getWalletBalanceInternal);
+  app.post('/api/wallet/internal/deduct', internalApiAuth, walletController.deductFromWalletInternal);
+  app.post('/api/wallet/internal/credit', internalApiAuth, walletController.creditWalletInternal);
 
   // Mount routes
   app.use(routes);
