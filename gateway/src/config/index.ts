@@ -22,6 +22,11 @@ interface Config {
       healthCheck: string;
       timeout: number;
     };
+    food: {
+      url: string;
+      healthCheck: string;
+      timeout: number;
+    };
   };
   cors: {
     allowedOrigins: string[];
@@ -62,6 +67,11 @@ const config: Config = {
       url: process.env.PLATFORM_SERVICE_URL || 'http://localhost:3004',
       healthCheck: '/health',
       timeout: parseInt(process.env.SERVICE_TIMEOUT || '10000', 10),
+    },
+    food: {
+      url: process.env.FOOD_SERVICE_URL || 'http://localhost:3005',
+      healthCheck: '/health',
+      timeout: 60000,
     },
   },
 

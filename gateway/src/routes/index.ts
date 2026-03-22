@@ -249,5 +249,46 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.platform.url, undefined, 60000))
   );
 
+  // Food Service routes
+  app.use(
+    '/api/food',
+    createProxyMiddleware(createProxyOptions(config.services.food.url, undefined, 60000))
+  );
+
+  // Vendor registration (platform-service — platform-wide for all business types)
+  app.use(
+    '/api/vendor/register',
+    createProxyMiddleware(createProxyOptions(config.services.platform.url, undefined, 30000))
+  );
+
+  // Vendor admin management (platform-service)
+  app.use(
+    '/api/vendor/admin',
+    createProxyMiddleware(createProxyOptions(config.services.platform.url, undefined, 30000))
+  );
+
+  // Vendor internal (platform-service — used by food-service middleware)
+  app.use(
+    '/api/vendor/internal',
+    createProxyMiddleware(createProxyOptions(config.services.platform.url, undefined, 10000))
+  );
+
+  // Vendor store/profile/menu routes (food-service)
+  app.use(
+    '/api/vendor',
+    createProxyMiddleware(createProxyOptions(config.services.food.url, undefined, 60000))
+  );
+
+  app.use(
+    '/api/vendor-pickup',
+    createProxyMiddleware(createProxyOptions(config.services.food.url, undefined, 60000))
+  );
+
+  // Analytics routes (food-service)
+  app.use(
+    '/api/analytics',
+    createProxyMiddleware(createProxyOptions(config.services.food.url, undefined, 30000))
+  );
+
   logger.info('All proxy routes configured successfully');
 }

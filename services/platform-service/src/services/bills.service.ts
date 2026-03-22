@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../node_modules/.prisma/platform-client';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../utils/logger';
 import flutterwaveBillsService from './flutterwave-bills.service';

@@ -1,0 +1,253 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model FoodCategory {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @db.VarChar(100)
+  description String?
+  iconUrl     String?  @map("icon_url")
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("food_categories")
+}
+
+model FoodRestaurant {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId                 String   @unique @map("owner_id") @db.Uuid
+  vendorId                String?  @map("vendor_id") @db.Uuid
+  name                    String   @db.VarChar(200)
+  description             String?
+  cuisineTypes            String[] @map("cuisine_types")
+  logoUrl                 String?  @map("logo_url")
+  bannerUrl               String?  @map("banner_url")
+  address                 String
+  city                    String?  @db.VarChar(100)
+  state                   String?  @db.VarChar(100)
+  latitude                Decimal  @db.Decimal(10, 8)
+  longitude               Decimal  @db.Decimal(11, 8)
+  phone                   String?  @db.VarChar(20)
+  email                   String?  @db.VarChar(255)
+  isActive                Boolean  @default(true) @map("is_active")
+  isOpen                  Boolean  @default(false) @map("is_open")
+  isVerified              Boolean  @default(false) @map("is_verified")
+  averageRating           Decimal  @default(0.00) @map("average_rating") @db.Decimal(3, 2)
+  totalRatings            Int      @default(0) @map("total_ratings")
+  totalOrders             Int      @default(0) @map("total_orders")
+  operatingHours          Json     @default("{}") @map("operating_hours")
+  autoAcceptOrders        Boolean  @default(false) @map("auto_accept_orders")
+  estimatedPrepTimeMinutes Int     @default(20) @map("estimated_prep_time_minutes")
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  menuCategories FoodMenuCategory[]
+  menuItems      FoodMenuItem[]
+  extras         FoodItemExtra[]
+  orders         FoodOrder[]
+  members        FoodRestaurantMember[]
+  carts          FoodCart[]
+
+  @@map("food_restaurants")
+}
+
+model FoodRestaurantMember {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  restaurantId String         @map("restaurant_id") @db.Uuid
+  userId       String         @map("user_id") @db.Uuid
+  role         String         @default("owner") @db.VarChar(50)
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  restaurant   FoodRestaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([restaurantId, userId])
+  @@map("food_restaurant_members")
+}
+
+model FoodMenuCategory {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  restaurantId String         @map("restaurant_id") @db.Uuid
+  name         String         @db.VarChar(100)
+  description  String?
+  imageUrl     String?        @map("image_url")
+  isActive     Boolean        @default(true) @map("is_active")
+  sortOrder    Int            @default(0) @map("sort_order")
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  restaurant   FoodRestaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  items        FoodMenuItem[]
+
+  @@map("food_menu_categories")
+}
+
+model FoodMenuItem {
+  id                      String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  restaurantId            String         @map("restaurant_id") @db.Uuid
+  categoryId              String?        @map("category_id") @db.Uuid
+  name                    String         @db.VarChar(200)
+  description             String?
+  price                   Decimal        @db.Decimal(10, 2)
+  images                  String[]
+  isActive                Boolean        @default(true) @map("is_active")
+  isAvailable             Boolean        @default(true) @map("is_available")
+  stockQuantity           Int?           @map("stock_quantity")
+  preparationTimeMinutes  Int?           @map("preparation_time_minutes")
+  nutritionalInfo         Json?          @map("nutritional_info")
+  tags                    String[]
+  createdAt               DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  restaurant              FoodRestaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  category                FoodMenuCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  itemExtras              FoodMenuItemExtra[]
+  cartItems               FoodCartItem[]
+
+  @@map("food_menu_items")
+}
+
+model FoodItemExtra {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  restaurantId String         @map("restaurant_id") @db.Uuid
+  name         String         @db.VarChar(100)
+  description  String?
+  price        Decimal        @default(0.00) @db.Decimal(10, 2)
+  imageUrl     String?        @map("image_url")
+  isActive     Boolean        @default(true) @map("is_active")
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  restaurant   FoodRestaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  itemExtras   FoodMenuItemExtra[]
+
+  @@map("food_item_extras")
+}
+
+model FoodMenuItemExtra {
+  itemId     String       @map("item_id") @db.Uuid
+  extraId    String       @map("extra_id") @db.Uuid
+  isRequired Boolean      @default(false) @map("is_required")
+  item       FoodMenuItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  extra      FoodItemExtra @relation(fields: [extraId], references: [id], onDelete: Cascade)
+
+  @@id([itemId, extraId])
+  @@map("food_menu_item_extras")
+}
+
+model FoodFareConfig {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicleType        String   @unique @map("vehicle_type") @db.VarChar(50)
+  pricePerKm         Decimal  @map("price_per_km") @db.Decimal(10, 2)
+  minimumDeliveryFee Decimal  @map("minimum_delivery_fee") @db.Decimal(10, 2)
+  serviceFee         Decimal  @default(0.00) @map("service_fee") @db.Decimal(10, 2)
+  roundingFee        Decimal  @default(0.00) @map("rounding_fee") @db.Decimal(10, 2)
+  currencyCode       String   @default("NGN") @map("currency_code") @db.VarChar(10)
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("food_fare_config")
+}
+
+model FoodCart {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String         @map("user_id") @db.Uuid
+  restaurantId String         @map("restaurant_id") @db.Uuid
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  restaurant   FoodRestaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  items        FoodCartItem[]
+
+  @@unique([userId, restaurantId])
+  @@map("food_carts")
+}
+
+model FoodCartItem {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cartId              String   @map("cart_id") @db.Uuid
+  itemId              String   @map("item_id") @db.Uuid
+  quantity            Int      @default(1)
+  selectedExtras      String[] @map("selected_extras") @db.Uuid
+  specialInstructions String?  @map("special_instructions")
+  unitPrice           Decimal  @map("unit_price") @db.Decimal(10, 2)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  cart                FoodCart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  item                FoodMenuItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@map("food_cart_items")
+}
+
+model FoodOrder {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId                String   @map("customer_id") @db.Uuid
+  restaurantId              String   @map("restaurant_id") @db.Uuid
+  courierId                 String?  @map("courier_id") @db.Uuid
+  status                    String   @default("pending") @db.VarChar(50)
+  paymentMethod             String   @default("wallet") @map("payment_method") @db.VarChar(20)
+  paymentStatus             String   @default("pending") @map("payment_status") @db.VarChar(20)
+  subtotal                  Decimal  @db.Decimal(10, 2)
+  deliveryFee               Decimal  @default(0.00) @map("delivery_fee") @db.Decimal(10, 2)
+  serviceFee                Decimal  @default(0.00) @map("service_fee") @db.Decimal(10, 2)
+  roundingFee               Decimal  @default(0.00) @map("rounding_fee") @db.Decimal(10, 2)
+  totalAmount               Decimal  @map("total_amount") @db.Decimal(10, 2)
+  deliveryAddress           Json     @map("delivery_address")
+  specialInstructions       String?  @map("special_instructions")
+  estimatedPrepTimeMinutes  Int?     @map("estimated_prep_time_minutes")
+  estimatedDeliveryTimeMinutes Int?  @map("estimated_delivery_time_minutes")
+  acceptedAt                DateTime? @map("accepted_at") @db.Timestamptz
+  preparingAt               DateTime? @map("preparing_at") @db.Timestamptz
+  readyAt                   DateTime? @map("ready_at") @db.Timestamptz
+  pickedUpAt                DateTime? @map("picked_up_at") @db.Timestamptz
+  deliveredAt               DateTime? @map("delivered_at") @db.Timestamptz
+  cancelledAt               DateTime? @map("cancelled_at") @db.Timestamptz
+  walletTransactionId       String?  @map("wallet_transaction_id")
+  walletBalanceBefore       Decimal? @map("wallet_balance_before") @db.Decimal(10, 2)
+  walletBalanceAfter        Decimal? @map("wallet_balance_after") @db.Decimal(10, 2)
+  pickupCode                String?  @map("pickup_code") @db.VarChar(6)
+  deliveryCode              String?  @map("delivery_code") @db.VarChar(6)
+  rejectionReason           String?  @map("rejection_reason")
+  cancellationReason        String?  @map("cancellation_reason")
+  cancelledBy               String?  @map("cancelled_by") @db.VarChar(20)
+  excludedCourierIds        String[] @default([]) @map("excluded_courier_ids") @db.Uuid
+  courierSearchAttempts     Int      @default(0) @map("courier_search_attempts")
+  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                 DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  restaurant                FoodRestaurant @relation(fields: [restaurantId], references: [id])
+  orderItems                FoodOrderItem[]
+  statusHistory             FoodOrderStatusHistory[]
+
+  @@map("food_orders")
+}
+
+model FoodOrderItem {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId             String    @map("order_id") @db.Uuid
+  itemId              String    @map("item_id") @db.Uuid
+  itemName            String    @map("item_name") @db.VarChar(200)
+  itemPrice           Decimal   @map("item_price") @db.Decimal(10, 2)
+  quantity            Int       @default(1)
+  selectedExtras      Json      @default("[]") @map("selected_extras")
+  specialInstructions String?   @map("special_instructions")
+  subtotal            Decimal   @db.Decimal(10, 2)
+  order               FoodOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("food_order_items")
+}
+
+model FoodOrderStatusHistory {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId       String    @map("order_id") @db.Uuid
+  status        String    @db.VarChar(50)
+  previousStatus String?  @map("previous_status") @db.VarChar(50)
+  changedBy     String?   @map("changed_by") @db.Uuid
+  changedByRole String?   @map("changed_by_role") @db.VarChar(20)
+  notes         String?
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  order         FoodOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("food_order_status_history")
+}

@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../node_modules/.prisma/platform-client';
 import Database from '../utils/database';
 import CacheUtil from '../utils/cache';
 import logger from '../utils/logger';
