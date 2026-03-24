@@ -190,6 +190,7 @@ export class VendorOrderService {
     const allowedTransitions: Record<string, string[]> = {
       accepted: ['preparing'],
       preparing: ['ready_for_pickup'],
+      arrived_vendor: ['ready_for_pickup'], // courier may arrive before food is ready
     };
 
     const { data: order, error } = await supabase

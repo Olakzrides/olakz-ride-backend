@@ -76,17 +76,21 @@ export class CourierDeliveryService {
   static async verifyPickupCode(orderId: string, driverId: string, pickupCode: string): Promise<void> {
     const order = await this.getOrderForCourier(orderId, driverId);
 
-    if (!['arrived_vendor', 'ready_for_pickup', 'accepted', 'preparing'].includes(order.status)) {
-      throw new Error(`Cannot verify pickup code from status: ${order.status}`);
+    // Courier must have arrived at vendor AND vendor must have marked food ready
+    if (order.status !== 'arrived_vendor') {
+      throw new Error('You must mark arrived at vendor before verifying the pickup code');
     }
 
-    // pickup_code is stored on food_orders — generated when courier was assigned
-    // Vendor sees it in their app and reads it to the courier
+    // Check vendor has marked food ready (ready_at is set)
     const { data: fullOrder } = await supabase
       .from('food_orders')
-      .select('pickup_code')
+      .select('pickup_code, ready_at')
       .eq('id', orderId)
       .single();
+
+    if (!fullOrder?.ready_at) {
+      throw new Error('Cannot verify pickup code — vendor has not marked the order as ready yet');
+    }
 
     if (!fullOrder?.pickup_code) throw new Error('No pickup code found for this order');
     if (fullOrder.pickup_code !== pickupCode) throw new Error('Invalid pickup code');
@@ -105,8 +109,19 @@ export class CourierDeliveryService {
   static async confirmPickedUp(orderId: string, driverId: string, pickupPhotoFile?: Express.Multer.File): Promise<void> {
     const order = await this.getOrderForCourier(orderId, driverId);
 
-    if (!['arrived_vendor', 'ready_for_pickup'].includes(order.status)) {
-      throw new Error(`Cannot confirm pickup from status: ${order.status}`);
+    // Must be arrived_vendor AND food must be ready
+    if (order.status !== 'arrived_vendor') {
+      throw new Error('You must mark arrived at vendor before confirming pickup');
+    }
+
+    const { data: readyCheck } = await supabase
+      .from('food_orders')
+      .select('ready_at')
+      .eq('id', orderId)
+      .single();
+
+    if (!readyCheck?.ready_at) {
+      throw new Error('Cannot confirm pickup — vendor has not marked the order as ready yet');
     }
 
     const updateData: any = {

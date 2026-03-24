@@ -43,6 +43,11 @@ export class OrderService {
   static async placeOrder(params: PlaceOrderParams) {
     const { customerId, restaurantId, items, deliveryAddress, paymentMethod, specialInstructions } = params;
 
+    // 0. Validate items not empty
+    if (!items || items.length === 0) {
+      throw new Error('Order must contain at least one item');
+    }
+
     // 1. Validate restaurant
     const { data: restaurant, error: restError } = await supabase
       .from('food_restaurants')
@@ -53,6 +58,13 @@ export class OrderService {
     if (restError || !restaurant) throw new Error('Restaurant not found');
     if (!restaurant.is_active) throw new Error('Restaurant is not active');
     if (!restaurant.is_open) throw new Error('Restaurant is currently closed');
+
+    // Validate restaurant has valid coordinates
+    const restLat = parseFloat(restaurant.latitude);
+    const restLng = parseFloat(restaurant.longitude);
+    if (!restLat || !restLng || restLat === 0 || restLng === 0) {
+      throw new Error('Restaurant location is not configured. Please contact support.');
+    }
 
     // 2. Validate and price all items
     const itemIds = items.map((i) => i.item_id);
@@ -106,11 +118,11 @@ export class OrderService {
 
     // 4. Calculate delivery fare
     const fare = await FareService.calculateFare({
-      restaurantLat: parseFloat(restaurant.latitude),
-      restaurantLng: parseFloat(restaurant.longitude),
+      restaurantLat: restLat,
+      restaurantLng: restLng,
       deliveryLat: deliveryAddress.lat,
       deliveryLng: deliveryAddress.lng,
-      vehicleType: 'motorcycle', // default; Phase 2 will use courier vehicle type
+      vehicleType: 'motorcycle',
     });
 
     const totalAmount = subtotal + fare.deliveryFee + fare.serviceFee + fare.roundingFee;

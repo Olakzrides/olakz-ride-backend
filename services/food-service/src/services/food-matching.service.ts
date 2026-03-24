@@ -68,6 +68,19 @@ export class FoodMatchingService {
   ): Promise<void> {
     const { restaurantLat, restaurantLng, excludedCourierIds, roundNumber } = params;
 
+    // Guard: bail out immediately if order is no longer searching_courier.
+    // This kills stale search chains that fire after a courier has already accepted.
+    const { data: currentOrder } = await supabase
+      .from('food_orders')
+      .select('status')
+      .eq('id', orderId)
+      .single();
+
+    if (!currentOrder || currentOrder.status !== 'searching_courier') {
+      logger.info('Stale search chain — order is no longer searching, ignoring round', { orderId, roundNumber, status: currentOrder?.status });
+      return;
+    }
+
     if (roundNumber > MAX_SEARCH_ROUNDS) {
       await this.handleCourierNotFound(orderId);
       return;
