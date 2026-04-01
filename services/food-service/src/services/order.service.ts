@@ -199,6 +199,60 @@ export class OrderService {
     // 8. Record status history
     await this.recordStatusChange(order.id, 'pending', null, customerId, 'customer');
 
+    // 8b. Auto-cancel if vendor doesn't accept within 10 minutes
+    const PENDING_EXPIRY_MS = 10 * 60 * 1000;
+    setTimeout(async () => {
+      try {
+        const { data: currentOrder } = await supabase
+          .from('food_orders')
+          .select('status, payment_status, payment_method, total_amount, customer_id')
+          .eq('id', order.id)
+          .single();
+
+        if (!currentOrder || currentOrder.status !== 'pending') return; // already accepted/rejected/cancelled
+
+        // Auto-cancel
+        await supabase
+          .from('food_orders')
+          .update({
+            status: 'cancelled',
+            cancellation_reason: 'Order expired — vendor did not respond in time',
+            cancelled_by: 'system',
+            cancelled_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', order.id);
+
+        await this.recordStatusChange(order.id, 'cancelled', 'pending', 'system', 'system', 'Order expired — vendor did not respond in time');
+
+        // Refund wallet
+        if (currentOrder.payment_status === 'paid' && currentOrder.payment_method === 'wallet') {
+          const refundRef = `refund_expired_${order.id}_${Date.now()}`;
+          await WalletService.credit({
+            userId: currentOrder.customer_id,
+            amount: parseFloat(currentOrder.total_amount),
+            reference: refundRef,
+            description: 'Refund: order expired — vendor did not respond',
+          });
+          await supabase.from('food_orders').update({ payment_status: 'refunded' }).eq('id', order.id);
+        }
+
+        // Notify customer
+        const socketSvc = getFoodSocketService();
+        if (socketSvc) {
+          socketSvc.emitToCustomer(currentOrder.customer_id, 'food:order:status_update', {
+            order_id: order.id,
+            status: 'cancelled',
+            message: 'Your order was cancelled because the restaurant did not respond in time. Your payment has been refunded.',
+          });
+        }
+
+        logger.info('Order auto-cancelled due to vendor inactivity', { orderId: order.id });
+      } catch (err: any) {
+        logger.error('Failed to auto-cancel expired order', { orderId: order.id, error: err.message });
+      }
+    }, PENDING_EXPIRY_MS);
+
     // 9. Clear customer cart for this restaurant
     const { data: cart } = await supabase
       .from('food_carts')

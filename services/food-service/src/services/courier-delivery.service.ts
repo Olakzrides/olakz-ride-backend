@@ -165,6 +165,8 @@ export class CourierDeliveryService {
   }
 
   // ── 4. Courier arrived at delivery address ───────────────────────────────────
+  // This is a notification-only step — it does NOT change order status.
+  // Status only moves to arrived_delivery when the delivery code is verified.
 
   static async arrivedAtDelivery(orderId: string, driverId: string): Promise<void> {
     const order = await this.getOrderForCourier(orderId, driverId);
@@ -173,26 +175,20 @@ export class CourierDeliveryService {
       throw new Error(`Cannot mark arrived_delivery from status: ${order.status}`);
     }
 
-    await supabase
-      .from('food_orders')
-      .update({ status: 'arrived_delivery', arrived_delivery_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq('id', orderId);
-
-    await OrderService.recordStatusChange(orderId, 'arrived_delivery', order.status, driverId, 'courier');
-
-    this.emitStatusUpdate(order.customer_id, orderId, 'arrived_delivery', {
-      message: 'Courier has arrived at your location',
+    // Notify customer — but do NOT change status yet (code verification does that)
+    this.emitStatusUpdate(order.customer_id, orderId, 'courier_at_door', {
+      message: 'Courier has arrived at your location — please share your delivery code',
     });
 
     await FoodNotificationService.send({
       userId: order.customer_id,
       title: '📍 Courier Arrived',
-      body: 'Your courier is at your location. Please come out to collect your order.',
+      body: 'Your courier is at your location. Please share your delivery code.',
       data: { order_id: orderId, type: 'courier_arrived_delivery' },
       orderId,
     });
 
-    logger.info('Courier arrived at delivery address', { orderId, driverId });
+    logger.info('Courier arrived at delivery address (awaiting code verification)', { orderId, driverId });
   }
 
   // ── 5. Verify delivery code (customer shows code to courier) ─────────────────
@@ -208,6 +204,16 @@ export class CourierDeliveryService {
       throw new Error('Invalid delivery code');
     }
 
+    // Mark delivery code as verified by transitioning to arrived_delivery
+    // (ensures markDelivered can only be called after this step)
+    if (order.status === 'picked_up') {
+      await supabase
+        .from('food_orders')
+        .update({ status: 'arrived_delivery', arrived_delivery_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', orderId);
+      await OrderService.recordStatusChange(orderId, 'arrived_delivery', order.status, driverId, 'courier', 'delivery code verified');
+    }
+
     logger.info('Delivery code verified', { orderId, driverId });
   }
 
@@ -220,8 +226,8 @@ export class CourierDeliveryService {
   ): Promise<void> {
     const order = await this.getOrderForCourier(orderId, driverId);
 
-    if (!['arrived_delivery', 'picked_up'].includes(order.status)) {
-      throw new Error(`Cannot mark delivered from status: ${order.status}`);
+    if (order.status !== 'arrived_delivery') {
+      throw new Error('You must verify the delivery code before marking as delivered');
     }
 
     const updateData: any = {

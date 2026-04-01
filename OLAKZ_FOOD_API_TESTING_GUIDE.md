@@ -572,6 +572,22 @@ Error — insufficient balance `400`:
 }
 ```
 
+Error — empty items `400`:
+```json
+{
+  "success": false,
+  "message": "Order must contain at least one item"
+}
+```
+
+Error — restaurant location not set `400`:
+```json
+{
+  "success": false,
+  "message": "Restaurant location is not configured. Please contact support."
+}
+```
+
 Error — restaurant closed `400`:
 ```json
 {
@@ -951,6 +967,28 @@ Expected response `200`:
 
 ---
 
+## COURIER FLOW OVERVIEW
+
+```
+Vendor accepts order → courier search starts (up to 3 rounds × 10 min = 30 min max)
+Courier accepts → courier heads to vendor IMMEDIATELY
+Courier can mark arrived_vendor at ANY time (even before food is ready)
+Courier waits at vendor if food not ready
+  └─ If courier cancels while waiting → order back to searching_courier
+Vendor marks preparing → preparing
+Vendor marks ready_for_pickup → ready_for_pickup
+Vendor sees pickup_code in their app → reads it to courier
+Courier enters pickup_code → confirms handover → picked_up
+Courier heads to customer
+Courier marks arrived_delivery
+Customer shows delivery_code to courier
+Courier enters delivery_code → delivered
+```
+
+Consistent pattern: **courier always enters both codes** (pickup code from vendor, delivery code from customer).
+
+---
+
 ## 6. Courier — Food Delivery (Requires Auth — Courier/Driver Account)
 
 ### 6.1 Get Available Food Deliveries
@@ -998,6 +1036,8 @@ Note: Orders where this courier is in `excluded_courier_ids` will not appear.
 ---
 
 ### 6.2 Accept Food Delivery
+
+Once courier accepts, they are assigned to the order and should head to the vendor immediately. A `pickup_code` is generated at this point and stored on the order — the vendor will see it in their app and read it to the courier at handover.
 
 ```
 POST /api/food/courier/:order_id/accept
@@ -1059,11 +1099,14 @@ Expected response `200`:
 }
 ```
 
-Note: Rejection is logged only. The 30-second timeout handles re-broadcasting to the next batch.
+Note: Rejection is logged only. The timeout handles re-broadcasting to the next batch.
 
 ---
 
 ### 6.4 Cancel Delivery After Acceptance (Re-queuing)
+
+Courier can cancel from any of these statuses: `accepted`, `preparing`, `ready_for_pickup`, `arrived_vendor`.
+This covers the case where courier is already waiting at the vendor but decides to cancel.
 
 ```
 POST /api/food/courier/:order_id/cancel
@@ -1088,11 +1131,11 @@ Expected response `200`:
 ```
 
 What happens after cancel:
-1. Assignment record updated to `cancelled` with reason
-2. Courier added to `excluded_courier_ids` on the order
-3. Order status reverts to `searching_courier`
-4. Matching service re-runs immediately (excluding this courier)
-5. After 3 failed rounds → order status becomes `courier_not_found`
+- Courier added to `excluded_courier_ids` on the order
+- Order status reverts to `searching_courier`
+- Matching service re-runs immediately (excluding this courier)
+- After 3 failed rounds (10 min each) → order status becomes `courier_not_found`
+- If payment was via wallet and `courier_not_found` → auto-refunded to customer wallet
 
 Socket events emitted:
 - Customer (`/food-orders`): `food:order:status_update` — `{ order_id, status: "searching_courier", message: "Finding another courier for your order" }`
@@ -1101,6 +1144,8 @@ Socket events emitted:
 ---
 
 ### 6.5 Get Active Deliveries
+
+Returns orders in statuses: `accepted`, `preparing`, `ready_for_pickup`, `arrived_vendor`, `picked_up`.
 
 ```
 GET /api/food/courier/active
@@ -1138,9 +1183,11 @@ Expected response `200`:
 
 ## 7. Vendor Pickup (Requires Auth)
 
+The `food_vendor_pickups` table tracks the pickup record. The `pickup_code` is stored on `food_orders` (generated when courier accepts) — the vendor sees it in their order details and reads it to the courier at handover.
+
 ### 7.1 Create Pickup Request (Vendor)
 
-Normally auto-created when vendor marks order `ready_for_pickup`. Can also be created manually.
+Auto-created when vendor marks order `ready_for_pickup`. Can also be created manually.
 
 ```
 POST /api/vendor-pickup/request
@@ -1168,15 +1215,12 @@ Expected response `201`:
       "vendor_id": "uuid",
       "restaurant_id": "uuid",
       "status": "pending",
-      "pickup_code": "847291",
       "special_instructions": "Fragile items — handle with care",
       "created_at": "2026-03-17T10:10:00.000Z"
     }
   }
 }
 ```
-
-Note: `pickup_code` is shown to the vendor and must be given to the courier at pickup.
 
 ---
 
@@ -1206,7 +1250,6 @@ Expected response `200`:
         "id": "uuid",
         "order_id": "uuid",
         "status": "pending",
-        "pickup_code": "847291",
         "created_at": "2026-03-17T10:10:00.000Z",
         "order": {
           "id": "uuid",
@@ -1241,11 +1284,8 @@ Expected response `200`:
     "pickup": {
       "id": "uuid",
       "order_id": "uuid",
-      "courier_id": null,
       "status": "pending",
-      "pickup_code": "847291",
       "special_instructions": null,
-      "courier_arrived_at": null,
       "picked_up_at": null,
       "created_at": "2026-03-17T10:10:00.000Z",
       "order": { "id": "uuid", "status": "ready_for_pickup", "total_amount": "3500.00" }
@@ -1280,7 +1320,7 @@ Expected response `200`:
 }
 ```
 
-Socket event emitted to courier (`/courier-deliveries`): `food:delivery:ready_for_pickup` — `{ order_id, pickup_id, pickup_code, special_instructions }`
+Socket event emitted to courier (`/courier-deliveries`): `food:delivery:ready_for_pickup` — `{ order_id, pickup_id, special_instructions }`
 
 ---
 
@@ -1307,187 +1347,6 @@ Expected response `200`:
   "data": null
 }
 ```
-
----
-
-### 7.6 Get Available Pickups (Courier)
-
-```
-GET /api/vendor-pickup/available
-Authorization: Bearer <courier_token>
-```
-
-Query params (optional):
-```
-lat=6.5244
-lng=3.3792
-radius=15
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "data": {
-    "pickups": [
-      {
-        "id": "uuid",
-        "order_id": "uuid",
-        "status": "pending",
-        "special_instructions": null,
-        "created_at": "2026-03-17T10:10:00.000Z",
-        "restaurant": {
-          "id": "uuid",
-          "name": "Mama's Kitchen",
-          "address": "123 Lagos Street",
-          "latitude": "6.5244",
-          "longitude": "3.3792"
-        },
-        "order": {
-          "id": "uuid",
-          "delivery_address": { "address": "45 Admiralty Way" },
-          "delivery_fee": "450.00"
-        }
-      }
-    ]
-  }
-}
-```
-
----
-
-### 7.7 Accept Pickup (Courier)
-
-```
-POST /api/vendor-pickup/accept
-Authorization: Bearer <courier_token>
-Content-Type: application/json
-```
-
-Request body:
-```json
-{
-  "pickup_id": "uuid-of-pickup",
-  "estimated_arrival_time": 8
-}
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "message": "Pickup accepted",
-  "data": null
-}
-```
-
-Socket event emitted to pickup room (`/vendor-pickups`): `vendor_pickup:courier_assigned` — `{ pickup_id, courier_id, estimated_arrival_minutes }`
-
----
-
-### 7.8 Update Pickup Status (Courier)
-
-Valid transitions: `courier_assigned` → `courier_arrived` → `picked_up`
-
-```
-PUT /api/vendor-pickup/:pickup_id/status
-Authorization: Bearer <courier_token>
-Content-Type: application/json
-```
-
-Request body:
-```json
-{
-  "status": "courier_arrived",
-  "notes": "Waiting at the entrance"
-}
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "message": "Pickup status updated to courier_arrived",
-  "data": null
-}
-```
-
-Socket events emitted to pickup room:
-- On `courier_arrived`: `vendor_pickup:courier_arrived`
-- On `picked_up`: `vendor_pickup:package_picked_up`
-
-Error — invalid transition `400`:
-```json
-{
-  "success": false,
-  "message": "Cannot transition pickup from pending to courier_arrived"
-}
-```
-
----
-
-### 7.9 Verify Pickup Code (Courier)
-
-Courier enters the 6-digit code given by the vendor. On success, pickup auto-advances to `picked_up`.
-
-```
-POST /api/vendor-pickup/:pickup_id/verify-code
-Authorization: Bearer <courier_token>
-Content-Type: application/json
-```
-
-Request body:
-```json
-{
-  "pickup_code": "847291"
-}
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "message": "Pickup code verified",
-  "data": { "verified": true }
-}
-```
-
-Error — wrong code `400`:
-```json
-{
-  "success": false,
-  "message": "Invalid pickup code"
-}
-```
-
----
-
-### 7.10 Update Courier Location During Pickup
-
-```
-POST /api/vendor-pickup/:pickup_id/location
-Authorization: Bearer <courier_token>
-Content-Type: application/json
-```
-
-Request body:
-```json
-{
-  "lat": 6.5244,
-  "lng": 3.3792
-}
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "message": "Location updated",
-  "data": null
-}
-```
-
-Socket event emitted to pickup room: `vendor_pickup:courier_location` — `{ pickup_id, lat, lng, updated_at }`
 
 ---
 
@@ -1525,7 +1384,30 @@ const socket = io('http://localhost:3005/food-orders', {
 | Event | When |
 |---|---|
 | `food:delivery:new_request` | New food delivery available (broadcast) |
-| `food:delivery:request_expired` | 30s timeout — no response needed |
+| `food:delivery:request_expired` | 10-min round timeout — no response needed |
+| `food:delivery:accepted_by_another` | Another courier took it |
+| `food:delivery:ready_for_pickup` | Vendor marked order ready |
+
+---
+
+## Phase 2 Testing Flow (Recommended Order)
+
+1. Run Phase 2 migration in Supabase SQL editor
+2. Connect courier socket to `/courier-deliveries` with courier JWT
+3. Connect customer socket to `/food-orders` with customer JWT
+4. Connect vendor socket to `/vendor-orders` with vendor JWT
+5. `POST /api/food/order` — customer places order
+6. Vendor receives `food:order:new_request` socket event
+7. `POST /api/vendor/orders/:id/accept` — vendor accepts → courier search starts immediately
+8. Courier receives `food:delivery:new_request` socket event
+9. `GET /api/food/courier/available` — courier sees the order
+10. `POST /api/food/courier/:id/accept` — courier accepts → courier heads to vendor immediately
+11. Customer receives `food:order:courier_assigned` socket event
+12. `PUT /api/vendor/orders/:id/status` body `{ "status": "preparing" }` — vendor starts preparing
+13. `PUT /api/vendor/orders/:id/status` body `{ "status": "ready_for_pickup" }` — vendor marks ready → pickup record auto-created
+14. `GET /api/vendor-pickup/vendor/requests` — vendor sees pickup record
+15. Test re-queuing: accept an order, then `POST /api/food/courier/:id/cancel`
+16. Verify customer gets `searching_courier` socket event, vendor gets `courier_dropped`esponse needed |
 | `food:delivery:accepted_by_another` | Another courier took it |
 | `food:delivery:ready_for_pickup` | Vendor marked order ready |
 
@@ -1569,16 +1451,32 @@ const socket = io('http://localhost:3005/food-orders', {
 ### Prerequisites
 
 1. Run migration in Supabase SQL editor: `services/food-service/prisma/migrations/20260318_phase3_delivery_execution/migration.sql`
-2. Have an active order in `accepted` or `ready_for_pickup` status with a courier assigned
-3. Customer's `delivery_code` is returned in the order details response
+2. Have an active order in `accepted` status with a courier assigned
+3. Customer's `delivery_code` is visible in the order details response — customer holds this and gives it to courier at delivery
 
 ---
 
 ## 8. Courier Delivery Execution (Requires Auth — Courier Account)
 
-Full flow: `accepted` → `arrived_vendor` → verify pickup code → `picked_up` → `arrived_delivery` → verify delivery code → `delivered`
+Full flow:
+```
+accepted → arrived_vendor → [wait if needed] → verify pickup_code → picked_up
+→ arrived_delivery → verify delivery_code → delivered
+```
+
+Key rules:
+- Courier can mark `arrived_vendor` at ANY time after accepting — even before food is ready
+- If courier cancels while waiting at vendor (`arrived_vendor` status) → order goes back to `searching_courier`
+- Vendor holds the `pickup_code` (visible in their order details) and reads it to the courier
+- Courier enters the `pickup_code` to confirm handover → then calls `picked-up`
+- Customer holds the `delivery_code` (visible in their order details) and gives it to the courier
+- Courier enters the `delivery_code` to confirm delivery → then calls `delivered`
+
+---
 
 ### 8.1 Arrived at Restaurant
+
+Courier can call this at any time after accepting — even if food is not ready yet.
 
 ```
 POST /api/food/courier/:order_id/arrived-vendor
@@ -1586,6 +1484,8 @@ Authorization: Bearer <courier_token>
 ```
 
 No request body needed.
+
+Valid from statuses: `accepted`, `preparing`, `ready_for_pickup`
 
 Expected response `200`:
 ```json
@@ -1597,10 +1497,13 @@ Expected response `200`:
 ```
 
 Socket event emitted to customer (`/food-orders`): `food:order:status_update` — `{ order_id, status: "arrived_vendor", message: "Courier has arrived at the restaurant" }`
+Socket event emitted to vendor (`/vendor-orders`): `food:order:status_update` — `{ order_id, status: "arrived_vendor" }`
 
 ---
 
-### 8.2 Verify Pickup Code (Vendor gives code to courier)
+### 8.2 Verify Pickup Code
+
+Vendor sees the `pickup_code` in their order details and reads it to the courier. Courier enters it here to confirm handover.
 
 ```
 POST /api/food/courier/:order_id/verify-pickup
@@ -1614,6 +1517,8 @@ Request body:
   "pickup_code": "847291"
 }
 ```
+
+Valid from statuses: `accepted`, `preparing`, `ready_for_pickup`, `arrived_vendor`
 
 Expected response `200`:
 ```json
@@ -1632,9 +1537,13 @@ Error — wrong code `400`:
 }
 ```
 
+Note: The `pickup_code` is stored on `food_orders` and generated when the courier accepts. The vendor sees it in their order detail view. The courier never sees it — they only enter what the vendor tells them.
+
 ---
 
 ### 8.3 Confirm Picked Up
+
+Call this after verifying the pickup code. Order moves to `picked_up`.
 
 ```
 POST /api/food/courier/:order_id/picked-up
@@ -1646,6 +1555,8 @@ Request body (photo optional):
 ```
 photo: <image file>   (optional — jpeg/png/webp, max 5MB)
 ```
+
+Valid from statuses: `arrived_vendor`, `ready_for_pickup`
 
 Expected response `200`:
 ```json
@@ -1703,6 +1614,8 @@ Authorization: Bearer <courier_token>
 
 No request body needed.
 
+Valid from status: `picked_up`
+
 Expected response `200`:
 ```json
 {
@@ -1712,13 +1625,13 @@ Expected response `200`:
 }
 ```
 
-Push notification sent to customer: "Your courier is at your location."
+Push notification sent to customer: "Your courier is at your location. Please come out to collect your order."
 
 ---
 
-### 8.6 Verify Delivery Code (Customer shows code to courier)
+### 8.6 Verify Delivery Code
 
-The `delivery_code` is a 4-digit code visible to the customer in their order details.
+Customer holds the `delivery_code` (visible in their order details). Customer gives it to the courier. Courier enters it here.
 
 ```
 POST /api/food/courier/:order_id/verify-delivery
@@ -1732,6 +1645,8 @@ Request body:
   "delivery_code": "4821"
 }
 ```
+
+Valid from statuses: `picked_up`, `arrived_delivery`
 
 Expected response `200`:
 ```json
@@ -1754,6 +1669,8 @@ Error — wrong code `400`:
 
 ### 8.7 Mark Delivered
 
+Call this after verifying the delivery code. Order moves to `delivered`.
+
 ```
 POST /api/food/courier/:order_id/delivered
 Authorization: Bearer <courier_token>
@@ -1764,6 +1681,8 @@ Request body (photo optional):
 ```
 photo: <image file>   (optional)
 ```
+
+Valid from statuses: `arrived_delivery`, `picked_up`
 
 Expected response `200`:
 ```json
@@ -1946,19 +1865,27 @@ Expected response `200`:
 
 1. Run Phase 3 migration in Supabase SQL editor
 2. Place an order and have vendor accept it (Phase 1 flow)
-3. Have courier accept the delivery (Phase 2 flow) — note the `delivery_code` from order details
-4. `POST /api/food/courier/:id/arrived-vendor` — courier arrives at restaurant
-5. `POST /api/vendor-pickup/:id/ready` — vendor marks order ready (get `pickup_code` from response)
-6. `POST /api/food/courier/:id/verify-pickup` — courier enters `pickup_code`
-7. `POST /api/food/courier/:id/picked-up` — courier confirms pickup (optionally with photo)
-8. `POST /api/food/courier/location` — send a few location updates, verify customer socket receives `food:order:courier_location`
-9. `POST /api/food/courier/:id/arrived-delivery` — courier arrives at customer
-10. `POST /api/food/courier/:id/verify-delivery` — courier enters `delivery_code` from customer
-11. `POST /api/food/courier/:id/delivered` — mark delivered (optionally with photo)
-12. `GET /api/food/orders/:id` — customer sees status = `delivered`
-13. `POST /api/food/orders/:id/rate` — customer rates the order
-14. `GET /api/food/courier/earnings` — courier sees earnings record
-15. `GET /api/food/courier/history` — courier sees delivery in history
+3. Have courier accept the delivery (Phase 2 flow)
+4. Note the `delivery_code` from `GET /api/food/orders/:id` — customer holds this
+5. `POST /api/food/courier/:id/arrived-vendor` — courier arrives at restaurant (can do this before food is ready)
+6. Vendor marks order preparing: `PUT /api/vendor/orders/:id/status` body `{ "status": "preparing" }`
+7. Vendor marks order ready: `PUT /api/vendor/orders/:id/status` body `{ "status": "ready_for_pickup" }`
+8. Vendor checks their order details to get the `pickup_code` — reads it to courier
+9. `POST /api/food/courier/:id/verify-pickup` — courier enters `pickup_code` from vendor
+10. `POST /api/food/courier/:id/picked-up` — courier confirms pickup (optionally with photo)
+11. `POST /api/food/courier/location` — send a few location updates, verify customer socket receives `food:order:courier_location`
+12. `POST /api/food/courier/:id/arrived-delivery` — courier arrives at customer
+13. Customer checks their order details for `delivery_code` — gives it to courier
+14. `POST /api/food/courier/:id/verify-delivery` — courier enters `delivery_code` from customer
+15. `POST /api/food/courier/:id/delivered` — mark delivered (optionally with photo)
+16. `GET /api/food/orders/:id` — customer sees status = `delivered`
+17. `POST /api/food/orders/:id/rate` — customer rates the order
+18. `GET /api/food/courier/earnings` — courier sees earnings record
+19. `GET /api/food/courier/history` — courier sees delivery in history
+
+Test cancel while waiting at vendor:
+- Accept an order, call `arrived-vendor`, then `POST /api/food/courier/:id/cancel`
+- Verify order goes back to `searching_courier`, customer and vendor get socket events
 
 ---
 
@@ -2323,8 +2250,13 @@ Request body (all fields optional):
   "email": "mama@kitchen.com",
   "address": "456 Victoria Island",
   "city": "Lagos",
-  "state": "Lagos"
+  "state": "Lagos",
+  "latitude": 6.5244,
+  "longitude": 3.3792
 }
+```
+
+Note: `latitude` and `longitude` are required for fare calculation and courier matching. Orders will be rejected if the restaurant has coordinates of `0,0`. Always set these when creating or updating a restaurant profile.
 ```
 
 Expected response `200`:
