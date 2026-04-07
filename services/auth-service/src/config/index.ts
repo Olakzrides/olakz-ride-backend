@@ -66,8 +66,8 @@ const config: Config = {
 
   jwt: {
     secret: process.env.JWT_SECRET || '',
-    accessTokenExpiry: process.env.JWT_ACCESS_TOKEN_EXPIRY || '15m',
-    refreshTokenExpiry: process.env.JWT_REFRESH_TOKEN_EXPIRY || '7d',
+    accessTokenExpiry: process.env.JWT_ACCESS_TOKEN_EXPIRY || '30d',
+    refreshTokenExpiry: process.env.JWT_REFRESH_TOKEN_EXPIRY || '90d',
   },
 
   otp: {

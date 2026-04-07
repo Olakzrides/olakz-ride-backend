@@ -226,6 +226,32 @@ export class VendorRegistrationService {
       }
     }
 
+    // Auto-provision marketplace_stores row for marketplace-type vendors
+    if (vendor.business_type === 'marketplace') {
+      const marketplaceServiceUrl = process.env.MARKETPLACE_SERVICE_URL || 'http://localhost:3006';
+      const internalKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
+      try {
+        await axios.post(
+          `${marketplaceServiceUrl}/api/internal/marketplace/vendor/provision`,
+          {
+            owner_id: vendor.user_id,
+            vendor_id: vendor.id,
+            business_name: vendor.business_name,
+            address: vendor.address || '',
+            city: vendor.city,
+            state: vendor.state,
+            phone: vendor.phone,
+            email: vendor.email,
+            logo_url: vendor.logo_url,
+          },
+          { headers: { 'x-internal-api-key': internalKey }, timeout: 8000 }
+        );
+        logger.info('Marketplace store provisioned for vendor:', vendor.user_id);
+      } catch (err: any) {
+        logger.error('Failed to provision marketplace store for vendor (non-fatal):', err.message);
+      }
+    }
+
     return vendor;
   }
 

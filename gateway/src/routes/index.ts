@@ -290,5 +290,11 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.food.url, undefined, 30000))
   );
 
+  // Marketplace Service routes
+  app.use(
+    '/api/marketplace',
+    createProxyMiddleware(createProxyOptions(config.services.marketplace.url, undefined, 60000))
+  );
+
   logger.info('All proxy routes configured successfully');
 }

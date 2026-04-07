@@ -27,6 +27,11 @@ interface Config {
       healthCheck: string;
       timeout: number;
     };
+    marketplace: {
+      url: string;
+      healthCheck: string;
+      timeout: number;
+    };
   };
   cors: {
     allowedOrigins: string[];
@@ -70,6 +75,11 @@ const config: Config = {
     },
     food: {
       url: process.env.FOOD_SERVICE_URL || 'http://localhost:3005',
+      healthCheck: '/health',
+      timeout: 60000,
+    },
+    marketplace: {
+      url: process.env.MARKETPLACE_SERVICE_URL || 'http://localhost:3006',
       healthCheck: '/health',
       timeout: 60000,
     },
