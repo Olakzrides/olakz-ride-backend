@@ -1,17 +1,31 @@
-import { supabase } from '../config/database';
+import axios, { AxiosInstance } from 'axios';
 import { logger } from '../config/logger';
-import { FlutterwaveService } from './flutterwave.service';
+import { config } from '../config/env';
 
+/**
+ * PaymentCardsService — Phase 3 migration
+ *
+ * All card operations are now delegated to payment-service.
+ * This class is kept as a thin proxy so existing callers in core-logistics
+ * (wallet.controller.ts, payment.service.ts) don't need to change their imports.
+ */
 export class PaymentCardsService {
-  private flutterwaveService: FlutterwaveService;
+  private client: AxiosInstance;
+  private internalApiKey: string;
 
   constructor() {
-    this.flutterwaveService = new FlutterwaveService();
+    this.internalApiKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
+
+    this.client = axios.create({
+      baseURL: config.paymentServiceUrl,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-api-key': this.internalApiKey,
+      },
+      timeout: 30000,
+    });
   }
 
-  /**
-   * Add a new payment card
-   */
   async addCard(data: {
     userId: string;
     cardToken: string;
@@ -28,174 +42,75 @@ export class PaymentCardsService {
     metadata?: any;
   }): Promise<any> {
     try {
-      // If this is set as default, unset other default cards
-      if (data.isDefault) {
-        await this.unsetDefaultCards(data.userId);
-      }
-
-      const { data: card, error } = await supabase
-        .from('payment_cards')
-        .insert({
-          user_id: data.userId,
-          card_token: data.cardToken,
-          authorization_code: data.authorizationCode,
-          card_last4: data.cardLast4,
-          card_brand: data.cardBrand,
-          card_type: data.cardType,
-          card_exp_month: data.cardExpMonth,
-          card_exp_year: data.cardExpYear,
-          cardholder_name: data.cardholderName,
-          bank_name: data.bankName,
-          country_code: data.countryCode,
-          is_default: data.isDefault || false,
-          is_active: true,
-          provider: 'flutterwave',
-          metadata: data.metadata || {},
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      logger.info('Payment card added', { userId: data.userId, cardLast4: data.cardLast4 });
-      return card;
-    } catch (error) {
-      logger.error('Add payment card error:', error);
-      throw error;
+      const response = await this.client.post('/api/payment/cards', data, {
+        headers: { 'x-user-id': data.userId },
+      });
+      return response.data?.data;
+    } catch (error: any) {
+      logger.error('Add card (via payment-service) error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to add card');
     }
   }
 
-  /**
-   * Get user's payment cards
-   */
-  async getUserCards(userId: string, activeOnly: boolean = true): Promise<any[]> {
+  async getUserCards(userId: string, _activeOnly: boolean = true): Promise<any[]> {
     try {
-      let query = supabase
-        .from('payment_cards')
-        .select('*')
-        .eq('user_id', userId)
-        .order('is_default', { ascending: false })
-        .order('created_at', { ascending: false });
-
-      if (activeOnly) {
-        query = query.eq('is_active', true);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      logger.error('Get user cards error:', error);
-      throw error;
+      const response = await this.client.get('/api/payment/cards', {
+        headers: { 'x-user-id': userId },
+      });
+      return response.data?.data?.cards || [];
+    } catch (error: any) {
+      logger.error('Get user cards (via payment-service) error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to get cards');
     }
   }
 
-  /**
-   * Get a specific card
-   */
   async getCard(cardId: string, userId: string): Promise<any> {
     try {
-      const { data, error } = await supabase
-        .from('payment_cards')
-        .select('*')
-        .eq('id', cardId)
-        .eq('user_id', userId)
-        .single();
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      logger.error('Get card error:', error);
-      throw error;
+      const response = await this.client.get(`/api/payment/cards/${cardId}`, {
+        headers: { 'x-user-id': userId },
+      });
+      return response.data?.data;
+    } catch (error: any) {
+      logger.error('Get card (via payment-service) error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to get card');
     }
   }
 
-  /**
-   * Get default card
-   */
   async getDefaultCard(userId: string): Promise<any | null> {
     try {
-      const { data, error} = await supabase
-        .from('payment_cards')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('is_default', true)
-        .eq('is_active', true)
-        .single();
-
-      if (error && error.code !== 'PGRST116') throw error; // PGRST116 = no rows
-      return data;
-    } catch (error) {
-      logger.error('Get default card error:', error);
-      throw error;
+      const cards = await this.getUserCards(userId);
+      return cards.find((c: any) => c.is_default) || null;
+    } catch (error: any) {
+      logger.error('Get default card (via payment-service) error:', error.response?.data || error.message);
+      return null;
     }
   }
 
-  /**
-   * Set a card as default
-   */
   async setDefaultCard(cardId: string, userId: string): Promise<any> {
     try {
-      // Verify card ownership
-      const card = await this.getCard(cardId, userId);
-      if (!card) {
-        throw new Error('Card not found');
-      }
-
-      // Unset other default cards
-      await this.unsetDefaultCards(userId);
-
-      // Set this card as default
-      const { data, error } = await supabase
-        .from('payment_cards')
-        .update({
-          is_default: true,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', cardId)
-        .eq('user_id', userId)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      logger.info('Default card set', { userId, cardId });
-      return data;
-    } catch (error) {
-      logger.error('Set default card error:', error);
-      throw error;
+      const response = await this.client.patch(
+        `/api/payment/cards/${cardId}/default`,
+        {},
+        { headers: { 'x-user-id': userId } }
+      );
+      return response.data?.data;
+    } catch (error: any) {
+      logger.error('Set default card (via payment-service) error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to set default card');
     }
   }
 
-  /**
-   * Delete a card
-   */
   async deleteCard(cardId: string, userId: string): Promise<void> {
     try {
-      // Soft delete by setting is_active to false
-      const { error } = await supabase
-        .from('payment_cards')
-        .update({
-          is_active: false,
-          is_default: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', cardId)
-        .eq('user_id', userId);
-
-      if (error) throw error;
-
-      logger.info('Payment card deleted', { userId, cardId });
-    } catch (error) {
-      logger.error('Delete card error:', error);
-      throw error;
+      await this.client.delete(`/api/payment/cards/${cardId}`, {
+        headers: { 'x-user-id': userId },
+      });
+    } catch (error: any) {
+      logger.error('Delete card (via payment-service) error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to delete card');
     }
   }
 
-  /**
-   * Charge a saved card
-   */
   async chargeCard(data: {
     cardId: string;
     userId: string;
@@ -205,66 +120,22 @@ export class PaymentCardsService {
     txRef: string;
   }): Promise<any> {
     try {
-      // Get card details
-      const card = await this.getCard(data.cardId, data.userId);
-      if (!card) {
-        throw new Error('Card not found');
-      }
-
-      if (!card.is_active) {
-        throw new Error('Card is not active');
-      }
-
-      // Use the email from metadata (Flutterwave customer email) if available
-      // Flutterwave requires the SAME email used during tokenization
-      const chargeEmail = card.metadata?.customer_email || data.email;
-
-      logger.info('Charging card with email:', {
-        providedEmail: data.email,
-        storedEmail: card.metadata?.customer_email,
-        usingEmail: chargeEmail,
-      });
-
-      // Charge using Flutterwave
-      const chargeResponse = await this.flutterwaveService.chargeTokenizedCard({
-        token: card.card_token,
-        currency: data.currency,
-        amount: data.amount,
-        email: chargeEmail,
-        tx_ref: data.txRef,
-        country: card.country_code || 'NG',
-      });
-
-      logger.info('Card charged successfully', {
-        userId: data.userId,
-        cardId: data.cardId,
-        amount: data.amount,
-        txRef: data.txRef,
-      });
-
-      return chargeResponse;
-    } catch (error) {
-      logger.error('Charge card error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Unset all default cards for a user
-   */
-  private async unsetDefaultCards(userId: string): Promise<void> {
-    try {
-      await supabase
-        .from('payment_cards')
-        .update({
-          is_default: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', userId)
-        .eq('is_default', true);
-    } catch (error) {
-      logger.error('Unset default cards error:', error);
-      // Don't throw, this is a helper function
+      const response = await this.client.post(
+        '/api/internal/payment/flutterwave/charge-tokenized',
+        {
+          cardId: data.cardId,
+          userId: data.userId,
+          amount: data.amount,
+          currency: data.currency,
+          email: data.email,
+          tx_ref: data.txRef,
+        },
+        { headers: { 'x-user-id': data.userId } }
+      );
+      return response.data?.data;
+    } catch (error: any) {
+      logger.error('Charge card (via payment-service) error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to charge card');
     }
   }
 }

@@ -150,10 +150,10 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))
   );
 
-  // Payment cards routes (Phase 2.1)
+  // Payment Service routes (wallet top-up, cards)
   app.use(
     '/api/payment',
-    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+    createProxyMiddleware(createProxyOptions(config.services.payment.url, undefined, 30000))
   );
 
   // Support routes (Phase 3.3)

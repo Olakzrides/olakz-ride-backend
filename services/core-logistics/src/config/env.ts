@@ -22,6 +22,7 @@ export const config = {
 
   // Service URLs
   authServiceUrl: process.env.AUTH_SERVICE_URL || 'http://localhost:3003',
+  paymentServiceUrl: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3007',
 
   // Google Maps
   googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || '',

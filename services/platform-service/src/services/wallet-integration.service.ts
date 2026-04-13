@@ -49,17 +49,17 @@ export class WalletIntegrationService {
 
   constructor() {
     this.client = axios.create({
-      baseURL: config.coreLogistics.url,
+      baseURL: config.payment.url,
       headers: {
         'Content-Type': 'application/json',
-        'X-Internal-API-Key': config.coreLogistics.internalApiKey,
+        'x-internal-api-key': config.payment.internalApiKey,
       },
       timeout: 30000,
     });
 
     logger.info('WalletIntegrationService initialized', {
-      coreLogisticsUrl: config.coreLogistics.url,
-      hasApiKey: !!config.coreLogistics.internalApiKey,
+      paymentServiceUrl: config.payment.url,
+      hasApiKey: !!config.payment.internalApiKey,
     });
   }
 
@@ -71,10 +71,10 @@ export class WalletIntegrationService {
       logger.info('Fetching wallet balance', { userId, currencyCode });
 
       const response = await this.client.get<WalletBalanceResponse>(
-        `/api/wallet/internal/balance`,
+        `/api/internal/payment/wallet/balance`,
         {
           params: { currency: currencyCode },
-          headers: { 'X-User-Id': userId },
+          headers: { 'x-user-id': userId },
         }
       );
 
@@ -105,7 +105,7 @@ export class WalletIntegrationService {
       });
 
       const response = await this.client.post<DeductWalletResponse>(
-        `/api/wallet/internal/deduct`,
+        `/api/internal/payment/wallet/deduct`,
         {
           amount: payload.amount,
           currency_code: payload.currencyCode,
@@ -114,7 +114,7 @@ export class WalletIntegrationService {
           transaction_type: 'debit',
         },
         {
-          headers: { 'X-User-Id': payload.userId },
+          headers: { 'x-user-id': payload.userId },
         }
       );
 
@@ -150,7 +150,7 @@ export class WalletIntegrationService {
       });
 
       await this.client.post(
-        `/api/wallet/internal/credit`,
+        `/api/internal/payment/wallet/credit`,
         {
           amount: payload.amount,
           currency_code: payload.currencyCode,
@@ -159,7 +159,7 @@ export class WalletIntegrationService {
           transaction_type: 'credit',
         },
         {
-          headers: { 'X-User-Id': payload.userId },
+          headers: { 'x-user-id': payload.userId },
         }
       );
 

@@ -8,11 +8,11 @@ const INTERNAL_HEADERS = {
 };
 
 export class WalletService {
-  private static baseUrl = config.services.coreLogistics;
+  private static get baseUrl() { return config.services.payment; }
 
   static async getBalance(userId: string, currencyCode = 'NGN'): Promise<number> {
     const response = await axios.get(
-      `${this.baseUrl}/api/wallet/internal/balance`,
+      `${this.baseUrl}/api/internal/payment/wallet/balance`,
       {
         headers: { ...INTERNAL_HEADERS, 'x-user-id': userId },
         params: { currency: currencyCode },
@@ -30,13 +30,12 @@ export class WalletService {
     currencyCode?: string;
   }): Promise<{ transactionId: string; newBalance: number }> {
     const response = await axios.post(
-      `${this.baseUrl}/api/wallet/internal/deduct`,
+      `${this.baseUrl}/api/internal/payment/wallet/deduct`,
       {
         amount: params.amount,
         currency_code: params.currencyCode || 'NGN',
         reference: params.reference,
         description: params.description,
-        transaction_type: 'debit',
       },
       {
         headers: { ...INTERNAL_HEADERS, 'x-user-id': params.userId },
@@ -57,13 +56,12 @@ export class WalletService {
     currencyCode?: string;
   }): Promise<{ transactionId: string; newBalance: number }> {
     const response = await axios.post(
-      `${this.baseUrl}/api/wallet/internal/credit`,
+      `${this.baseUrl}/api/internal/payment/wallet/credit`,
       {
         amount: params.amount,
         currency_code: params.currencyCode || 'NGN',
         reference: params.reference,
         description: params.description,
-        transaction_type: 'refund',
       },
       {
         headers: { ...INTERNAL_HEADERS, 'x-user-id': params.userId },

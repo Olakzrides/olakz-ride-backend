@@ -20,6 +20,7 @@ const config = {
   services: {
     coreLogistics: process.env.CORE_LOGISTICS_URL || 'http://localhost:3001',
     auth: process.env.AUTH_SERVICE_URL || 'http://localhost:3003',
+    payment: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3007',
   },
 
   googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || '',

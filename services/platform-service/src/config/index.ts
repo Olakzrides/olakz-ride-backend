@@ -30,6 +30,10 @@ interface Config {
     url: string;
     internalApiKey: string;
   };
+  payment: {
+    url: string;
+    internalApiKey: string;
+  };
 }
 
 const config: Config = {
@@ -74,6 +78,11 @@ const config: Config = {
     url: process.env.CORE_LOGISTICS_URL || 'http://localhost:3001',
     internalApiKey: process.env.CORE_LOGISTICS_INTERNAL_API_KEY || '',
   },
+
+  payment: {
+    url: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3007',
+    internalApiKey: process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure',
+  },
 };
 
 // Validate required config
@@ -87,6 +96,10 @@ if (!config.flutterwave.secretKey) {
 
 if (!config.coreLogistics.internalApiKey) {
   console.warn('⚠️  CORE_LOGISTICS_INTERNAL_API_KEY not configured - wallet integration will not work');
+}
+
+if (!config.payment.url) {
+  console.warn('⚠️  PAYMENT_SERVICE_URL not configured - wallet operations will not work');
 }
 
 export default config;

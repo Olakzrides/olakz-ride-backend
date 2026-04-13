@@ -64,7 +64,7 @@ const config: Config = {
       timeout: parseInt(process.env.SERVICE_TIMEOUT || '10000', 10),
     },
     payment: {
-      url: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3002',
+      url: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3007',
       healthCheck: '/health',
       timeout: parseInt(process.env.SERVICE_TIMEOUT || '10000', 10),
     },

@@ -1,16 +1,34 @@
 import { Request, Response } from 'express';
+import axios from 'axios';
 import { PaymentCardsService } from '../services/payment-cards.service';
-import { FlutterwaveService } from '../services/flutterwave.service';
 import { ResponseUtil } from '../utils/response.util';
 import { logger } from '../config/logger';
+import { config } from '../config/env';
 
 export class PaymentCardsController {
   private paymentCardsService: PaymentCardsService;
-  private flutterwaveService: FlutterwaveService;
+  private internalApiKey: string;
 
   constructor() {
     this.paymentCardsService = new PaymentCardsService();
-    this.flutterwaveService = new FlutterwaveService();
+    this.internalApiKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
+  }
+
+  // ─── Helper: call payment-service internal Flutterwave endpoints ─────────────
+
+  private async callPaymentService(endpoint: string, body: any): Promise<any> {
+    const response = await axios.post(
+      `${config.paymentServiceUrl}/api/internal/payment${endpoint}`,
+      body,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-api-key': this.internalApiKey,
+        },
+        timeout: 30000,
+      }
+    );
+    return response.data?.data ?? response.data;
   }
 
   /**
@@ -52,8 +70,8 @@ export class PaymentCardsController {
       // Generate transaction reference
       const txRef = `card_${userId}_${Date.now()}`;
 
-      // Tokenize card with Flutterwave (charges ₦50 for verification)
-      const tokenizeResponse = await this.flutterwaveService.tokenizeCard({
+      // Tokenize card with Flutterwave via payment-service (charges ₦50 for verification)
+      const tokenizeResponse = await this.callPaymentService('/flutterwave/charge-card', {
         card_number: cardNumber,
         cvv,
         expiry_month: expiryMonth,
@@ -138,8 +156,11 @@ export class PaymentCardsController {
         return ResponseUtil.badRequest(res, 'Flutterwave reference and OTP are required');
       }
 
-      // Validate the charge with Flutterwave
-      const validationResponse = await this.flutterwaveService.validateCharge(flwRef, otp);
+      // Validate the charge with Flutterwave via payment-service
+      const validationResponse = await this.callPaymentService('/flutterwave/validate-charge', {
+        flw_ref: flwRef,
+        otp,
+      });
 
       logger.info('Validation response full data:', { 
         status: validationResponse.status,
@@ -153,7 +174,9 @@ export class PaymentCardsController {
       // Check if card token exists in the response
       if (!validationResponse.data?.card?.token) {
         // If no token, we need to verify the transaction to get card details
-        const transactionData = await this.flutterwaveService.verifyTransaction(validationResponse.data.id);
+        const transactionData = await this.callPaymentService('/flutterwave/verify-transaction', {
+          transaction_id: validationResponse.data?.id ?? validationResponse.id,
+        });
         
         if (!transactionData.data?.card?.token) {
           return ResponseUtil.badRequest(res, 'Card token not found in validation response');

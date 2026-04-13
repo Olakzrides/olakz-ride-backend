@@ -1,21 +1,25 @@
+import axios from 'axios';
 import { supabase } from '../config/database';
-import { foodFlutterwaveService } from './flutterwave.service';
 import { WalletService } from './wallet.service';
 import { OrderService } from './order.service';
+import config from '../config';
 import logger from '../utils/logger';
 
-/**
- * FoodPaymentService — Phase 3
- * Handles card payment processing, OTP validation, and manual refunds.
- */
+const PAYMENT_URL = () => config.services.payment;
+const INTERNAL_HEADERS = () => ({
+  'x-internal-api-key': config.internalApiKey,
+  'Content-Type': 'application/json',
+});
+
+async function callPaymentService(path: string, body: any): Promise<any> {
+  const res = await axios.post(`${PAYMENT_URL()}${path}`, body, {
+    headers: INTERNAL_HEADERS(),
+    timeout: 30000,
+  });
+  return res.data?.data;
+}
+
 export class FoodPaymentService {
-  /**
-   * POST /api/food/payment/process
-   *
-   * Processes payment for an existing order (payment_method: card).
-   * - If card requires OTP → returns { status: 'pending_authorization', flw_ref, ... }
-   * - If charge succeeds immediately → marks order as paid
-   */
   static async processPayment(params: {
     orderId: string;
     customerId: string;
@@ -27,13 +31,12 @@ export class FoodPaymentService {
       expiry_year?: string;
       fullname?: string;
       email?: string;
-      token?: string; // tokenized card
+      token?: string;
       pin?: string;
     };
   }) {
     const { orderId, customerId, paymentMethod, paymentDetails } = params;
 
-    // Fetch order
     const { data: order, error } = await supabase
       .from('food_orders')
       .select('id, customer_id, total_amount, payment_status, payment_method, status, restaurant_id')
@@ -49,7 +52,6 @@ export class FoodPaymentService {
     const txRef = `food_pay_${orderId}_${Date.now()}`;
 
     if (paymentMethod === 'wallet') {
-      // Wallet payment path
       const balanceBefore = await WalletService.getBalance(customerId);
       if (balanceBefore < amount) {
         throw new Error(`Insufficient wallet balance. Required: ₦${amount.toFixed(2)}, Available: ₦${balanceBefore.toFixed(2)}`);
@@ -59,7 +61,7 @@ export class FoodPaymentService {
         userId: customerId,
         amount,
         reference: txRef,
-        description: `Food order payment`,
+        description: 'Food order payment',
       });
 
       await supabase
@@ -78,12 +80,11 @@ export class FoodPaymentService {
       return { status: 'successful', payment_method: 'wallet', amount };
     }
 
-    // Card payment path
     if (!paymentDetails) throw new Error('paymentDetails are required for card payment');
 
-    // Tokenized card (saved card)
+    // Tokenized card (saved card) — delegate to payment-service
     if (paymentDetails.token) {
-      const chargeRes = await foodFlutterwaveService.chargeTokenizedCard({
+      const chargeRes = await callPaymentService('/api/internal/payment/flutterwave/charge-tokenized', {
         token: paymentDetails.token,
         currency: 'NGN',
         amount,
@@ -91,15 +92,15 @@ export class FoodPaymentService {
         tx_ref: txRef,
       });
 
-      if (chargeRes.status === 'success' && chargeRes.data?.status === 'successful') {
+      if (chargeRes?.status === 'success' && chargeRes?.data?.status === 'successful') {
         await this.markOrderPaid(orderId, chargeRes.data.id, txRef, amount);
         return { status: 'successful', payment_method: 'card', amount, transaction_id: chargeRes.data.id };
       }
 
-      throw new Error(chargeRes.message || 'Card charge failed');
+      throw new Error(chargeRes?.message || 'Card charge failed');
     }
 
-    // New card charge
+    // New card charge — delegate to payment-service
     const chargePayload: any = {
       card_number: paymentDetails.card_number,
       cvv: paymentDetails.cvv,
@@ -116,11 +117,9 @@ export class FoodPaymentService {
       chargePayload.authorization = { mode: 'pin', pin: paymentDetails.pin };
     }
 
-    const chargeRes = await foodFlutterwaveService.chargeCard(chargePayload);
+    const chargeRes = await callPaymentService('/api/internal/payment/flutterwave/charge-card', chargePayload);
 
-    // OTP / PIN required
-    if (chargeRes.meta?.authorization?.mode === 'otp' || chargeRes.data?.status === 'pending') {
-      // Store pending payment reference on order
+    if (chargeRes?.meta?.authorization?.mode === 'otp' || chargeRes?.data?.status === 'pending') {
       await supabase
         .from('food_orders')
         .update({
@@ -139,21 +138,14 @@ export class FoodPaymentService {
       };
     }
 
-    // Immediate success
-    if (chargeRes.status === 'success' && chargeRes.data?.status === 'successful') {
+    if (chargeRes?.status === 'success' && chargeRes?.data?.status === 'successful') {
       await this.markOrderPaid(orderId, chargeRes.data.id, txRef, amount);
       return { status: 'successful', payment_method: 'card', amount, transaction_id: chargeRes.data.id };
     }
 
-    throw new Error(chargeRes.message || 'Card charge failed');
+    throw new Error(chargeRes?.message || 'Card charge failed');
   }
 
-  /**
-   * POST /api/food/payment/validate-otp
-   *
-   * Validates OTP for a pending card charge.
-   * On success → marks order as paid.
-   */
   static async validateOtp(params: {
     orderId: string;
     customerId: string;
@@ -162,7 +154,6 @@ export class FoodPaymentService {
   }) {
     const { orderId, customerId, flwRef, otp } = params;
 
-    // Verify order ownership
     const { data: order, error } = await supabase
       .from('food_orders')
       .select('id, customer_id, total_amount, payment_status, flw_ref')
@@ -173,9 +164,12 @@ export class FoodPaymentService {
     if (order.customer_id !== customerId) throw new Error('Unauthorized');
     if (order.payment_status === 'paid') throw new Error('Order is already paid');
 
-    const validateRes = await foodFlutterwaveService.validateCharge(flwRef, otp);
+    const validateRes = await callPaymentService('/api/internal/payment/flutterwave/validate-charge', {
+      flw_ref: flwRef,
+      otp,
+    });
 
-    if (validateRes.status === 'success' && validateRes.data?.status === 'successful') {
+    if (validateRes?.status === 'success' && validateRes?.data?.status === 'successful') {
       const amount = parseFloat(order.total_amount);
       await this.markOrderPaid(orderId, validateRes.data.id, validateRes.data.tx_ref, amount);
 
@@ -188,16 +182,9 @@ export class FoodPaymentService {
       };
     }
 
-    throw new Error(validateRes.message || 'OTP validation failed');
+    throw new Error(validateRes?.message || 'OTP validation failed');
   }
 
-  /**
-   * POST /api/food/payment/refund
-   *
-   * Manual refund for an order (admin or system-triggered).
-   * - Wallet orders → credit wallet
-   * - Card orders → Flutterwave refund
-   */
   static async refundOrder(params: {
     orderId: string;
     requesterId: string;
@@ -227,10 +214,12 @@ export class FoodPaymentService {
       });
     } else if (order.payment_method === 'card') {
       if (!order.flw_transaction_id) throw new Error('No Flutterwave transaction ID found for this order');
-      await foodFlutterwaveService.refundTransaction(order.flw_transaction_id, amount);
+      await callPaymentService('/api/internal/payment/flutterwave/refund', {
+        transaction_id: order.flw_transaction_id,
+        amount,
+      });
     }
 
-    // Update order
     await supabase
       .from('food_orders')
       .update({
@@ -248,8 +237,6 @@ export class FoodPaymentService {
     logger.info('Order refunded', { orderId, amount, method: order.payment_method });
     return { success: true, refunded_amount: amount, payment_method: order.payment_method };
   }
-
-  // ── Private helpers ──────────────────────────────────────────────────────────
 
   private static async markOrderPaid(
     orderId: string,

@@ -1,7 +1,8 @@
 import { supabase } from '../../../config/database';
 import { logger } from '../../../config/logger';
 import { PaymentService } from '../../../services/payment.service';
-import { FlutterwaveService } from '../../../services/flutterwave.service';
+import axios from 'axios';
+import { config } from '../../../config/env';
 
 export interface DeliveryPaymentResult {
   success: boolean;
@@ -21,11 +22,28 @@ export interface DeliveryPaymentResult {
  */
 export class DeliveryPaymentService {
   private paymentService: PaymentService;
-  private flutterwaveService: FlutterwaveService;
+  private internalApiKey: string;
 
   constructor() {
     this.paymentService = new PaymentService();
-    this.flutterwaveService = new FlutterwaveService();
+    this.internalApiKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
+  }
+
+  // ─── Helper: call payment-service internal Flutterwave endpoints ─────────────
+
+  private async callFlutterwave(endpoint: string, body: any): Promise<any> {
+    const response = await axios.post(
+      `${config.paymentServiceUrl}/api/internal/payment${endpoint}`,
+      body,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-api-key': this.internalApiKey,
+        },
+        timeout: 30000,
+      }
+    );
+    return response.data?.data ?? response.data;
   }
 
   /**
@@ -229,8 +247,8 @@ export class DeliveryPaymentService {
           txRef,
         });
       } else if (cardDetails) {
-        // Charge new card
-        chargeResult = await this.flutterwaveService.tokenizeCard({
+        // Charge new card via payment-service
+        chargeResult = await this.callFlutterwave('/flutterwave/charge-card', {
           card_number: cardDetails.cardNumber,
           cvv: cardDetails.cvv,
           expiry_month: cardDetails.expiryMonth,
@@ -362,8 +380,11 @@ export class DeliveryPaymentService {
     try {
       const { deliveryId, customerId, flwRef, otp, amount, currencyCode } = params;
 
-      // Validate the charge with Flutterwave
-      const validationResult = await this.flutterwaveService.validateCharge(flwRef, otp);
+      // Validate the charge via payment-service
+      const validationResult = await this.callFlutterwave('/flutterwave/validate-charge', {
+        flw_ref: flwRef,
+        otp,
+      });
 
       if (validationResult.status !== 'success') {
         return {

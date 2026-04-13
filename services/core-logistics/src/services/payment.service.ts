@@ -1,21 +1,47 @@
-import { supabase } from '../config/database';
+import axios, { AxiosInstance } from 'axios';
 import { logger } from '../config/logger';
+import { config } from '../config/env';
 import { PaymentHoldResult, PaymentProcessResult } from '../types';
-import { FlutterwaveService } from './flutterwave.service';
-import { PaymentCardsService } from './payment-cards.service';
+import { supabase } from '../config/database';
 
+/**
+ * PaymentService — Phase 3 migration
+ *
+ * Wallet balance / deduct / credit operations are now delegated to payment-service.
+ * Hold / ride-payment logic (createRidePaymentHold, processRidePayment,
+ * releasePaymentHold, convertHoldToPayment) still writes directly to Supabase
+ * because these are ride-lifecycle operations that live in core-logistics domain.
+ * They call getBalance via payment-service to check funds before creating holds.
+ */
 export class PaymentService {
-  private flutterwaveService: FlutterwaveService;
-  private paymentCardsService: PaymentCardsService;
+  private client: AxiosInstance;
 
   constructor() {
-    this.flutterwaveService = new FlutterwaveService();
-    this.paymentCardsService = new PaymentCardsService();
+    this.client = axios.create({
+      baseURL: config.paymentServiceUrl,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-api-key': process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure',
+      },
+      timeout: 30000,
+    });
   }
 
-  /**
-   * Top up wallet using saved card or new card
-   */
+  // ─── Wallet operations (delegated to payment-service) ───────────────────────
+
+  async getUserWalletBalance(userId: string, currencyCode: string = 'NGN'): Promise<number> {
+    try {
+      const response = await this.client.get('/api/internal/payment/wallet/balance', {
+        params: { currency: currencyCode },
+        headers: { 'x-user-id': userId },
+      });
+      return response.data?.data?.wallet?.balance ?? 0;
+    } catch (error: any) {
+      logger.error('Get wallet balance (via payment-service) error:', error.response?.data || error.message);
+      return 0;
+    }
+  }
+
   async topupWallet(params: {
     userId: string;
     userEmail: string;
@@ -41,303 +67,111 @@ export class PaymentService {
     tx_ref?: string;
   }> {
     try {
-      const { userId, userEmail, amount, currencyCode, cardId, cardDetails } = params;
+      const response = await this.client.post(
+        '/api/payment/wallet/topup',
+        {
+          amount: params.amount,
+          currencyCode: params.currencyCode,
+          cardId: params.cardId,
+          cardDetails: params.cardDetails,
+        },
+        {
+          headers: {
+            // topup is a user-facing endpoint on payment-service — pass user context
+            'x-user-id': params.userId,
+            'x-user-email': params.userEmail,
+          },
+        }
+      );
 
-      let chargeResult: any;
-
-      if (cardId) {
-        // Charge saved card
-        const txRef = `topup_${userId}_${Date.now()}`;
-        
-        chargeResult = await this.paymentCardsService.chargeCard({
-          cardId,
-          userId,
-          amount,
-          currency: currencyCode,
-          email: userEmail,
-          txRef,
-        });
-      } else if (cardDetails) {
-        // Charge new card (one-time payment, not saved)
-        const txRef = `topup_${userId}_${Date.now()}`;
-        
-        chargeResult = await this.flutterwaveService.tokenizeCard({
-          card_number: cardDetails.cardNumber,
-          cvv: cardDetails.cvv,
-          expiry_month: cardDetails.expiryMonth,
-          expiry_year: cardDetails.expiryYear,
-          currency: currencyCode,
-          amount,
-          email: userEmail,
-          fullname: cardDetails.cardholderName,
-          tx_ref: txRef,
-          authorization: cardDetails.pin ? { mode: 'pin', pin: cardDetails.pin } : { mode: 'pin' },
-        });
-      } else {
-        return {
-          success: false,
-          message: 'Payment method required',
-        };
-      }
-
-      // Check charge status
-      if (chargeResult.status !== 'success') {
-        return {
-          success: false,
-          message: chargeResult.message || 'Payment failed',
-        };
-      }
-
-      // Check if charge requires authorization (OTP, 3D Secure, etc.)
-      if (chargeResult.data?.status === 'pending') {
-        logger.info('Charge requires authorization:', {
-          status: chargeResult.data.status,
-          flw_ref: chargeResult.data.flw_ref,
-        });
-        
+      const data = response.data?.data;
+      if (data?.status === 'pending_authorization') {
         return {
           success: true,
           requiresAuthorization: true,
-          authorization: chargeResult.data.authorization,
-          flw_ref: chargeResult.data.flw_ref,
-          tx_ref: chargeResult.data.tx_ref,
-          message: 'Charge initiated. Please validate with OTP.',
+          authorization: data.authorization,
+          flw_ref: data.flw_ref,
+          tx_ref: data.tx_ref,
+          message: data.message,
         };
       }
-
-      // Only proceed if charge is successful
-      if (chargeResult.data?.status !== 'successful') {
-        return {
-          success: false,
-          message: chargeResult.message || 'Payment not completed',
-        };
-      }
-
-      // Create credit transaction in wallet
-      const reference = `topup_${Date.now()}_${userId}`;
-
-      const { data: transaction, error } = await supabase
-        .from('wallet_transactions')
-        .insert({
-          user_id: userId,
-          transaction_type: 'credit',
-          amount,
-          currency_code: currencyCode,
-          status: 'completed',
-          description: 'Wallet top-up via card',
-          reference,
-          metadata: {
-            funding_type: 'card_payment',
-            flw_ref: chargeResult.data.flw_ref,
-            payment_method: cardId ? 'saved_card' : 'new_card',
-            card_last4: chargeResult.data.card?.last_4digits,
-            charged_at: new Date().toISOString(),
-          },
-        })
-        .select()
-        .single();
-
-      if (error) {
-        logger.error('Create wallet transaction error:', error);
-        return {
-          success: false,
-          message: 'Failed to credit wallet',
-        };
-      }
-
-      // Get updated balance
-      const newBalance = await this.getUserWalletBalance(userId, currencyCode);
-
-      logger.info('Wallet top-up successful:', {
-        userId,
-        amount,
-        newBalance,
-        reference,
-      });
 
       return {
         success: true,
-        transaction: {
-          id: transaction.id,
-          amount,
-          currency_code: currencyCode,
-          reference,
-          created_at: transaction.created_at,
-        },
-        newBalance,
+        transaction: data?.transaction,
+        newBalance: data?.wallet?.balance,
       };
     } catch (error: any) {
-      logger.error('Wallet top-up error:', error);
-      return {
-        success: false,
-        message: error.message || 'Top-up failed',
-      };
+      logger.error('Wallet top-up (via payment-service) error:', error.response?.data || error.message);
+      return { success: false, message: error.response?.data?.message || 'Top-up failed' };
     }
   }
 
-  /**
-   * Validate wallet top-up with OTP
-   */
   async validateTopup(params: {
     userId: string;
     flwRef: string;
     otp: string;
     amount: number;
     currencyCode: string;
-  }): Promise<{
-    success: boolean;
-    message?: string;
-    transaction?: any;
-    newBalance?: number;
-  }> {
+  }): Promise<{ success: boolean; message?: string; transaction?: any; newBalance?: number }> {
     try {
-      const { userId, flwRef, otp, amount, currencyCode } = params;
+      const response = await this.client.post(
+        '/api/payment/wallet/topup/validate',
+        {
+          flwRef: params.flwRef,
+          otp: params.otp,
+          amount: params.amount,
+          currencyCode: params.currencyCode,
+        },
+        { headers: { 'x-user-id': params.userId } }
+      );
 
-      // Validate the charge with Flutterwave
-      const validationResult = await this.flutterwaveService.validateCharge(flwRef, otp);
-
-      if (validationResult.status !== 'success') {
-        return {
-          success: false,
-          message: validationResult.message || 'Validation failed',
-        };
-      }
-
-      // Check if charge is now successful
-      if (validationResult.data?.status !== 'successful') {
-        return {
-          success: false,
-          message: 'Charge validation incomplete',
-        };
-      }
-
-      // Create credit transaction in wallet
-      const reference = `topup_${Date.now()}_${userId}`;
-
-      const { data: transaction, error } = await supabase
-        .from('wallet_transactions')
-        .insert({
-          user_id: userId,
-          transaction_type: 'credit',
-          amount,
-          currency_code: currencyCode,
-          status: 'completed',
-          description: 'Wallet top-up via card',
-          reference,
-          metadata: {
-            funding_type: 'card_payment',
-            flw_ref: flwRef,
-            payment_method: 'card_with_otp',
-            card_last4: validationResult.data.card?.last_4digits,
-            charged_at: new Date().toISOString(),
-          },
-        })
-        .select()
-        .single();
-
-      if (error) {
-        logger.error('Create wallet transaction error:', error);
-        return {
-          success: false,
-          message: 'Failed to credit wallet',
-        };
-      }
-
-      // Get updated balance
-      const newBalance = await this.getUserWalletBalance(userId, currencyCode);
-
-      logger.info('Wallet top-up validated and completed:', {
-        userId,
-        amount,
-        newBalance,
-        reference,
-        flwRef,
-      });
-
+      const data = response.data?.data;
       return {
         success: true,
-        transaction: {
-          id: transaction.id,
-          amount,
-          currency_code: currencyCode,
-          reference,
-          created_at: transaction.created_at,
-        },
-        newBalance,
+        transaction: data?.transaction,
+        newBalance: data?.wallet?.balance,
       };
     } catch (error: any) {
-      logger.error('Validate top-up error:', error);
-      return {
-        success: false,
-        message: error.message || 'Validation failed',
-      };
+      logger.error('Validate top-up (via payment-service) error:', error.response?.data || error.message);
+      return { success: false, message: error.response?.data?.message || 'Validation failed' };
     }
   }
 
-  /**
-   * Get user's current wallet balance
-   */
-  async getUserWalletBalance(userId: string, currencyCode: string): Promise<number> {
+  async getUserTransactions(
+    userId: string,
+    page: number = 1,
+    limit: number = 10
+  ): Promise<{ transactions: any[]; total: number }> {
     try {
-      // Calculate balance from all transactions
-      const { data: transactions, error } = await supabase
-        .from('wallet_transactions')
-        .select('amount, transaction_type')
-        .eq('user_id', userId)
-        .eq('currency_code', currencyCode)
-        .eq('status', 'completed');
-
-      if (error) {
-        logger.error('Get wallet balance error:', error);
-        return 0;
-      }
-
-      let balance = 0;
-      transactions?.forEach(transaction => {
-        const amount = parseFloat(transaction.amount);
-        const type = transaction.transaction_type;
-        
-        // Credits and refunds: ADD (positive amounts)
-        if (type === 'credit' || type === 'refund' || type === 'tip_received') {
-          balance += amount;
-        }
-        // Debits and holds: SUBTRACT (positive amounts that reduce balance)
-        else if (type === 'debit' || type === 'hold') {
-          balance -= amount;
-        }
-        // Tip payments: already negative, so ADD (which subtracts due to negative sign)
-        else if (type === 'tip_payment') {
-          balance += amount; // amount is already negative
-        }
+      const response = await this.client.get('/api/payment/wallet/transactions', {
+        params: { page, limit },
+        headers: { 'x-user-id': userId },
       });
-
-      return Math.max(0, balance); // Never return negative balance
-    } catch (error) {
-      logger.error('Get wallet balance error:', error);
-      return 0;
+      const data = response.data?.data;
+      return {
+        transactions: data?.transactions || [],
+        total: data?.pagination?.total || 0,
+      };
+    } catch (error: any) {
+      logger.error('Get transactions (via payment-service) error:', error.response?.data || error.message);
+      return { transactions: [], total: 0 };
     }
   }
 
-  /**
-   * Check if user has sufficient balance for hold
-   */
-  async checkSufficientBalance(userId: string, amount: number, currencyCode: string): Promise<{
-    sufficient: boolean;
-    currentBalance: number;
-    required: number;
-  }> {
+  // ─── Balance check helper ────────────────────────────────────────────────────
+
+  async checkSufficientBalance(
+    userId: string,
+    amount: number,
+    currencyCode: string
+  ): Promise<{ sufficient: boolean; currentBalance: number; required: number }> {
     const currentBalance = await this.getUserWalletBalance(userId, currencyCode);
-    
-    return {
-      sufficient: currentBalance >= amount,
-      currentBalance,
-      required: amount,
-    };
+    return { sufficient: currentBalance >= amount, currentBalance, required: amount };
   }
 
-  /**
-   * Create payment hold for ride booking with balance verification
-   */
+  // ─── Ride payment holds (core-logistics domain — writes directly to Supabase) ─
+
   async createRidePaymentHold(params: {
     userId: string;
     amount: number;
@@ -347,16 +181,13 @@ export class PaymentService {
     try {
       const { userId, amount, currencyCode, description } = params;
 
-      // Check wallet balance first
       const balanceCheck = await this.checkSufficientBalance(userId, amount, currencyCode);
-      
       if (!balanceCheck.sufficient) {
-        logger.warn('Insufficient wallet balance:', {
+        logger.warn('Insufficient wallet balance for hold:', {
           userId,
           required: amount,
           available: balanceCheck.currentBalance,
         });
-        
         return {
           status: 'failed',
           message: 'Insufficient wallet balance',
@@ -376,11 +207,11 @@ export class PaymentService {
         .insert({
           user_id: userId,
           transaction_type: 'hold',
-          amount: amount,
+          amount,
           currency_code: currencyCode,
-          status: 'pending', // Changed from 'completed' to 'pending'
-          description: description,
-          reference: reference,
+          status: 'pending',
+          description,
+          reference,
           metadata: {
             hold_type: 'ride_payment',
             balance_before: balanceCheck.currentBalance,
@@ -392,44 +223,23 @@ export class PaymentService {
 
       if (error) {
         logger.error('Create payment hold error:', error);
-        return {
-          status: 'failed',
-          message: 'Failed to create payment hold',
-          errorCode: 'PAYMENT_HOLD_FAILED',
-        };
+        return { status: 'failed', message: 'Failed to create payment hold', errorCode: 'PAYMENT_HOLD_FAILED' };
       }
 
-      // Update hold status to completed after successful creation
       await supabase
         .from('wallet_transactions')
         .update({ status: 'completed' })
         .eq('id', holdTransaction.id);
 
-      logger.info('Payment hold created successfully:', {
-        userId,
-        amount,
-        reference,
-        balanceBefore: balanceCheck.currentBalance,
-        balanceAfter: balanceCheck.currentBalance - amount,
-      });
+      logger.info('Payment hold created:', { userId, amount, reference });
 
-      return {
-        status: 'hold_created',
-        holdId: holdTransaction.id,
-        message: 'Payment hold created successfully',
-      };
+      return { status: 'hold_created', holdId: holdTransaction.id, message: 'Payment hold created successfully' };
     } catch (error) {
       logger.error('Create ride payment hold error:', error);
-      return {
-        status: 'failed',
-        message: 'Failed to create payment hold',
-      };
+      return { status: 'failed', message: 'Failed to create payment hold' };
     }
   }
 
-  /**
-   * Process ride payment (deduct from hold)
-   */
   async processRidePayment(params: {
     holdId: string;
     rideId: string;
@@ -438,7 +248,6 @@ export class PaymentService {
     try {
       const { holdId, rideId, finalAmount } = params;
 
-      // Get hold transaction
       const { data: holdTransaction, error: holdError } = await supabase
         .from('wallet_transactions')
         .select('*')
@@ -446,17 +255,13 @@ export class PaymentService {
         .single();
 
       if (holdError || !holdTransaction) {
-        return {
-          success: false,
-          message: 'Invalid hold transaction',
-        };
+        return { success: false, message: 'Invalid hold transaction' };
       }
 
       const heldAmount = parseFloat(holdTransaction.amount);
       const userId = holdTransaction.user_id;
       const currencyCode = holdTransaction.currency_code;
 
-      // Create deduct transaction
       const { data: deductTransaction, error: deductError } = await supabase
         .from('wallet_transactions')
         .insert({
@@ -468,27 +273,18 @@ export class PaymentService {
           status: 'completed',
           description: `Ride payment - ${rideId}`,
           reference: `ride_${rideId}_${Date.now()}`,
-          metadata: {
-            hold_transaction_id: holdId,
-            original_hold_amount: heldAmount,
-          },
+          metadata: { hold_transaction_id: holdId, original_hold_amount: heldAmount },
         })
         .select()
         .single();
 
       if (deductError) {
         logger.error('Deduct transaction error:', deductError);
-        return {
-          success: false,
-          message: 'Failed to process payment',
-        };
+        return { success: false, message: 'Failed to process payment' };
       }
 
-      // Calculate refund if final amount is less than held amount
       const refundAmount = heldAmount - finalAmount;
-
       if (refundAmount > 0) {
-        // Create refund transaction
         await supabase.from('wallet_transactions').insert({
           user_id: userId,
           ride_id: rideId,
@@ -498,10 +294,7 @@ export class PaymentService {
           status: 'completed',
           description: `Ride payment refund - ${rideId}`,
           reference: `refund_${rideId}_${Date.now()}`,
-          metadata: {
-            hold_transaction_id: holdId,
-            deduct_transaction_id: deductTransaction.id,
-          },
+          metadata: { hold_transaction_id: holdId, deduct_transaction_id: deductTransaction.id },
         });
       }
 
@@ -513,16 +306,10 @@ export class PaymentService {
       };
     } catch (error) {
       logger.error('Process ride payment error:', error);
-      return {
-        success: false,
-        message: 'Failed to process payment',
-      };
+      return { success: false, message: 'Failed to process payment' };
     }
   }
 
-  /**
-   * Release payment hold (for cancelled rides) - Updated version
-   */
   async releasePaymentHold(params: {
     holdId: string;
     reason: string;
@@ -531,7 +318,6 @@ export class PaymentService {
     try {
       const { holdId, reason, metadata } = params;
 
-      // Get hold transaction details
       const { data: holdTransaction, error: fetchError } = await supabase
         .from('wallet_transactions')
         .select('user_id, amount, currency_code, status, reference')
@@ -540,20 +326,13 @@ export class PaymentService {
         .single();
 
       if (fetchError || !holdTransaction) {
-        return {
-          success: false,
-          message: 'Hold transaction not found',
-        };
+        return { success: false, message: 'Hold transaction not found' };
       }
 
       if (holdTransaction.status !== 'completed') {
-        return {
-          success: false,
-          message: 'Hold transaction is not in completed status',
-        };
+        return { success: false, message: 'Hold transaction is not in completed status' };
       }
 
-      // Create refund transaction
       const refundReference = `refund_${Date.now()}_${holdTransaction.user_id}`;
 
       const { data: refundTransaction, error: refundError } = await supabase
@@ -580,36 +359,18 @@ export class PaymentService {
 
       if (refundError) {
         logger.error('Create refund transaction error:', refundError);
-        return {
-          success: false,
-          message: 'Failed to create refund transaction',
-        };
+        return { success: false, message: 'Failed to create refund transaction' };
       }
 
-      logger.info('Payment hold released successfully:', {
-        holdId,
-        refundId: refundTransaction.id,
-        amount: holdTransaction.amount,
-        reason,
-      });
+      logger.info('Payment hold released:', { holdId, refundId: refundTransaction.id, reason });
 
-      return {
-        success: true,
-        message: 'Payment hold released successfully',
-        refundId: refundTransaction.id,
-      };
+      return { success: true, message: 'Payment hold released successfully', refundId: refundTransaction.id };
     } catch (error: any) {
       logger.error('Release payment hold error:', error);
-      return {
-        success: false,
-        message: 'Failed to release payment hold',
-      };
+      return { success: false, message: 'Failed to release payment hold' };
     }
   }
 
-  /**
-   * Convert hold to actual payment (when ride completes)
-   */
   async convertHoldToPayment(params: {
     holdId: string;
     actualAmount?: number;
@@ -619,7 +380,6 @@ export class PaymentService {
     try {
       const { holdId, actualAmount, description, metadata } = params;
 
-      // Get hold transaction details
       const { data: holdTransaction, error: fetchError } = await supabase
         .from('wallet_transactions')
         .select('user_id, amount, currency_code, status')
@@ -628,16 +388,11 @@ export class PaymentService {
         .single();
 
       if (fetchError || !holdTransaction) {
-        return {
-          success: false,
-          message: 'Hold transaction not found',
-        };
+        return { success: false, message: 'Hold transaction not found' };
       }
 
       const paymentAmount = actualAmount || holdTransaction.amount;
       const refundAmount = holdTransaction.amount - paymentAmount;
-
-      // Create payment transaction
       const paymentReference = `payment_${Date.now()}_${holdTransaction.user_id}`;
 
       const { data: paymentTransaction, error: paymentError } = await supabase
@@ -664,36 +419,28 @@ export class PaymentService {
 
       if (paymentError) {
         logger.error('Create payment transaction error:', paymentError);
-        return {
-          success: false,
-          message: 'Failed to create payment transaction',
-        };
+        return { success: false, message: 'Failed to create payment transaction' };
       }
 
-      // Create refund for difference if any
       if (refundAmount > 0) {
-        const refundReference = `refund_${Date.now()}_${holdTransaction.user_id}`;
-
-        await supabase
-          .from('wallet_transactions')
-          .insert({
-            user_id: holdTransaction.user_id,
-            transaction_type: 'refund',
-            amount: refundAmount,
-            currency_code: holdTransaction.currency_code,
-            status: 'completed',
-            description: `Refund for overpayment on ride`,
-            reference: refundReference,
-            metadata: {
-              refund_type: 'overpayment',
-              original_hold_id: holdId,
-              payment_id: paymentTransaction.id,
-              created_at: new Date().toISOString(),
-            },
-          });
+        await supabase.from('wallet_transactions').insert({
+          user_id: holdTransaction.user_id,
+          transaction_type: 'refund',
+          amount: refundAmount,
+          currency_code: holdTransaction.currency_code,
+          status: 'completed',
+          description: 'Refund for overpayment on ride',
+          reference: `refund_${Date.now()}_${holdTransaction.user_id}`,
+          metadata: {
+            refund_type: 'overpayment',
+            original_hold_id: holdId,
+            payment_id: paymentTransaction.id,
+            created_at: new Date().toISOString(),
+          },
+        });
       }
 
-      logger.info('Hold converted to payment successfully:', {
+      logger.info('Hold converted to payment:', {
         holdId,
         paymentId: paymentTransaction.id,
         holdAmount: holdTransaction.amount,
@@ -701,54 +448,10 @@ export class PaymentService {
         refundAmount,
       });
 
-      return {
-        success: true,
-        message: 'Hold converted to payment successfully',
-        paymentId: paymentTransaction.id,
-      };
+      return { success: true, message: 'Hold converted to payment successfully', paymentId: paymentTransaction.id };
     } catch (error: any) {
       logger.error('Convert hold to payment error:', error);
-      return {
-        success: false,
-        message: 'Failed to convert hold to payment',
-      };
-    }
-  }
-
-  /**
-   * Get user's transaction history
-   */
-  async getUserTransactions(
-    userId: string,
-    page: number = 1,
-    limit: number = 10
-  ): Promise<{ transactions: any[]; total: number }> {
-    try {
-      const offset = (page - 1) * limit;
-
-      // Get total count
-      const { count } = await supabase
-        .from('wallet_transactions')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', userId);
-
-      // Get transactions
-      const { data, error } = await supabase
-        .from('wallet_transactions')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      if (error) throw error;
-
-      return {
-        transactions: data || [],
-        total: count || 0,
-      };
-    } catch (error) {
-      logger.error('Get user transactions error:', error);
-      throw error;
+      return { success: false, message: 'Failed to convert hold to payment' };
     }
   }
 }
