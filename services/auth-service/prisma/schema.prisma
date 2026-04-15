@@ -25,9 +25,23 @@ model User {
   createdAt        DateTime?         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime?         @default(now()) @map("updated_at") @db.Timestamptz(6)
   roles            String[]          @default(["customer"])
-  activeRole       String?           @default("customer") @map("active_role") @db.VarChar(20)
-  otpVerifications OtpVerification[]
-  refreshTokens    RefreshToken[]
+  activeRole            String?           @default("customer") @map("active_role") @db.VarChar(20)
+  notificationsEnabled  Boolean?          @default(true) @map("notifications_enabled")
+  language              String?           @default("en") @db.VarChar(10)
+  biometricEnabled      Boolean?          @default(false) @map("biometric_enabled")
+  walletPinHash         String?           @map("wallet_pin_hash") @db.VarChar(255)
+  walletPinEnabled      Boolean?          @default(false) @map("wallet_pin_enabled")
+  walletPinAttempts     Int?              @default(0) @map("wallet_pin_attempts")
+  walletPinLockedUntil  DateTime?         @map("wallet_pin_locked_until") @db.Timestamptz(6)
+  emergencyContactName  String?           @map("emergency_contact_name") @db.VarChar(100)
+  emergencyContactPhone String?           @map("emergency_contact_phone") @db.VarChar(20)
+  emergencyContactEmail String?           @map("emergency_contact_email") @db.VarChar(255)
+  alertTimerEnabled     Boolean?          @default(false) @map("alert_timer_enabled")
+  alertTimerMinutes     Int?              @default(6) @map("alert_timer_minutes")
+  referralCode          String?           @unique @map("referral_code") @db.VarChar(50)
+  referredBy            String?           @map("referred_by") @db.VarChar(50)
+  otpVerifications      OtpVerification[]
+  refreshTokens         RefreshToken[]
 
   @@index([activeRole], map: "idx_users_active_role")
   @@index([email], map: "idx_users_email")

@@ -11,7 +11,7 @@ class UserService {
   async getUserById(userId: string): Promise<any> {
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, email, first_name, last_name, username, roles, active_role, phone, avatar_url, email_verified, created_at')
+      .select('id, email, first_name, last_name, username, roles, active_role, phone, avatar_url, email_verified, notifications_enabled, language, created_at')
       .eq('id', userId)
       .single();
 
@@ -30,6 +30,8 @@ class UserService {
       phone: user.phone,
       avatarUrl: user.avatar_url,
       emailVerified: user.email_verified,
+      notificationsEnabled: user.notifications_enabled ?? true,
+      language: user.language ?? 'en',
       createdAt: user.created_at,
     };
   }
@@ -255,6 +257,8 @@ class UserService {
       phone: user.phone,
       avatarUrl: user.avatar_url,
       emailVerified: user.email_verified,
+      notificationsEnabled: user.notifications_enabled ?? true,
+      language: user.language ?? 'en',
       createdAt: user.created_at,
     };
   }

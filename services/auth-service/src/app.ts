@@ -11,6 +11,12 @@ import { AppError } from './utils/errors';
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
 import emailRoutes from './routes/email.routes';
+import profileRoutes from './routes/profile.routes';
+import securityRoutes from './routes/security.routes';
+import safetyRoutes from './routes/safety.routes';
+import referralRoutes from './routes/referral.routes';
+import helpRoutes from './routes/help.routes';
+import contentRoutes from './routes/content.routes';
 
 const app: Application = express();
 
@@ -67,6 +73,12 @@ app.get('/', (_req: Request, res: Response) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', emailRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/users/profile', profileRoutes);
+app.use('/api/users/security', securityRoutes);
+app.use('/api/users/safety', safetyRoutes);
+app.use('/api/users/referral', referralRoutes);
+app.use('/api/users/help', helpRoutes);
+app.use('/api/users/content', contentRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {
