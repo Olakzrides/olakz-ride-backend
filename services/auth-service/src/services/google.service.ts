@@ -66,7 +66,10 @@ class GoogleService {
    */
   async verifyGoogleToken(idToken: string): Promise<any> {
     try {
-      const ticket = await this.client.verifyIdToken({
+      // Use a fresh client without redirect URI for token verification
+      const verifyClient = new OAuth2Client(config.google.clientId);
+
+      const ticket = await verifyClient.verifyIdToken({
         idToken,
         audience: config.google.clientId,
       });
@@ -95,7 +98,8 @@ class GoogleService {
    * Get user info from Google token
    */
   private async getUserInfo(idToken: string): Promise<GoogleUserInfo> {
-    const ticket = await this.client.verifyIdToken({
+    const verifyClient = new OAuth2Client(config.google.clientId);
+    const ticket = await verifyClient.verifyIdToken({
       idToken,
       audience: config.google.clientId,
     });

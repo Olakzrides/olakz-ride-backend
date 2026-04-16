@@ -17,6 +17,7 @@ model User {
   passwordHash     String?           @map("password_hash") @db.VarChar(255)
   role             String?           @default("customer") @db.VarChar(50)
   provider         String?           @default("emailpass") @db.VarChar(50)
+  providerId       String?           @map("provider_id") @db.VarChar(255)
   phone            String?           @db.VarChar(20)
   avatarUrl        String?           @map("avatar_url")
   emailVerified    Boolean?          @default(false) @map("email_verified")
