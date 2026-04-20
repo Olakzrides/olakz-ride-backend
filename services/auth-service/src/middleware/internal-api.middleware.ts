@@ -9,7 +9,7 @@ export const internalApiAuth = (req: Request, res: Response, next: NextFunction)
   const expectedKey = process.env.INTERNAL_API_KEY || 'default-internal-key-change-in-production';
   
   // Debug logging
-  logger.info('Internal API auth check:', {
+  logger.debug('Internal API auth check:', {
     hasHeader: !!apiKey,
     authenticated: apiKey === expectedKey,
   });
@@ -43,7 +43,7 @@ export const internalApiAuth = (req: Request, res: Response, next: NextFunction)
     return;
   }
 
-  logger.info('Internal API request authenticated:', {
+  logger.debug('Internal API request authenticated:', {
     path: req.path,
   });
 
