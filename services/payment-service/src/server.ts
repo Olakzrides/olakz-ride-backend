@@ -18,4 +18,9 @@ process.on('unhandledRejection', (reason) => {
   logger.error('Unhandled rejection:', reason);
 });
 
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught exception:', error);
+  server.close(() => process.exit(1));
+});
+
 export default server;

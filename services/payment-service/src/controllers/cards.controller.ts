@@ -2,10 +2,13 @@ import { Request, Response } from 'express';
 import { PaymentCardsService } from '../services/payment-cards.service';
 import { WalletService } from '../services/wallet.service';
 import { flutterwaveService } from '../services/flutterwave.service';
-import { supabase } from '../config/database';
 import { ResponseUtil } from '../utils/response';
 import { AuthRequest } from '../middleware/auth.middleware';
 import logger from '../utils/logger';
+
+function toMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'An unexpected error occurred';
+}
 
 export class CardsController {
   listCards = async (req: Request, res: Response): Promise<Response> => {
@@ -13,8 +16,8 @@ export class CardsController {
       const userId = (req as AuthRequest).user!.id;
       const cards = await PaymentCardsService.getUserCards(userId);
       return ResponseUtil.success(res, { cards });
-    } catch (err: any) {
-      return ResponseUtil.serverError(res, err.message);
+    } catch (err: unknown) {
+      return ResponseUtil.serverError(res, toMessage(err));
     }
   };
 
@@ -84,9 +87,9 @@ export class CardsController {
 
       logger.info('Card saved successfully', { userId, cardLast4: cardData.last_4digits });
       return ResponseUtil.created(res, { card }, 'Card saved successfully');
-    } catch (err: any) {
+    } catch (err: unknown) {
       logger.error('Add card error:', err);
-      return ResponseUtil.serverError(res, err.message);
+      return ResponseUtil.serverError(res, toMessage(err));
     }
   };
 
@@ -95,8 +98,8 @@ export class CardsController {
       const userId = (req as AuthRequest).user!.id;
       await PaymentCardsService.deleteCard(req.params.id, userId);
       return ResponseUtil.success(res, null, 'Card deleted');
-    } catch (err: any) {
-      return ResponseUtil.serverError(res, err.message);
+    } catch (err: unknown) {
+      return ResponseUtil.serverError(res, toMessage(err));
     }
   };
 
@@ -105,25 +108,19 @@ export class CardsController {
       const userId = (req as AuthRequest).user!.id;
       const card = await PaymentCardsService.setDefaultCard(req.params.id, userId);
       return ResponseUtil.success(res, { card }, 'Default card updated');
-    } catch (err: any) {
-      return ResponseUtil.serverError(res, err.message);
+    } catch (err: unknown) {
+      return ResponseUtil.serverError(res, toMessage(err));
     }
   };
 
   getCard = async (req: Request, res: Response): Promise<Response> => {
     try {
       const userId = (req as AuthRequest).user!.id;
-      const { data: card, error } = await supabase
-        .from('payment_cards')
-        .select('id, card_last4, card_brand, card_type, card_exp_month, card_exp_year, cardholder_name, bank_name, is_default, country_code, metadata, created_at')
-        .eq('id', req.params.id)
-        .eq('user_id', userId)
-        .single();
-
-      if (error || !card) return ResponseUtil.notFound(res, 'Card not found');
+      const card = await PaymentCardsService.getCard(req.params.id, userId);
+      if (!card) return ResponseUtil.notFound(res, 'Card not found');
       return ResponseUtil.success(res, card);
-    } catch (err: any) {
-      return ResponseUtil.serverError(res, err.message);
+    } catch (err: unknown) {
+      return ResponseUtil.serverError(res, toMessage(err));
     }
   };
 
@@ -142,7 +139,6 @@ export class CardsController {
         return ResponseUtil.badRequest(res, validationResult.message || 'Card validation failed');
       }
 
-      // Get card data — may be in validationResult.data or need to verify transaction
       let cardData = validationResult.data?.card;
       let flwRef = validationResult.data?.flw_ref;
 
@@ -180,9 +176,9 @@ export class CardsController {
 
       logger.info('Card saved after OTP validation', { userId, cardLast4: cardData.last_4digits });
       return ResponseUtil.created(res, { card }, 'Card saved successfully');
-    } catch (err: any) {
+    } catch (err: unknown) {
       logger.error('Validate card addition error:', err);
-      return ResponseUtil.serverError(res, err.message);
+      return ResponseUtil.serverError(res, toMessage(err));
     }
   };
 }

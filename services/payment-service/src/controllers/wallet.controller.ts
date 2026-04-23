@@ -4,6 +4,10 @@ import { ResponseUtil } from '../utils/response';
 import { AuthRequest } from '../middleware/auth.middleware';
 import logger from '../utils/logger';
 
+function toMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'An unexpected error occurred';
+}
+
 export class WalletController {
   getBalance = async (req: Request, res: Response): Promise<Response> => {
     try {
@@ -11,8 +15,8 @@ export class WalletController {
       const currencyCode = (req.query.currency as string) || 'NGN';
       const balance = await WalletService.getBalance(userId, currencyCode);
       return ResponseUtil.success(res, { wallet: { balance, currency_code: currencyCode } });
-    } catch (err: any) {
-      return ResponseUtil.serverError(res, err.message);
+    } catch (err: unknown) {
+      return ResponseUtil.serverError(res, toMessage(err));
     }
   };
 
@@ -61,9 +65,9 @@ export class WalletController {
         transaction: result.transaction,
         wallet: { balance: result.newBalance, currency_code },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       logger.error('Wallet top-up error:', err);
-      return ResponseUtil.serverError(res, err.message);
+      return ResponseUtil.serverError(res, toMessage(err));
     }
   };
 
@@ -83,8 +87,8 @@ export class WalletController {
         transaction: result.transaction,
         wallet: { balance: result.newBalance, currency_code },
       });
-    } catch (err: any) {
-      return ResponseUtil.serverError(res, err.message);
+    } catch (err: unknown) {
+      return ResponseUtil.serverError(res, toMessage(err));
     }
   };
 
@@ -98,8 +102,8 @@ export class WalletController {
         transactions: result.transactions,
         pagination: { page, limit, total: result.total, totalPages: Math.ceil(result.total / limit) },
       });
-    } catch (err: any) {
-      return ResponseUtil.serverError(res, err.message);
+    } catch (err: unknown) {
+      return ResponseUtil.serverError(res, toMessage(err));
     }
   };
 }

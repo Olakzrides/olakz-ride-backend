@@ -12,7 +12,6 @@ router.post('/', ctrl.addCard);
 router.post('/validate', ctrl.validateCardAddition);
 router.get('/:id', ctrl.getCard);
 router.delete('/:id', ctrl.deleteCard);
-router.put('/:id/default', ctrl.setDefault);
 router.patch('/:id/default', ctrl.setDefault);
 
 export default router;

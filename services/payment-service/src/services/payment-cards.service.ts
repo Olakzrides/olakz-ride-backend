@@ -51,6 +51,18 @@ export class PaymentCardsService {
     return card;
   }
 
+  static async getCard(cardId: string, userId: string) {
+    const { data, error } = await supabase
+      .from('payment_cards')
+      .select('id, card_last4, card_brand, card_type, card_exp_month, card_exp_year, cardholder_name, bank_name, is_default, country_code, metadata, created_at')
+      .eq('id', cardId)
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !data) return null;
+    return data;
+  }
+
   static async getUserCards(userId: string) {
     const { data, error } = await supabase
       .from('payment_cards')
