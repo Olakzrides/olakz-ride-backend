@@ -1,21 +1,12 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-// Debug: Check if INTERNAL_API_KEY is loaded
-console.log('🔍 Environment check after dotenv.config():', {
-  hasInternalApiKey: !!process.env.INTERNAL_API_KEY,
-  keyLength: process.env.INTERNAL_API_KEY?.length,
-  keyPreview: process.env.INTERNAL_API_KEY?.substring(0, 10) + '...',
-});
-
 import app from './app';
 import logger from './utils/logger';
 import config from './config';
 import { InitializationService } from './services/initialization.service';
 
 const PORT = config.port;
-const authBaseUrl =
-  process.env.AUTH_BASE_URL || `http://localhost:${PORT}`;
 
 // Initialize service and start server
 async function startServer() {
@@ -30,7 +21,6 @@ async function startServer() {
       logger.info(`===========================================`);
       logger.info(`Environment: ${config.env}`);
       logger.info(`Port: ${PORT}`);
-      logger.info(`Auth URL: ${authBaseUrl}`);
       logger.info(`===========================================`);
       logger.info(`Database: ${config.supabase.url}`);
       logger.info(`JWT Expiry: Access ${config.jwt.accessTokenExpiry}, Refresh ${config.jwt.refreshTokenExpiry}`);
