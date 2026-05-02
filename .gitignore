@@ -10,6 +10,7 @@ yarn.lock
 .env.production
 .env.test
 services/*/.env
+services/*/.env.template
 services/*/.env.local
 gateway/.env
 gateway/.env.local
