@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { VendorRegistrationController } from '../controllers/vendor-registration.controller';
 import { authenticate } from '../middleware/auth.middleware';
-import { adminAuthMiddleware } from '../middleware/admin.middleware';
 import { internalApiMiddleware } from '../middleware/internal-api.middleware';
 import { VendorRegistrationService } from '../services/vendor-registration.service';
 import ResponseUtil from '../utils/response';
@@ -24,10 +23,5 @@ router.get('/internal/status/:userId', internalApiMiddleware, async (req, res) =
     return ResponseUtil.serverError(res, err.message);
   }
 });
-
-// Admin routes
-router.get('/admin/vendors', adminAuthMiddleware, ctrl.adminGetAll);
-router.put('/admin/vendors/:id/approve', adminAuthMiddleware, ctrl.adminApprove);
-router.put('/admin/vendors/:id/reject', adminAuthMiddleware, ctrl.adminReject);
 
 export default router;

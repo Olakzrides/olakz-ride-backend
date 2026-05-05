@@ -149,12 +149,4 @@ if (!config.apple.teamId || !config.apple.keyId || !config.apple.privateKey) {
   console.warn('⚠️  Apple Sign-In credentials not set - Apple login disabled');
 }
 
-// Log internal API key configuration (for debugging)
-console.log('🔑 Internal API Key configured:', {
-  hasKey: !!config.internalApiKey,
-  keyLength: config.internalApiKey?.length,
-  keyPreview: config.internalApiKey?.substring(0, 10) + '...',
-  isDefault: config.internalApiKey === 'default-internal-key-change-in-production',
-});
-
 export default config;
