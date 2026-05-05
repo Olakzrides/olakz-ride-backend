@@ -98,8 +98,9 @@ class AppleService {
       });
 
       return response.data;
-    } catch (error: any) {
-      logger.error('Apple token exchange error:', error.response?.data || error.message);
+    } catch (error: unknown) {
+      const axiosError = error as { response?: { data?: unknown }; message?: string };
+      logger.error('Apple token exchange error:', axiosError.response?.data || axiosError.message);
       throw new UnauthorizedError('Failed to exchange Apple authorization code');
     }
   }
@@ -151,8 +152,9 @@ class AppleService {
       }) as AppleTokenPayload;
 
       return payload;
-    } catch (error: any) {
-      logger.error('Apple token verification error:', error.message);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Token verification failed';
+      logger.error('Apple token verification error:', message);
       throw new UnauthorizedError('Invalid Apple token');
     }
   }
@@ -214,8 +216,9 @@ class AppleService {
 
       // Find or create user
       return await this.findOrCreateUser(appleUser);
-    } catch (error: any) {
-      logger.error('Apple Sign-In error:', error.message);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Apple Sign-In failed';
+      logger.error('Apple Sign-In error:', message);
       throw error;
     }
   }

@@ -119,16 +119,17 @@ class EmailService {
         success: true,
         messageId: response.data?.data?.[0]?.message_id,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const axiosError = error as { response?: { data?: { message?: string } }; message?: string };
       logger.error('Failed to send email:', {
         to: params.to,
         subject: params.subject,
-        error: error.response?.data || error.message,
+        error: axiosError.response?.data || axiosError.message,
       });
 
       return {
         success: false,
-        error: error.response?.data?.message || error.message || 'Failed to send email',
+        error: axiosError.response?.data?.message || axiosError.message || 'Failed to send email',
       };
     }
   }
@@ -171,10 +172,11 @@ class EmailService {
       logger.info(`Email sent successfully via API to ${to}`, { 
         messageId: response.data.data?.[0]?.message_id 
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const axiosError = error as { response?: { data?: unknown }; message?: string };
       logger.error('Error sending email via API:', {
-        error: error.message,
-        response: error.response?.data
+        error: axiosError.message,
+        response: axiosError.response?.data,
       });
       throw new Error('Failed to send email via API');
     }

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import emailService from '../services/email.service';
+import ResponseUtil from '../utils/response';
 import logger from '../utils/logger';
 
 export class EmailController {
@@ -11,60 +12,25 @@ export class EmailController {
     try {
       const { to, subject, html } = req.body;
 
-      // Validate required fields
       if (!to || !subject || !html) {
-        res.status(400).json({
-          success: false,
-          error: 'Missing required fields: to, subject, html',
-        });
+        ResponseUtil.error(res, 'Missing required fields: to, subject, html', 400);
         return;
       }
 
-      // Validate email format
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(to)) {
-        res.status(400).json({
-          success: false,
-          error: 'Invalid email address format',
-        });
+        ResponseUtil.error(res, 'Invalid email address format', 400);
         return;
       }
 
-      logger.info('Sending email via internal API:', {
-        to,
-        subject,
-      });
+      await emailService.sendEmail(to, subject, html);
 
-      // Send email using the public sendEmail method
-      try {
-        await emailService.sendEmail(to, subject, html);
-        
-        logger.info('Email sent successfully:', {
-          to,
-          subject,
-        });
-        
-        res.status(200).json({
-          success: true,
-          message: 'Email sent successfully',
-        });
-      } catch (emailError: any) {
-        logger.error('Failed to send email:', {
-          to,
-          error: emailError.message,
-        });
-        
-        res.status(500).json({
-          success: false,
-          error: emailError.message || 'Failed to send email',
-        });
-      }
-    } catch (error: any) {
+      logger.info('Email sent via internal API', { to, subject });
+      ResponseUtil.success(res, null, 'Email sent successfully');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to send email';
       logger.error('Send email error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Internal server error',
-      });
+      ResponseUtil.error(res, message, 500);
     }
   };
 }

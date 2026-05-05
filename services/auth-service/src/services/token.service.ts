@@ -46,8 +46,8 @@ class TokenService {
     try {
       const decoded = jwt.verify(token, config.jwt.secret as string) as TokenPayload;
       return decoded;
-    } catch (error: any) {
-      if (error.name === 'TokenExpiredError') {
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'TokenExpiredError') {
         throw new UnauthorizedError('Access token expired');
       }
       throw new UnauthorizedError('Invalid access token');
@@ -98,11 +98,11 @@ class TokenService {
 
       // Generate new token pair
       return await this.generateTokens(user.id, user.email, user.role);
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof UnauthorizedError) {
         throw error;
       }
-      if (error.name === 'TokenExpiredError') {
+      if (error instanceof Error && error.name === 'TokenExpiredError') {
         throw new UnauthorizedError('Refresh token expired');
       }
       throw new UnauthorizedError('Invalid refresh token');

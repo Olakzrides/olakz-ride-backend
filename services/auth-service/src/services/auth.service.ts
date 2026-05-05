@@ -28,16 +28,17 @@ interface LoginData {
 
 class AuthService {
   /**
-   * Register new user
+   * Register new user — stores in pending_registrations until email is verified
    */
-  async register(data: RegisterData): Promise<{ userId: string; email: string }> {
+  async register(data: RegisterData): Promise<{ email: string }> {
     const { firstName, lastName, email, password } = data;
+    const normalizedEmail = email.toLowerCase();
 
-    // Check if email already exists
+    // Check if a verified account already exists
     const { data: existingUser } = await supabase
       .from('users')
-      .select('id, email')
-      .eq('email', email.toLowerCase())
+      .select('id')
+      .eq('email', normalizedEmail)
       .single();
 
     if (existingUser) {
@@ -46,108 +47,192 @@ class AuthService {
 
     // Hash password
     const passwordHash = await bcrypt.hash(password, config.security.bcryptRounds);
+    console.log("This is the password that is hashed", passwordHash)
 
-    // Create user
+    // Generate OTP
+    const otpCode = otpService.generateOTP();
+    const otpExpiresAt = new Date();
+    otpExpiresAt.setMinutes(otpExpiresAt.getMinutes() + config.otp.expiryMinutes);
+
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24);
+
+    // Upsert into pending_registrations — allows re-registration if previous attempt expired or was abandoned
+    const { error: upsertError } = await supabase
+      .from('pending_registrations')
+      .upsert({
+        email: normalizedEmail,
+        first_name: firstName,
+        last_name: lastName,
+        password_hash: passwordHash,
+        otp_code: otpCode,
+        otp_expires_at: otpExpiresAt.toISOString(),
+        otp_attempts: 0,
+        expires_at: expiresAt.toISOString(),
+        created_at: new Date().toISOString(),
+      }, { onConflict: 'email' });
+
+    if (upsertError) {
+      logger.error('Error creating pending registration:', upsertError);
+      throw new Error('Failed to initiate registration');
+    }
+
+    // Send OTP email
+    await emailService.sendOTPEmail(normalizedEmail, firstName, otpCode, 'verification');
+
+    logger.info(`Pending registration created: ${normalizedEmail}`);
+    return { email: normalizedEmail };
+  }
+
+  /**
+   * Verify email with OTP — moves pending registration into users table
+   */
+  async verifyEmail(email: string, otp: string): Promise<void> {
+    const normalizedEmail = email.toLowerCase();
+
+    // Look up pending registration
+    const { data: pending, error: pendingError } = await supabase
+      .from('pending_registrations')
+      .select('*')
+      .eq('email', normalizedEmail)
+      .single();
+
+    if (pendingError || !pending) {
+      // Fallback: check if already a verified user (handles edge cases)
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id, email_verified')
+        .eq('email', normalizedEmail)
+        .single();
+
+      if (existingUser?.email_verified) {
+        throw new ValidationError('Email is already verified');
+      }
+
+      throw new NotFoundError('No pending registration found for this email. Please register first.');
+    }
+
+    // Check if pending registration expired
+    if (new Date(pending.expires_at) < new Date()) {
+      await supabase.from('pending_registrations').delete().eq('email', normalizedEmail);
+      throw new ValidationError('Registration has expired. Please register again.');
+    }
+
+    // Check if OTP expired
+    if (new Date(pending.otp_expires_at) < new Date()) {
+      throw new ValidationError('OTP has expired. Please request a new one.');
+    }
+
+    // Check max attempts
+    if (pending.otp_attempts >= config.otp.maxAttempts) {
+      throw new ValidationError('Maximum OTP attempts exceeded. Please request a new OTP.');
+    }
+
+    // Verify OTP
+    if (pending.otp_code !== otp) {
+      const newAttempts = pending.otp_attempts + 1;
+      await supabase
+        .from('pending_registrations')
+        .update({ otp_attempts: newAttempts })
+        .eq('email', normalizedEmail);
+
+      const remaining = config.otp.maxAttempts - newAttempts;
+      if (remaining <= 0) {
+        throw new ValidationError('Invalid OTP. Maximum attempts exceeded. Please request a new OTP.');
+      }
+      throw new ValidationError(`Invalid OTP. ${remaining} attempt${remaining > 1 ? 's' : ''} remaining.`);
+    }
+
+    // OTP valid — create the real user
     const userId = uuidv4();
     const { error: createError } = await supabase.from('users').insert({
       id: userId,
-      email: email.toLowerCase(),
-      password_hash: passwordHash,
-      first_name: firstName,
-      last_name: lastName,
+      email: normalizedEmail,
+      password_hash: pending.password_hash,
+      first_name: pending.first_name,
+      last_name: pending.last_name,
       roles: ['customer'],
       active_role: 'customer',
       provider: 'emailpass',
-      email_verified: false,
+      email_verified: true,
       status: 'active',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
 
     if (createError) {
-      logger.error('Error creating user:', createError);
-      throw new Error('Failed to create user');
+      logger.error('Error creating user from pending registration:', createError);
+      throw new Error('Failed to complete registration');
     }
 
-    // Generate and send OTP
-    const otp = await otpService.createOTP(userId, 'email_verification');
-    await emailService.sendOTPEmail(email, firstName, otp, 'verification');
-
-    logger.info(`User registered successfully: ${email}`);
-    return { userId, email };
-  }
-
-  /**
-   * Verify email with OTP
-   */
-  async verifyEmail(email: string, otp: string): Promise<void> {
-    // Get user
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('id, first_name, email_verified')
-      .eq('email', email.toLowerCase())
-      .single();
-
-    if (error || !user) {
-      throw new NotFoundError('User not found');
-    }
-
-    if (user.email_verified) {
-      throw new ValidationError('Email is already verified');
-    }
-
-    // Verify OTP
-    await otpService.verifyOTP(user.id, otp, 'email_verification');
-
-    // Update user as verified
-    const { error: updateError } = await supabase
-      .from('users')
-      .update({
-        email_verified: true,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', user.id);
-
-    if (updateError) {
-      logger.error('Error updating user verification status:', updateError);
-      throw new Error('Failed to verify email');
-    }
+    // Remove pending registration
+    await supabase.from('pending_registrations').delete().eq('email', normalizedEmail);
 
     // Send welcome email
     try {
-      await emailService.sendWelcomeEmail(email, user.first_name);
-    } catch (error) {
-      logger.warn('Failed to send welcome email:', error);
-      // Don't fail verification if welcome email fails
+      await emailService.sendWelcomeEmail(normalizedEmail, pending.first_name);
+    } catch (err) {
+      logger.warn('Failed to send welcome email:', err);
     }
 
-    logger.info(`Email verified successfully: ${email}`);
+    logger.info(`Email verified and user created: ${normalizedEmail}`);
   }
 
   /**
-   * Resend OTP
+   * Resend OTP — works for both pending registrations and legacy unverified users
    */
   async resendOTP(email: string): Promise<void> {
-    // Get user
+    const normalizedEmail = email.toLowerCase();
+
+    // Check pending_registrations first
+    const { data: pending } = await supabase
+      .from('pending_registrations')
+      .select('first_name, expires_at')
+      .eq('email', normalizedEmail)
+      .single();
+
+    if (pending) {
+      if (new Date(pending.expires_at) < new Date()) {
+        await supabase.from('pending_registrations').delete().eq('email', normalizedEmail);
+        throw new ValidationError('Registration has expired. Please register again.');
+      }
+
+      const otpCode = otpService.generateOTP();
+      const otpExpiresAt = new Date();
+      otpExpiresAt.setMinutes(otpExpiresAt.getMinutes() + config.otp.expiryMinutes);
+
+      await supabase
+        .from('pending_registrations')
+        .update({
+          otp_code: otpCode,
+          otp_expires_at: otpExpiresAt.toISOString(),
+          otp_attempts: 0,
+        })
+        .eq('email', normalizedEmail);
+
+      await emailService.sendOTPEmail(normalizedEmail, pending.first_name, otpCode, 'verification');
+      logger.info(`OTP resent (pending registration): ${normalizedEmail}`);
+      return;
+    }
+
+    // Fallback: legacy unverified user in users table
     const { data: user, error } = await supabase
       .from('users')
       .select('id, first_name, email_verified')
-      .eq('email', email.toLowerCase())
+      .eq('email', normalizedEmail)
       .single();
 
     if (error || !user) {
-      throw new NotFoundError('User not found');
+      throw new NotFoundError('No registration found for this email. Please register first.');
     }
 
     if (user.email_verified) {
       throw new ValidationError('Email is already verified');
     }
 
-    // Generate and send new OTP
     const otp = await otpService.createOTP(user.id, 'email_verification');
-    await emailService.sendOTPEmail(email, user.first_name, otp, 'verification');
-
-    logger.info(`OTP resent to: ${email}`);
+    await emailService.sendOTPEmail(normalizedEmail, user.first_name, otp, 'verification');
+    logger.info(`OTP resent (legacy user): ${normalizedEmail}`);
   }
 
   /**

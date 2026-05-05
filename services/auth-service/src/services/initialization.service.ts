@@ -101,7 +101,7 @@ export class InitializationService {
       logger.info('✅ Primary admin initialized:', adminUser.email);
       logger.info('🎉 Admin users initialization completed!');
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error('❌ Failed to initialize admin users:', error);
       throw error;
     } finally {
@@ -109,18 +109,14 @@ export class InitializationService {
     }
   }
 
-  /**
-   * Initialize all required data on service startup
-   */
   static async initialize(): Promise<void> {
     try {
       logger.info('🚀 Starting auth service initialization...');
 
-      // Initialize admin users
       await this.initializeAdminUsers();
 
       logger.info('✅ Auth service initialization completed successfully!');
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error('❌ Auth service initialization failed:', error);
       throw error;
     }

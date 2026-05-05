@@ -6,15 +6,12 @@ import driverRoutes from './driver.routes';
 import driverRegistrationRoutes from './driver-registration.routes';
 import driverRideRoutes from './driver-ride.routes';
 import walletRoutes from './wallet.routes';
-import adminDocumentRoutes from './admin-document.routes';
-import adminDriverRoutes from './admin-driver.routes';
 import notificationRoutes from './notification.routes';
 import savedPlacesRoutes from './saved-places.routes';
 import paymentCardsRoutes from './payment-cards.routes';
 import supportRoutes from './support.routes';
 import locationsRoutes from './locations.routes';
 import deliveryRoutes from '../modules/deliveries/routes/deliveries.routes';
-import adminDeliveryRoutes from '../modules/deliveries/routes/admin-delivery.routes';
 import { RideController } from '../controllers/ride.controller';
 
 const router = Router();
@@ -28,11 +25,6 @@ router.get('/api/rides/track/:shareToken', rideController.trackRideByToken);
 router.use('/api/driver-registration', driverRegistrationRoutes);
 router.use('/api/drivers', driverRoutes);
 router.use('/api', variantRoutes);
-
-// Mount admin routes (with admin auth middleware)
-router.use('/api/admin/documents', adminDocumentRoutes);
-router.use('/api/admin/drivers', adminDriverRoutes);
-router.use('/api/admin/delivery', adminDeliveryRoutes); // Phase 5: Admin delivery analytics
 
 // Mount routes with global auth middleware last
 router.use('/api', cartRoutes);

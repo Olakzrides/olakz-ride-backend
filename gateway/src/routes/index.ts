@@ -184,10 +184,30 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))
   );
 
-  // Admin routes for core-logistics (document verification, driver review, etc.)
+  // Admin Service routes (dedicated admin-service on port 3008)
+  // IMPORTANT: must come before /api/vendor routes to avoid conflict with /api/vendor/admin
+  app.use(
+    '/api/admin/health',
+    createProxyMiddleware(createProxyOptions(
+      config.services.admin.url,
+      { '^/api/admin/health': '/health' },
+      10000
+    ))
+  );
+
   app.use(
     '/api/admin',
-    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+    createProxyMiddleware(createProxyOptions(config.services.admin.url, undefined, 30000))
+  );
+
+  // Vendor admin management (now proxied to admin-service)
+  app.use(
+    '/api/vendor/admin',
+    createProxyMiddleware(createProxyOptions(
+      config.services.admin.url,
+      { '^/api/vendor/admin': '/api/admin/vendors' },
+      30000
+    ))
   );
 
   // Legacy core-logistics admin routes (for backward compatibility)
@@ -258,12 +278,6 @@ export function setupRoutes(app: Application): void {
   // Vendor registration (platform-service — platform-wide for all business types)
   app.use(
     '/api/vendor/register',
-    createProxyMiddleware(createProxyOptions(config.services.platform.url, undefined, 30000))
-  );
-
-  // Vendor admin management (platform-service)
-  app.use(
-    '/api/vendor/admin',
     createProxyMiddleware(createProxyOptions(config.services.platform.url, undefined, 30000))
   );
 
