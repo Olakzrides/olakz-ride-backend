@@ -32,6 +32,11 @@ interface Config {
       healthCheck: string;
       timeout: number;
     };
+    admin: {
+      url: string;
+      healthCheck: string;
+      timeout: number;
+    };
   };
   cors: {
     allowedOrigins: string[];
@@ -82,6 +87,11 @@ const config: Config = {
       url: process.env.MARKETPLACE_SERVICE_URL || 'http://localhost:3006',
       healthCheck: '/health',
       timeout: 60000,
+    },
+    admin: {
+      url: process.env.ADMIN_SERVICE_URL || 'http://localhost:3008',
+      healthCheck: '/health',
+      timeout: parseInt(process.env.SERVICE_TIMEOUT || '10000', 10),
     },
   },
 

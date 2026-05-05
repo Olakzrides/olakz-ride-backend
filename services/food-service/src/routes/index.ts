@@ -4,7 +4,6 @@ import vendorRoutes from './vendor.routes';
 import courierRoutes from './courier.routes';
 import vendorPickupRoutes from './vendor-pickup.routes';
 import analyticsRoutes from './analytics.routes';
-import foodAdminRoutes from './food-admin.routes';
 import { VendorProfileService } from '../services/vendor-profile.service';
 import { ResponseUtil } from '../utils/response';
 import logger from '../utils/logger';
@@ -54,7 +53,6 @@ export function setupRoutes(app: Application): void {
   app.use('/api/food/courier', courierRoutes);
   app.use('/api/vendor-pickup', vendorPickupRoutes);
   app.use('/api/analytics', analyticsRoutes);
-  app.use('/api/food/admin', foodAdminRoutes);
 
   logger.info('Food service routes configured');
 }

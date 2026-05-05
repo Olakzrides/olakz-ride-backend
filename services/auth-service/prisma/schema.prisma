@@ -99,6 +99,23 @@ model OtpResendTracking {
   @@map("otp_resend_tracking")
 }
 
+model PendingRegistration {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String   @unique @db.VarChar(255)
+  firstName    String   @map("first_name") @db.VarChar(100)
+  lastName     String   @map("last_name") @db.VarChar(100)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  otpCode      String   @map("otp_code") @db.VarChar(10)
+  otpExpiresAt DateTime @map("otp_expires_at") @db.Timestamptz(6)
+  otpAttempts  Int      @default(0) @map("otp_attempts")
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([email])
+  @@index([expiresAt])
+  @@map("pending_registrations")
+}
+
 model advertisements {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   title       String    @db.VarChar(255)
