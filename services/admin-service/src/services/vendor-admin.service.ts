@@ -392,11 +392,10 @@ export class VendorAdminService {
 
     if (updateError || !updated) throw new Error('Failed to update vendor status');
 
-    // Mirror on users table
-    await supabase
-      .from('users')
-      .update({ status: newStatus === 'suspended' ? 'suspended' : 'active', updated_at: new Date().toISOString() })
-      .eq('id', v.user_id as string);
+    // Suspend only affects vendors.verification_status — users.status is NOT touched.
+    // A suspended vendor can still use the platform as a regular user
+    // (place orders, use wallet, etc.) but cannot operate their store
+    // or receive any vendor orders/updates until reactivated.
 
     logger.info('Admin toggled vendor suspension', { adminId, vendorId, from: v.verification_status, to: newStatus });
     return { vendor: updated, action: newStatus === 'suspended' ? 'suspended' : 'reactivated' };

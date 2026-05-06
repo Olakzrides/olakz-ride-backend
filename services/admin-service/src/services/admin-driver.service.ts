@@ -436,11 +436,10 @@ export class AdminDriverService {
 
     if (updateError || !updated) throw new Error('Failed to update driver status');
 
-    // Mirror on users table so login is blocked when suspended
-    await supabase
-      .from('users')
-      .update({ status: newStatus === 'suspended' ? 'suspended' : 'active', updated_at: new Date().toISOString() })
-      .eq('id', row.user_id as string);
+    // Suspend only affects drivers.status — users.status is NOT touched.
+    // A suspended driver can still use the platform as a regular user
+    // (book rides as passenger, use wallet, etc.) but cannot accept
+    // or receive any driver jobs/updates until reactivated.
 
     logger.info('Admin toggled driver suspension', { adminId, driverId, from: row.status, to: newStatus });
     return { driver: updated, action: newStatus === 'suspended' ? 'suspended' : 'reactivated' };
