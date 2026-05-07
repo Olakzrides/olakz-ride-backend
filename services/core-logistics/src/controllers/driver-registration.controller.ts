@@ -383,6 +383,14 @@ export class DriverRegistrationController {
    * Upload documents with real file processing
    */
   uploadDocuments = async (req: AuthRequest, res: Response): Promise<void> => {
+
+
+      console.log('=== UPLOAD CONTROLLER HIT ===', {
+    contentType: req.headers['content-type'],
+    filesArray: Array.isArray(req.files) ? req.files.length : 'not array',
+    filesObject: !Array.isArray(req.files) ? Object.keys(req.files || {}) : 'is array',
+    body: req.body,
+  });
     try {
       const { id: sessionId } = req.params;
       const userId = req.user?.id;
