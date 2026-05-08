@@ -243,14 +243,36 @@ export class RideMatchingService {
     const driverMatches: DriverMatch[] = [];
 
     for (const driver of driversData) {
-      // Get latest location - sort manually since we can't order nested relations
+      // Get latest location from nested relation
       const locations = driver.location_tracking || [];
-      if (locations.length === 0) continue;
       
-      // Sort by created_at descending and get the first one
-      const latestLocation = locations.sort((a: any, b: any) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      )[0];
+      let latestLocation: { latitude: string; longitude: string } | null = null;
+
+      if (locations.length > 0) {
+        // Sort by created_at descending and get the first one
+        latestLocation = locations.sort((a: any, b: any) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        )[0];
+      } else {
+        // Fallback: query driver_locations table for last known position
+        const { data: fallbackLocation } = await supabase
+          .from('driver_locations')
+          .select('latitude, longitude, created_at')
+          .eq('driver_id', driver.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (fallbackLocation) {
+          latestLocation = fallbackLocation;
+          logger.info(`Using fallback location for driver ${driver.id}`);
+        }
+      }
+
+      if (!latestLocation) {
+        logger.warn(`Skipping driver ${driver.id} — no location data available`);
+        continue;
+      }
 
       // Calculate distance from pickup point using Haversine (for filtering)
       const distance = this.calculateDistance(
