@@ -284,15 +284,30 @@ export class RideService {
 
       const { data: variant } = await supabase
         .from('ride_variants')
-        .select('vehicle_type_id')
+        .select('vehicle_type_id, title')
         .eq('id', data.variant_id)
         .single();
 
       if (variant) {
+        // Map variant title to service tier ID
+        // service_tier_id on drivers: standard=...0011, premium=...0012, vip=...0013
+        const serviceTierMap: Record<string, string> = {
+          standard: '00000000-0000-0000-0000-000000000011',
+          premium:  '00000000-0000-0000-0000-000000000012',
+          vip:      '00000000-0000-0000-0000-000000000013',
+        };
+        const variantTitle = (variant.title || '').toLowerCase();
+        const serviceTierId = serviceTierMap[variantTitle] || serviceTierMap['standard'];
+
+        logger.info('🎯 Resolved service tier for matching:', {
+          variantTitle: variant.title,
+          serviceTierId,
+        });
+
         const matchingResult = await this.rideMatchingService.findAndNotifyDriversForRide(rideId, {
           pickupLatitude: data.pickup_location.latitude,
           pickupLongitude: data.pickup_location.longitude,
-          serviceTierId: variant.vehicle_type_id,
+          serviceTierId,
           maxDistance: 15,
           maxDrivers: 5,
         });

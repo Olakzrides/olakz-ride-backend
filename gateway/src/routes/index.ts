@@ -178,10 +178,10 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))
   );
 
-  // Phase 2: Driver Registration routes (Multi-step registration flow)
+  // Phase 2: Driver Registration routes — higher timeout for document uploads and submit
   app.use(
     '/api/driver-registration',
-    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url, undefined, 120000))
   );
 
   // Admin Service routes (dedicated admin-service on port 3008)
