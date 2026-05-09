@@ -192,6 +192,11 @@ export class RideMatchingService {
     logger.info(`✅ Step 6: Found ${withLocation?.length || 0} location records for these drivers`);
 
     // Get drivers with latest location and availability
+    // NOTE: location_tracking is intentionally NOT included in this query.
+    // Including it as a nested relation causes row multiplication (one row per
+    // location record per driver), which makes the same driver appear multiple
+    // times in results and only 1 driver ends up receiving the request.
+    // Location is fetched separately per driver below.
     const { data: driversData, error } = await supabase
       .from('drivers')
       .select(`
@@ -211,11 +216,6 @@ export class RideMatchingService {
           is_online,
           is_available,
           last_seen_at
-        ),
-        location_tracking:driver_location_tracking(
-          latitude,
-          longitude,
-          created_at
         )
       `)
       .eq('status', 'approved')
@@ -243,17 +243,18 @@ export class RideMatchingService {
     const driverMatches: DriverMatch[] = [];
 
     for (const driver of driversData) {
-      // Get latest location from nested relation
-      const locations = driver.location_tracking || [];
-      
-      let latestLocation: { latitude: string; longitude: string } | null = null;
+      // Fetch latest location separately (avoids row multiplication from nested join)
+      const { data: latestLocationData } = await supabase
+        .from('driver_location_tracking')
+        .select('latitude, longitude, created_at')
+        .eq('driver_id', driver.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
 
-      if (locations.length > 0) {
-        // Sort by created_at descending and get the first one
-        latestLocation = locations.sort((a: any, b: any) =>
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        )[0];
-      } else {
+      let latestLocation: { latitude: string; longitude: string } | null = latestLocationData || null;
+
+      if (!latestLocation) {
         // Fallback: query driver_locations table for last known position
         const { data: fallbackLocation } = await supabase
           .from('driver_locations')
