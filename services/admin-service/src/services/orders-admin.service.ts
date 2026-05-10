@@ -5,7 +5,6 @@ function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface OrderFilters {
   search?: string;    
@@ -37,7 +36,7 @@ interface NormalisedOrder {
   date: string;       // date only: "12 Aug 2022"
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Helpers
 
 function normaliseStatus(raw: string): string {
   const map: Record<string, string> = {
@@ -190,8 +189,7 @@ async function fetchUsers(
   return result;
 }
 
-// ─── Per-service order fetchers ───────────────────────────────────────────────
-
+// Per-service order fetchers
 type RawOrder = {
   id: string;
   customer_id: string;
@@ -338,7 +336,7 @@ async function getDeliveryOrders(
   };
 }
 
-// ─── Core merge + paginate helper ─────────────────────────────────────────────
+// Core merge + paginate helper
 
 async function mergeAndPaginate(
   fetchers: Promise<{ orders: RawOrder[]; total: number }>[],
@@ -401,7 +399,7 @@ async function mergeAndPaginate(
   };
 }
 
-// ─── Main service ─────────────────────────────────────────────────────────────
+// Main service
 
 export class OrdersAdminService {
   /**
