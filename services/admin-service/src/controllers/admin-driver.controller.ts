@@ -111,4 +111,116 @@ export class AdminDriverController {
     const limit = Number(req.query.limit) || 20;
     ResponseUtil.success(res, { drivers: [], pagination: { page, limit, total: 0, pages: 0 } }, 'Driver search completed');
   };
+
+  // ─── New endpoints ────────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/admin/drivers
+   * All drivers with user details, vehicle info, status.
+   * Query: status, search, page, limit
+   */
+  getAllDrivers = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const { status, search, page, limit } = req.query;
+      const result = await this.adminDriverService.getAllDrivers({
+        status: status as string | undefined,
+        search: search as string | undefined,
+        page: page ? parseInt(page as string, 10) : 1,
+        limit: limit ? parseInt(limit as string, 10) : 20,
+      });
+      ResponseUtil.success(res, result, 'Drivers retrieved successfully');
+    } catch (err: unknown) {
+      logger.error('getAllDrivers error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, 'Failed to retrieve drivers', 'DRIVERS_FETCH_ERROR');
+    }
+  };
+
+  /**
+   * GET /api/admin/drivers/:driverId
+   * Full driver profile — identity, vehicle, documents, wallet balance.
+   */
+  getDriverById = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const driver = await this.adminDriverService.getDriverById(req.params.driverId);
+      if (!driver) { ResponseUtil.notFound(res, 'Driver'); return; }
+      ResponseUtil.success(res, { driver }, 'Driver retrieved successfully');
+    } catch (err: unknown) {
+      logger.error('getDriverById error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, 'Failed to retrieve driver', 'DRIVER_FETCH_ERROR');
+    }
+  };
+
+  /**
+   * GET /api/admin/drivers/:driverId/rides
+   * Driver ride history — location, rating, date, time, status, fare.
+   * Called when admin clicks "View History".
+   * Query: status, from, to, page, limit
+   */
+  getDriverRides = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const { driverId } = req.params;
+      const { status, from, to, page, limit } = req.query;
+      const result = await this.adminDriverService.getDriverRides(driverId, {
+        status: status as string | undefined,
+        from: from as string | undefined,
+        to: to as string | undefined,
+        page: page ? parseInt(page as string, 10) : 1,
+        limit: limit ? parseInt(limit as string, 10) : 20,
+      });
+      ResponseUtil.success(res, result, 'Driver ride history retrieved successfully');
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      if (msg === 'Driver not found') { ResponseUtil.notFound(res, 'Driver'); return; }
+      logger.error('getDriverRides error', { error: msg });
+      ResponseUtil.serverError(res, 'Failed to retrieve driver ride history', 'DRIVER_RIDES_ERROR');
+    }
+  };
+
+  /**
+   * PATCH /api/admin/drivers/:driverId/suspend
+   * Toggle suspension — approved→suspended or suspended→approved.
+   * No body needed. Terminated accounts are blocked.
+   */
+  suspendDriver = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const adminId = req.user?.id;
+      if (!adminId) { ResponseUtil.unauthorized(res); return; }
+      const result = await this.adminDriverService.toggleSuspend(req.params.driverId, adminId);
+      const message = result.action === 'suspended'
+        ? 'Driver account suspended successfully'
+        : 'Driver account reactivated successfully';
+      ResponseUtil.success(res, { driver: result.driver, action: result.action }, message);
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      if (msg === 'Driver not found') { ResponseUtil.notFound(res, 'Driver'); return; }
+      if (msg === 'ACCOUNT_TERMINATED') {
+        ResponseUtil.badRequest(res, 'This account has been permanently terminated', 'ACCOUNT_TERMINATED'); return;
+      }
+      logger.error('suspendDriver error', { error: msg });
+      ResponseUtil.serverError(res, 'Failed to update driver status', 'DRIVER_SUSPEND_ERROR');
+    }
+  };
+
+  /**
+   * PATCH /api/admin/drivers/:driverId/terminate
+   * Permanently disable account. Data preserved, nothing deleted.
+   * Body (optional): { "reason": "..." }
+   */
+  terminateDriver = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const adminId = req.user?.id;
+      if (!adminId) { ResponseUtil.unauthorized(res); return; }
+      const { reason } = req.body;
+      const driver = await this.adminDriverService.terminateDriverAccount(req.params.driverId, adminId, reason);
+      ResponseUtil.success(res, { driver }, 'Driver account permanently terminated. All data has been preserved.');
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      if (msg === 'Driver not found') { ResponseUtil.notFound(res, 'Driver'); return; }
+      if (msg === 'ALREADY_TERMINATED') {
+        ResponseUtil.badRequest(res, 'This driver account is already terminated', 'ALREADY_TERMINATED'); return;
+      }
+      logger.error('terminateDriver error', { error: msg });
+      ResponseUtil.serverError(res, 'Failed to terminate driver account', 'DRIVER_TERMINATE_ERROR');
+    }
+  };
 }

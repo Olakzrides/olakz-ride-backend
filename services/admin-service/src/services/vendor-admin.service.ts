@@ -115,13 +115,332 @@ export class VendorAdminService {
   }
 
   static async getById(vendorId: string) {
-    const { data, error } = await supabase
+    // Try by vendor id first, then fall back to user_id
+    let { data, error } = await supabase
       .from('vendors')
       .select('*')
       .eq('id', vendorId)
       .single();
 
+    // If not found by vendor id, try by user_id
+    if (error || !data) {
+      const fallback = await supabase
+        .from('vendors')
+        .select('*')
+        .eq('user_id', vendorId)
+        .single();
+      data = fallback.data;
+      error = fallback.error;
+    }
+
     if (error || !data) return null;
-    return data;
+    const v = data as Record<string, unknown>;
+
+    // Fetch user details (name, phone, email, status)
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email, phone, avatar_url, status, email_verified')
+      .eq('id', v.user_id as string)
+      .single();
+
+    const u = (user ?? {}) as Record<string, unknown>;
+
+    // Wallet balance
+    const { data: txns } = await supabase
+      .from('wallet_transactions')
+      .select('transaction_type, amount')
+      .eq('user_id', v.user_id as string)
+      .eq('status', 'completed');
+
+    let walletBalance = 0;
+    for (const tx of txns ?? []) {
+      const t = tx as Record<string, unknown>;
+      const amt = Number(t.amount ?? 0);
+      if (t.transaction_type === 'credit' || t.transaction_type === 'topup') walletBalance += amt;
+      else if (t.transaction_type === 'debit' || t.transaction_type === 'payment') walletBalance -= amt;
+    }
+
+    return {
+      // Vendor record
+      id: v.id,
+      user_id: v.user_id,
+      business_name: v.business_name,
+      business_type: v.business_type,
+      service_type: v.service_type,
+      verification_status: v.verification_status,
+      is_active: v.is_active,
+      nin_number: v.nin_number,
+      cac_document_url: v.cac_document_url,
+      logo_url: v.logo_url,
+      profile_picture_url: v.profile_picture_url,
+      store_images: v.store_images,
+      address: v.address,
+      city: v.city,
+      state: v.state,
+      country: null,
+      rejection_reason: v.rejection_reason,
+      approved_by: v.approved_by,
+      approved_at: v.approved_at,
+      created_at: v.created_at,
+      updated_at: v.updated_at,
+      // User identity
+      first_name: u.first_name ?? null,
+      last_name: u.last_name ?? null,
+      email: u.email ?? v.email,
+      phone: u.phone ?? v.phone,
+      avatar_url: u.avatar_url ?? null,
+      account_status: u.status ?? null,
+      email_verified: u.email_verified ?? null,
+      // Wallet
+      wallet_balance: Math.max(0, walletBalance),
+    };
+  }
+
+  // ─── Vendor order history ─────────────────────────────────────────────────
+
+  static async getVendorOrders(vendorId: string, filters: {
+    status?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const { page = 1, limit = 20 } = filters;
+    const offset = (page - 1) * limit;
+
+    // Get vendor to find user_id and business_type — try vendor id then user_id
+    let { data: vendor, error: vendorError } = await supabase
+      .from('vendors')
+      .select('id, user_id, business_type')
+      .eq('id', vendorId)
+      .single();
+
+    if (vendorError || !vendor) {
+      const fallback = await supabase
+        .from('vendors')
+        .select('id, user_id, business_type')
+        .eq('user_id', vendorId)
+        .single();
+      vendor = fallback.data;
+      vendorError = fallback.error;
+    }
+
+    if (vendorError || !vendor) throw new Error('Vendor not found');
+    const v = vendor as Record<string, unknown>;
+
+    const statusMap: Record<string, string> = {
+      delivered: 'Completed', completed: 'Completed',
+      cancelled: 'Cancelled', pending: 'Pending',
+      accepted: 'In Progress', preparing: 'In Progress',
+      ready: 'In Progress', picked_up: 'In Progress',
+      shipped: 'In Progress', arrived: 'In Progress',
+      rejected: 'Cancelled', courier_not_found: 'Pending',
+    };
+
+    const formatDate = (iso: string) =>
+      new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const formatTime = (iso: string) =>
+      new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+    type OrderRow = {
+      id: string; status: string; created_at: string;
+      items: Array<{ name: string; quantity: number; rating: number | null }>;
+    };
+
+    let allOrders: OrderRow[] = [];
+
+    // ── Marketplace orders ──────────────────────────────────────────────────
+    const { data: mpStore } = await supabase
+      .from('marketplace_stores')
+      .select('id')
+      .eq('owner_id', v.user_id as string)
+      .single();
+
+    if (mpStore) {
+      const storeId = (mpStore as Record<string, unknown>).id as string;
+      let mpQ = supabase
+        .from('marketplace_orders')
+        .select(`
+          id, status, created_at,
+          orderItems:marketplace_order_items(product_name, quantity),
+          reviews:marketplace_reviews(store_rating)
+        `)
+        .eq('store_id', storeId)
+        .order('created_at', { ascending: false });
+
+      if (filters.status && filters.status.toLowerCase() !== 'all') {
+        const raw = Object.entries(statusMap)
+          .filter(([, v2]) => v2.toLowerCase() === filters.status!.toLowerCase())
+          .map(([k]) => k);
+        if (raw.length) mpQ = mpQ.in('status', raw);
+      }
+      if (filters.from) mpQ = mpQ.gte('created_at', filters.from);
+      if (filters.to) {
+        const toEnd = new Date(filters.to); toEnd.setHours(23, 59, 59, 999);
+        mpQ = mpQ.lte('created_at', toEnd.toISOString());
+      }
+
+      const { data: mpOrders } = await mpQ;
+      for (const o of mpOrders ?? []) {
+        const row = o as Record<string, unknown>;
+        const items = (row.orderItems as Array<Record<string, unknown>> ?? []).map((i) => ({
+          name: i.product_name as string,
+          quantity: i.quantity as number,
+          rating: null as number | null,
+        }));
+        const reviews = row.reviews as Array<Record<string, unknown>> ?? [];
+        const rating = reviews.length ? Number(reviews[0].store_rating) : null;
+        if (items.length > 0) items[0].rating = rating;
+        allOrders.push({ id: row.id as string, status: row.status as string, created_at: row.created_at as string, items });
+      }
+    }
+
+    // ── Food orders ─────────────────────────────────────────────────────────
+    const { data: restaurant } = await supabase
+      .from('food_restaurants')
+      .select('id')
+      .eq('owner_id', v.user_id as string)
+      .single();
+
+    if (restaurant) {
+      const restaurantId = (restaurant as Record<string, unknown>).id as string;
+      let foodQ = supabase
+        .from('food_orders')
+        .select(`
+          id, status, created_at,
+          orderItems:food_order_items(item_name, quantity)
+        `)
+        .eq('restaurant_id', restaurantId)
+        .order('created_at', { ascending: false });
+
+      if (filters.status && filters.status.toLowerCase() !== 'all') {
+        const raw = Object.entries(statusMap)
+          .filter(([, v2]) => v2.toLowerCase() === filters.status!.toLowerCase())
+          .map(([k]) => k);
+        if (raw.length) foodQ = foodQ.in('status', raw);
+      }
+      if (filters.from) foodQ = foodQ.gte('created_at', filters.from);
+      if (filters.to) {
+        const toEnd = new Date(filters.to); toEnd.setHours(23, 59, 59, 999);
+        foodQ = foodQ.lte('created_at', toEnd.toISOString());
+      }
+
+      const { data: foodOrders } = await foodQ;
+      for (const o of foodOrders ?? []) {
+        const row = o as Record<string, unknown>;
+        const items = (row.orderItems as Array<Record<string, unknown>> ?? []).map((i) => ({
+          name: i.item_name as string,
+          quantity: i.quantity as number,
+          rating: null,
+        }));
+        allOrders.push({ id: row.id as string, status: row.status as string, created_at: row.created_at as string, items });
+      }
+    }
+
+    // Sort newest first
+    allOrders.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    const total = allOrders.length;
+    const paginated = allOrders.slice(offset, offset + limit);
+
+    const orders = paginated.map((o, idx) => ({
+      sn: offset + idx + 1,
+      id: o.id,
+      items_sold: o.items.map((i) => i.name).join(', '),
+      quantity: o.items.reduce((sum, i) => sum + i.quantity, 0),
+      rating: o.items[0]?.rating ?? null,
+      date: formatDate(o.created_at),
+      time: formatTime(o.created_at),
+      status: statusMap[o.status?.toLowerCase()] ?? o.status,
+    }));
+
+    return { orders, pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
+  }
+
+  // ─── Suspend / reactivate vendor ─────────────────────────────────────────
+
+  static async toggleSuspend(vendorId: string, adminId: string) {
+    let { data: existing, error } = await supabase
+      .from('vendors')
+      .select('id, user_id, verification_status')
+      .eq('id', vendorId)
+      .single();
+
+    if (error || !existing) {
+      const fallback = await supabase
+        .from('vendors')
+        .select('id, user_id, verification_status')
+        .eq('user_id', vendorId)
+        .single();
+      existing = fallback.data;
+      error = fallback.error;
+    }
+
+    if (error || !existing) throw new Error('Vendor not found');
+
+    const v = existing as Record<string, unknown>;
+    if (v.verification_status === 'terminated') throw new Error('ACCOUNT_TERMINATED');
+
+    const newStatus = v.verification_status === 'suspended' ? 'approved' : 'suspended';
+
+    const { data: updated, error: updateError } = await supabase
+      .from('vendors')
+      .update({ verification_status: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', vendorId)
+      .select('id, user_id, verification_status, updated_at')
+      .single();
+
+    if (updateError || !updated) throw new Error('Failed to update vendor status');
+
+    // Suspend only affects vendors.verification_status — users.status is NOT touched.
+    // A suspended vendor can still use the platform as a regular user
+    // (place orders, use wallet, etc.) but cannot operate their store
+    // or receive any vendor orders/updates until reactivated.
+
+    logger.info('Admin toggled vendor suspension', { adminId, vendorId, from: v.verification_status, to: newStatus });
+    return { vendor: updated, action: newStatus === 'suspended' ? 'suspended' : 'reactivated' };
+  }
+
+  // ─── Terminate vendor account ─────────────────────────────────────────────
+
+  static async terminateAccount(vendorId: string, adminId: string, reason?: string) {
+    let { data: existing, error } = await supabase
+      .from('vendors')
+      .select('id, user_id, verification_status')
+      .eq('id', vendorId)
+      .single();
+
+    if (error || !existing) {
+      const fallback = await supabase
+        .from('vendors')
+        .select('id, user_id, verification_status')
+        .eq('user_id', vendorId)
+        .single();
+      existing = fallback.data;
+      error = fallback.error;
+    }
+
+    if (error || !existing) throw new Error('Vendor not found');
+
+    const v = existing as Record<string, unknown>;
+    if (v.verification_status === 'terminated') throw new Error('ALREADY_TERMINATED');
+
+    const { data: updated, error: updateError } = await supabase
+      .from('vendors')
+      .update({ verification_status: 'terminated', is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', vendorId)
+      .select('id, user_id, verification_status, updated_at')
+      .single();
+
+    if (updateError || !updated) throw new Error('Failed to terminate vendor account');
+
+    // Mirror on users table — data preserved
+    await supabase
+      .from('users')
+      .update({ status: 'terminated', updated_at: new Date().toISOString() })
+      .eq('id', v.user_id as string);
+
+    logger.warn('Admin terminated vendor account', { adminId, vendorId, previousStatus: v.verification_status, reason: reason ?? 'No reason provided' });
+    return updated;
   }
 }

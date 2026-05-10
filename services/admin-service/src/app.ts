@@ -11,6 +11,8 @@ import foodRoutes from './routes/food.routes';
 import marketplaceRoutes from './routes/marketplace.routes';
 import vendorRoutes from './routes/vendors.routes';
 import userRoutes from './routes/users.routes';
+import ordersRoutes from './routes/orders.routes';
+import notificationsRoutes from './routes/notifications.routes';
 
 const app = express();
 
@@ -46,6 +48,12 @@ app.use('/api/admin/vendors', vendorRoutes);
 
 // Step 6: auth-service user role management
 app.use('/api/admin/users', userRoutes);
+
+// Step 7: cross-service orders aggregation
+app.use('/api/admin/orders', ordersRoutes);
+
+// Step 8: admin notifications
+app.use('/api/admin/notifications', notificationsRoutes);
 
 // 404
 app.use((req, res) => {
