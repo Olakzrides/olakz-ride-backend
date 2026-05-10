@@ -724,6 +724,7 @@ export class DriverRideService {
           ride:rides(
             id,
             user_id,
+            status,
             pickup_latitude,
             pickup_longitude,
             pickup_address,
@@ -747,10 +748,16 @@ export class DriverRideService {
 
       if (!requests || requests.length === 0) return [];
 
-      // Collect all unique customer user_ids from the rides
+      // Filter out requests where the ride is no longer searching
+      // (cancelled, accepted by another driver, completed, etc.)
+      const activeRequests = requests.filter(
+        (r: any) => r.ride?.status === 'searching'
+      );
+
+      // Collect all unique customer user_ids from the active rides
       const userIds = [
         ...new Set(
-          requests
+          activeRequests
             .map((r: any) => r.ride?.user_id)
             .filter(Boolean) as string[]
         ),
@@ -768,7 +775,7 @@ export class DriverRideService {
       }
 
       // Enrich each request with customer name
-      return requests.map((r: any) => {
+      return activeRequests.map((r: any) => {
         const userId = r.ride?.user_id;
         const user = userId ? userMap.get(userId) : null;
         const customerName = user
