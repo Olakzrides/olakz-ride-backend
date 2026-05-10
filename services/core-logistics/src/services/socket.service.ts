@@ -423,34 +423,100 @@ export class SocketService {
   }
 
   /**
-   * Broadcast ride request to multiple drivers
+   * Broadcast ride request to multiple drivers.
+   *
+   * Strategy:
+   * 1. Try the in-memory driverSockets map first (fastest path)
+   * 2. For any driver NOT in the map (reconnected, server restart, etc.)
+   *    fall back to the socket_connections DB table to find their active socket ID
+   *    and emit directly via this.io.to(socketId)
+   * 3. Also emit to the driver's named room `driver:{driverId}` as a safety net —
+   *    every driver joins this room on connect, so even if the map is stale the
+   *    room-based emit will reach them.
    */
   async broadcastRideRequestToDrivers(
     rideId: string,
     driverIds: string[],
     rideDetails: any
   ): Promise<void> {
-    const sockets = driverIds
-      .map(driverId => this.driverSockets.get(driverId))
-      .filter(Boolean);
-
-    if (sockets.length === 0) {
-      logger.warn(`No online drivers found for ride request: ${rideId}`);
-      return;
-    }
-
     const requestData = {
       rideId,
       ...rideDetails,
-      expiresAt: new Date(Date.now() + 30000).toISOString(), // 30 seconds
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
     };
 
-    // Send to all driver sockets
-    sockets.forEach(socketId => {
-      this.io.to(socketId!).emit('ride:request:new', requestData);
-    });
+    // Separate drivers found in the in-memory map from those that are missing
+    const foundInMemory: string[]  = [];
+    const missingFromMap: string[] = [];
 
-    logger.info(`Ride request broadcasted to ${sockets.length} drivers for ride: ${rideId}`);
+    for (const driverId of driverIds) {
+      if (this.driverSockets.has(driverId)) {
+        foundInMemory.push(driverId);
+      } else {
+        missingFromMap.push(driverId);
+      }
+    }
+
+    // 1. Emit to drivers already in the in-memory map
+    for (const driverId of foundInMemory) {
+      const socketId = this.driverSockets.get(driverId)!;
+      this.io.to(socketId).emit('ride:request:new', requestData);
+    }
+
+    // 2. For drivers missing from the map, look up their active socket in the DB
+    if (missingFromMap.length > 0) {
+      try {
+        // Get user_ids for these driver_ids
+        const { data: drivers } = await supabase
+          .from('drivers')
+          .select('id, user_id')
+          .in('id', missingFromMap);
+
+        const userIds = (drivers ?? []).map((d: any) => d.user_id as string);
+
+        if (userIds.length > 0) {
+          const { data: connections } = await supabase
+            .from('socket_connections')
+            .select('socket_id, user_id')
+            .in('user_id', userIds)
+            .eq('is_connected', true)
+            .eq('user_type', 'driver')
+            .order('connected_at', { ascending: false });
+
+          // Build a userId → socketId map from DB results (latest connection per user)
+          const dbSocketMap = new Map<string, string>();
+          for (const conn of connections ?? []) {
+            if (!dbSocketMap.has(conn.user_id)) {
+              dbSocketMap.set(conn.user_id, conn.socket_id);
+            }
+          }
+
+          // Emit to each recovered socket and repair the in-memory map
+          for (const driver of drivers ?? []) {
+            const socketId = dbSocketMap.get(driver.user_id);
+            if (socketId) {
+              this.io.to(socketId).emit('ride:request:new', requestData);
+              // Repair the in-memory map so future broadcasts don't need the DB fallback
+              this.driverSockets.set(driver.id, socketId);
+              logger.info(`DB fallback: recovered socket for driver ${driver.id}`);
+            } else {
+              // 3. Last resort — emit to the named room every driver joins on connect
+              this.io.to(`driver:${driver.id}`).emit('ride:request:new', requestData);
+              logger.warn(`Room fallback: no active socket found in DB for driver ${driver.id}, used room emit`);
+            }
+          }
+        }
+      } catch (err) {
+        logger.error('Error during DB socket fallback for ride broadcast:', err);
+        // Still attempt room-based emit for all missing drivers
+        for (const driverId of missingFromMap) {
+          this.io.to(`driver:${driverId}`).emit('ride:request:new', requestData);
+        }
+      }
+    }
+
+    const total = driverIds.length;
+    logger.info(`Ride request broadcasted to ${total} drivers for ride: ${rideId} (${foundInMemory.length} from memory, ${missingFromMap.length} via DB/room fallback)`);
   }
 
   /**
@@ -621,16 +687,55 @@ export class SocketService {
         .eq('ride_id', rideId)
         .neq('id', rideRequestId);
 
-      if (otherRequests) {
-        otherRequests.forEach(request => {
-          const driverSocketId = this.driverSockets.get(request.driver_id);
-          if (driverSocketId) {
-            this.io.to(driverSocketId).emit('ride:request:cancelled', {
-              rideId,
-              reason: 'accepted_by_another_driver',
-            });
+      if (otherRequests && otherRequests.length > 0) {
+        const cancelPayload = { rideId, reason: 'accepted_by_another_driver' };
+
+        // Get user_ids for all other drivers to enable DB fallback
+        const otherDriverIds = otherRequests.map((r: any) => r.driver_id as string);
+        const { data: otherDriverUsers } = await supabase
+          .from('drivers')
+          .select('id, user_id')
+          .in('id', otherDriverIds);
+
+        const userIds = (otherDriverUsers ?? []).map((d: any) => d.user_id as string);
+        const { data: dbConnections } = await supabase
+          .from('socket_connections')
+          .select('socket_id, user_id')
+          .in('user_id', userIds)
+          .eq('is_connected', true)
+          .eq('user_type', 'driver')
+          .order('connected_at', { ascending: false });
+
+        const dbSocketMap = new Map<string, string>();
+        for (const conn of dbConnections ?? []) {
+          if (!dbSocketMap.has(conn.user_id)) {
+            dbSocketMap.set(conn.user_id, conn.socket_id);
           }
-        });
+        }
+
+        const driverUserMap = new Map<string, string>();
+        for (const d of otherDriverUsers ?? []) {
+          driverUserMap.set(d.id, d.user_id);
+        }
+
+        for (const request of otherRequests) {
+          const dId = request.driver_id;
+          // Try in-memory map first
+          const memSocketId = this.driverSockets.get(dId);
+          if (memSocketId) {
+            this.io.to(memSocketId).emit('ride:request:cancelled', cancelPayload);
+          } else {
+            // DB fallback
+            const userId = driverUserMap.get(dId);
+            const dbSocketId = userId ? dbSocketMap.get(userId) : undefined;
+            if (dbSocketId) {
+              this.io.to(dbSocketId).emit('ride:request:cancelled', cancelPayload);
+            } else {
+              // Room fallback
+              this.io.to(`driver:${dId}`).emit('ride:request:cancelled', cancelPayload);
+            }
+          }
+        }
       }
 
       // Notify customer that driver was assigned

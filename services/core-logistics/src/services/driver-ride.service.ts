@@ -723,6 +723,8 @@ export class DriverRideService {
           created_at,
           ride:rides(
             id,
+            user_id,
+            status,
             pickup_latitude,
             pickup_longitude,
             pickup_address,
@@ -744,7 +746,54 @@ export class DriverRideService {
         return [];
       }
 
-      return requests || [];
+      if (!requests || requests.length === 0) return [];
+
+      // Filter out requests where the ride is no longer searching
+      // (cancelled, accepted by another driver, completed, etc.)
+      const activeRequests = requests.filter(
+        (r: any) => r.ride?.status === 'searching'
+      );
+
+      // Collect all unique customer user_ids from the active rides
+      const userIds = [
+        ...new Set(
+          activeRequests
+            .map((r: any) => r.ride?.user_id)
+            .filter(Boolean) as string[]
+        ),
+      ];
+
+      // Fetch customer details in one query
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, email, phone')
+        .in('id', userIds);
+
+      const userMap = new Map<string, any>();
+      for (const u of users ?? []) {
+        userMap.set(u.id, u);
+      }
+
+      // Enrich each request with customer name
+      return activeRequests.map((r: any) => {
+        const userId = r.ride?.user_id;
+        const user = userId ? userMap.get(userId) : null;
+        const customerName = user
+          ? (
+              `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() ||
+              (user.email ? user.email.split('@')[0] : null) ||
+              'Customer'
+            )
+          : 'Customer';
+
+        return {
+          ...r,
+          customer: {
+            name: customerName,
+            phone: user?.phone ?? null,
+          },
+        };
+      });
     } catch (error: any) {
       logger.error('Get pending requests error:', error);
       return [];

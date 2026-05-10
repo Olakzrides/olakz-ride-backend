@@ -308,8 +308,8 @@ export class RideService {
           pickupLatitude: data.pickup_location.latitude,
           pickupLongitude: data.pickup_location.longitude,
           serviceTierId,
-          maxDistance: 15,
-          maxDrivers: 5,
+          maxDistance: 30,
+          maxDrivers: 10,
         });
 
         logger.info('✅ Driver matching completed:', {
