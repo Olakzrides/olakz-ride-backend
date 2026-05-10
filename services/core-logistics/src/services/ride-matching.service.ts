@@ -27,9 +27,10 @@ interface RideMatchingCriteria {
 
 export class RideMatchingService {
   private socketService: SocketService;
-  private readonly MAX_DRIVERS_PER_REQUEST = 5;
+  private readonly MAX_DRIVERS_PER_REQUEST = 10;
   private readonly REQUEST_TIMEOUT_SECONDS = 600;
-  private readonly MAX_SEARCH_RADIUS_KM = 15;
+  private readonly MAX_SEARCH_RADIUS_KM = 15;         // 15km
+  private readonly LAST_SEEN_WINDOW_MINUTES = 5;     // 5 min
 
   constructor(socketService: SocketService) {
     this.socketService = socketService;
@@ -43,40 +44,34 @@ export class RideMatchingService {
     criteria: RideMatchingCriteria
   ): Promise<{ success: boolean; driversNotified: number; batchNumber: number }> {
     try {
-      logger.info(`🔍 Starting driver matching for ride: ${rideId}`, {
-        criteria,
-      });
 
       // Find available drivers
       const availableDrivers = await this.findAvailableDrivers(criteria);
 
-      logger.info(`📊 Found ${availableDrivers.length} available drivers`, {
-        rideId,
-        driversFound: availableDrivers.length,
-      });
+      // logger.info(`📊 Found ${availableDrivers.length} available drivers`, {
+      //   rideId,
+      //   driversFound: availableDrivers.length,
+      // });
 
       if (availableDrivers.length === 0) {
-        logger.warn(`⚠️ No available drivers found for ride: ${rideId}`, {
-          criteria,
-        });
         return { success: false, driversNotified: 0, batchNumber: 0 };
       }
 
       // Rank drivers by best match
       const rankedDrivers = this.rankDriversByBestMatch(availableDrivers, criteria);
 
-      logger.info(`📈 Ranked ${rankedDrivers.length} drivers`, {
-        rideId,
-        topDriverDistance: rankedDrivers[0]?.distance,
-      });
+      // logger.info(`📈 Ranked ${rankedDrivers.length} drivers`, {
+      //   rideId,
+      //   topDriverDistance: rankedDrivers[0]?.distance,
+      // });
 
       // Select top drivers for first batch
       const selectedDrivers = rankedDrivers.slice(0, this.MAX_DRIVERS_PER_REQUEST);
 
-      logger.info(`✅ Selected ${selectedDrivers.length} drivers for first batch`, {
-        rideId,
-        driverIds: selectedDrivers.map(d => d.driverId),
-      });
+      // logger.info(`✅ Selected ${selectedDrivers.length} drivers for first batch`, {
+      //   rideId,
+      //   driverIds: selectedDrivers.map(d => d.driverId),
+      // });
 
       // Create ride requests in database
       const batchNumber = await this.createRideRequests(rideId, selectedDrivers);
@@ -98,10 +93,10 @@ export class RideMatchingService {
       // Set timeout to handle no responses
       this.scheduleRequestTimeout(rideId, batchNumber, rankedDrivers);
 
-      logger.info(`⏰ Scheduled timeout for ride requests`, {
-        rideId,
-        timeoutSeconds: this.REQUEST_TIMEOUT_SECONDS,
-      });
+      // logger.info(`⏰ Scheduled timeout for ride requests`, {
+      //   rideId,
+      //   timeoutSeconds: this.REQUEST_TIMEOUT_SECONDS,
+      // });
 
       logger.info(`✅ Ride request sent to ${selectedDrivers.length} drivers for ride: ${rideId}`);
 
@@ -122,11 +117,11 @@ export class RideMatchingService {
   private async findAvailableDrivers(criteria: RideMatchingCriteria): Promise<DriverMatch[]> {
     const { pickupLatitude, pickupLongitude, serviceTierId, maxDistance } = criteria;
 
-    logger.info(`Searching for drivers with criteria:`, {
-      serviceTierId,
-      maxDistance,
-      pickup: { lat: pickupLatitude, lng: pickupLongitude }
-    });
+    // logger.info(`Searching for drivers with criteria:`, {
+    //   serviceTierId,
+    //   maxDistance,
+    //   pickup: { lat: pickupLatitude, lng: pickupLongitude }
+    // });
 
     // DEBUG: Check each condition separately
     logger.info('🔍 DEBUG: Checking driver conditions step by step...');
@@ -170,7 +165,7 @@ export class RideMatchingService {
     logger.info(`✅ Step 4: Found ${withAvailability?.length || 0} drivers with availability records`);
     
     // Step 5: Check online and available
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const fiveMinutesAgo = new Date(Date.now() - this.LAST_SEEN_WINDOW_MINUTES * 60 * 1000).toISOString();
     const { data: onlineDrivers } = await supabase
       .from('drivers')
       .select(`
@@ -182,7 +177,7 @@ export class RideMatchingService {
       .eq('availability.is_online', true)
       .eq('availability.is_available', true)
       .gte('availability.last_seen_at', fiveMinutesAgo);
-    logger.info(`✅ Step 5: Found ${onlineDrivers?.length || 0} drivers online and available (last 5 min)`);
+    logger.info(`✅ Step 5: Found ${onlineDrivers?.length || 0} drivers online and available (last ${this.LAST_SEEN_WINDOW_MINUTES} min)`);
     
     // Step 6: Check location data
     const { data: withLocation } = await supabase
@@ -197,7 +192,10 @@ export class RideMatchingService {
     // location record per driver), which makes the same driver appear multiple
     // times in results and only 1 driver ends up receiving the request.
     // Location is fetched separately per driver below.
-    const { data: driversData, error } = await supabase
+    const lastSeenCutoff = new Date(Date.now() - this.LAST_SEEN_WINDOW_MINUTES * 60 * 1000).toISOString();
+
+    // Build the base query — try with service_tier_id first
+    let { data: driversData, error } = await supabase
       .from('drivers')
       .select(`
         id,
@@ -223,7 +221,45 @@ export class RideMatchingService {
       .eq('vehicles.is_active', true)
       .eq('availability.is_online', true)
       .eq('availability.is_available', true)
-      .gte('availability.last_seen_at', fiveMinutesAgo);
+      .gte('availability.last_seen_at', lastSeenCutoff);
+
+    logger.info(`Query result (tier match): Found ${driversData?.length || 0} drivers, Error: ${error?.message || 'none'}`);
+
+    // Fallback: if no drivers match the specific service tier, include ALL approved
+    // online drivers regardless of tier so the customer isn't left waiting
+    if (!error && (!driversData || driversData.length === 0)) {
+      logger.warn(`No drivers found for service tier ${serviceTierId} — falling back to all approved online drivers`);
+      const fallback = await supabase
+        .from('drivers')
+        .select(`
+          id,
+          user_id,
+          rating,
+          total_rides,
+          service_tier_id,
+          vehicles:driver_vehicles!inner(
+            plate_number,
+            manufacturer,
+            model,
+            color,
+            is_active
+          ),
+          availability:driver_availability!inner(
+            is_online,
+            is_available,
+            last_seen_at
+          )
+        `)
+        .eq('status', 'approved')
+        .eq('vehicles.is_active', true)
+        .eq('availability.is_online', true)
+        .eq('availability.is_available', true)
+        .gte('availability.last_seen_at', lastSeenCutoff);
+
+      driversData = fallback.data;
+      error = fallback.error;
+      logger.info(`Fallback query: Found ${driversData?.length || 0} drivers`);
+    }
 
     logger.info(`Query result: Found ${driversData?.length || 0} drivers, Error: ${error?.message || 'none'}`);
     
@@ -481,12 +517,24 @@ export class RideMatchingService {
       return;
     }
 
-    // Get customer details
+    // Get customer details — include email as fallback for OAuth users
+    // whose first_name/last_name may be empty
     const { data: customer } = await supabase
       .from('users')
-      .select('first_name, last_name, phone')
+      .select('first_name, last_name, email, phone')
       .eq('id', ride.user_id)
       .single();
+
+    // Build customer name with fallback chain:
+    // full name → first name only → email prefix → 'Customer'
+    const customerFullName = customer
+      ? (
+          `${customer.first_name ?? ''} ${customer.last_name ?? ''}`.trim() ||
+          customer.first_name?.trim() ||
+          (customer.email ? customer.email.split('@')[0] : null) ||
+          'Customer'
+        )
+      : 'Customer';
 
     const driverIds = drivers.map(d => d.driverId);
     
@@ -494,8 +542,8 @@ export class RideMatchingService {
       rideId,
       batchNumber,
       customer: {
-        name: customer ? `${customer.first_name} ${customer.last_name}` : 'Customer',
-        phone: customer?.phone,
+        name: customerFullName,
+        phone: customer?.phone ?? null,
       },
       pickup: {
         latitude: parseFloat(ride.pickup_latitude),
