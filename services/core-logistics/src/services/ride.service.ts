@@ -308,7 +308,7 @@ export class RideService {
           pickupLatitude: data.pickup_location.latitude,
           pickupLongitude: data.pickup_location.longitude,
           serviceTierId,
-          maxDistance: 30,
+          maxDistance: 15,
           maxDrivers: 10,
         });
 

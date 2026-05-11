@@ -28,9 +28,9 @@ interface RideMatchingCriteria {
 export class RideMatchingService {
   private socketService: SocketService;
   private readonly MAX_DRIVERS_PER_REQUEST = 10;
-  private readonly REQUEST_TIMEOUT_SECONDS = 600;
-  private readonly MAX_SEARCH_RADIUS_KM = 15;         // 15km
-  private readonly LAST_SEEN_WINDOW_MINUTES = 5;     // 5 min
+  private readonly REQUEST_TIMEOUT_SECONDS = 600;    // 10 minutes per batch
+  private readonly MAX_SEARCH_RADIUS_KM = 15;        // 15km radius
+  private readonly LAST_SEEN_WINDOW_MINUTES = 5;
 
   constructor(socketService: SocketService) {
     this.socketService = socketService;
