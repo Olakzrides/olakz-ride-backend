@@ -747,21 +747,38 @@ export class SocketService {
 
       if (ride) {
         const driverDetails = await this.getDriverDetailsForPassenger(driverId);
+        const payload = {
+          rideId,
+          driverId,
+          status: 'driver_assigned',
+          driver: driverDetails,
+        };
+
         const customerSocketId = this.customerSockets.get(ride.user_id);
         if (customerSocketId) {
-          this.io.to(customerSocketId).emit('ride:driver:assigned', {
-            rideId,
-            driverId,
-            status: 'driver_assigned',
-            driver: driverDetails,
-          });
+          this.io.to(customerSocketId).emit('ride:driver:assigned', payload);
+          logger.info(`Notified customer ${ride.user_id} via memory socket`);
         } else {
-          this.io.to(`user:${ride.user_id}`).emit('ride:driver:assigned', {
-            rideId,
-            driverId,
-            status: 'driver_assigned',
-            driver: driverDetails,
-          });
+          // Fallback 1: room-based emit (every user joins user:{userId} on connect)
+          this.io.to(`user:${ride.user_id}`).emit('ride:driver:assigned', payload);
+          logger.info(`Notified customer ${ride.user_id} via room`);
+
+          // Fallback 2: DB socket lookup
+          const { data: conn } = await supabase
+            .from('socket_connections')
+            .select('socket_id')
+            .eq('user_id', ride.user_id)
+            .eq('is_connected', true)
+            .order('connected_at', { ascending: false })
+            .limit(1)
+            .single();
+
+          if (conn?.socket_id) {
+            this.io.to(conn.socket_id).emit('ride:driver:assigned', payload);
+            // Repair the in-memory map
+            this.customerSockets.set(ride.user_id, conn.socket_id);
+            logger.info(`Notified customer ${ride.user_id} via DB socket fallback`);
+          }
         }
       }
 
@@ -850,6 +867,7 @@ export class SocketService {
     photo: string | null;
     vehicle: { model: string; color: string; plateNumber: string; manufacturer: string } | null;
   }> {
+    // No FK constraint between drivers and users — fetch separately
     const { data: driver } = await supabase
       .from('drivers')
       .select(`

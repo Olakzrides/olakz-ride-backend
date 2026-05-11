@@ -294,6 +294,7 @@ export class RideController {
           const user = d.user as Record<string, unknown> | null;
           const vehicles = (d.vehicles as Array<Record<string, unknown>>) || [];
           const activeVehicle = vehicles.find(v => v.is_active) || vehicles[0] || null;
+
           driverInfo = {
             id: ride.driver_id,
             name: user ? `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || 'Your driver' : 'Your driver',
