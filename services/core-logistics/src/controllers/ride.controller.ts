@@ -13,6 +13,7 @@ import { TipService } from '../services/tip.service';
 import { ResponseUtil } from '../utils/response.util';
 import { logger } from '../config/logger';
 import { RideRequestRequest } from '../types';
+import { supabase } from '../config/database';
 
 export class RideController {
   private rideService: RideService;
@@ -275,6 +276,40 @@ export class RideController {
         return ResponseUtil.forbidden(res, 'Unauthorized access to ride');
       }
 
+      // Fetch driver details if a driver is assigned
+      let driverInfo = null;
+      if (ride.driver_id) {
+        const { data: driver } = await supabase
+          .from('drivers')
+          .select(`
+            id, rating,
+            user:users!drivers_user_id_fkey(first_name, last_name, phone, avatar_url),
+            vehicles:driver_vehicles(plate_number, manufacturer, model, color, is_active)
+          `)
+          .eq('id', ride.driver_id)
+          .single();
+
+        if (driver) {
+          const d = driver as Record<string, unknown>;
+          const user = d.user as Record<string, unknown> | null;
+          const vehicles = (d.vehicles as Array<Record<string, unknown>>) || [];
+          const activeVehicle = vehicles.find(v => v.is_active) || vehicles[0] || null;
+          driverInfo = {
+            id: ride.driver_id,
+            name: user ? `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || 'Your driver' : 'Your driver',
+            phone: user?.phone ?? null,
+            rating: parseFloat(String(d.rating ?? 0)),
+            photo: user?.avatar_url ?? null,
+            vehicle: activeVehicle ? {
+              plateNumber: activeVehicle.plate_number,
+              manufacturer: activeVehicle.manufacturer,
+              model: activeVehicle.model,
+              color: activeVehicle.color,
+            } : null,
+          };
+        }
+      }
+
       return ResponseUtil.success(res, {
         ride: {
           id: ride.id,
@@ -295,6 +330,7 @@ export class RideController {
           finalFare: ride.final_fare ? parseFloat(ride.final_fare) : null,
           estimatedDistance: ride.estimated_distance ? `${ride.estimated_distance} km` : null,
           estimatedDuration: ride.estimated_duration ? `${ride.estimated_duration} min` : null,
+          driver: driverInfo,
           variant: ride.ride_variants,
           createdAt: ride.created_at,
           completedAt: ride.completed_at,
