@@ -755,6 +755,13 @@ export class SocketService {
         };
 
         const customerSocketId = this.customerSockets.get(ride.user_id);
+
+        logger.info('Customer socket emit debug', {
+          userId: ride.user_id,
+          socketId: customerSocketId,
+          room: `user:${ride.user_id}`,
+          payload
+        });
         if (customerSocketId) {
           this.io.to(customerSocketId).emit('ride:driver:assigned', payload);
           logger.info(`Notified customer ${ride.user_id} via memory socket`);
