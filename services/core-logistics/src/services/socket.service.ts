@@ -926,6 +926,14 @@ export class SocketService {
 
       const customerSocketId = this.customerSockets.get(ride.user_id);
       if (customerSocketId) {
+
+
+logger.info('Customer socket emit debug', {
+  userId: ride.user_id,
+  socketId: customerSocketId,
+  room: `user:${ride.user_id}`,
+  
+});
         this.io.to(customerSocketId).emit('ride:driver:assigned', {
           rideId,
           driverId,
