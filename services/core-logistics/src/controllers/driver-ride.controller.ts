@@ -245,7 +245,10 @@ export class DriverRideController {
 
       return ResponseUtil.success(res, {
         message: 'Trip completed successfully',
-        finalFare: result.finalFare,
+        driverFare: result.finalDriverFare,
+        ...(result.paymentMethod === 'cash' ? {
+          platform_remittance: result.platformRemittance,
+        } : {}),
       });
     } catch (error: any) {
       logger.error('Complete trip error:', error);

@@ -153,6 +153,7 @@ export class RideController {
         pickupLocation,
         dropoffLocation,
         currencyCode: cart.currency_code,
+        bookingType: recipient ? 'for_friend' : 'for_me',
       });
 
       // Create ride with atomic transaction (includes balance check for wallet payments)
@@ -166,6 +167,11 @@ export class RideController {
         estimated_distance: fareDetails.distance,
         estimated_duration: fareDetails.duration,
         estimated_fare: fareDetails.totalFare,
+        // Store fare breakdown fields on the ride record
+        driver_fare: fareDetails.driverFare,
+        service_fee: fareDetails.serviceFee,
+        rounding_fee: fareDetails.roundingFee,
+        shared_discount: fareDetails.sharedDiscount,
         currency_code: cart.currency_code,
         payment_method: paymentMethod.type,
         payment_details: {
@@ -179,7 +185,7 @@ export class RideController {
         recipient_phone: recipient?.phone,
         metadata: {
           special_requests: specialRequests,
-          fare_breakdown: fareDetails,
+          fare_breakdown: fareDetails.fareBreakdown,
           cart_id: cartId,
         },
       });
@@ -224,7 +230,17 @@ export class RideController {
           id: rideResult.ride!.id,
           status: rideResult.ride!.status,
           estimated_fare: fareDetails.totalFare,
-          fare_breakdown: fareDetails,
+          fare_breakdown: {
+            ride_fare: fareDetails.fareBreakdown.rideFare,
+            ...(fareDetails.isSharedRide && fareDetails.fareBreakdown.sharedDiscount < 0
+              ? { shared_discount: fareDetails.fareBreakdown.sharedDiscount }
+              : {}),
+            service_fee: fareDetails.fareBreakdown.serviceFee,
+            rounding_fee: fareDetails.fareBreakdown.roundingFee,
+            ...(fareDetails.fareBreakdown.bookingFee > 0
+              ? { booking_fee: fareDetails.fareBreakdown.bookingFee }
+              : {}),
+          },
           pickup_location: pickupLocation,
           dropoff_location: dropoffLocation,
           payment_method: paymentMethod.type,

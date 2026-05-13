@@ -5,6 +5,7 @@ import { PaymentService } from './payment.service';
 import { DriverAvailabilityService } from './driver-availability.service';
 import { PushNotificationService } from './push-notification.service';
 import { LocationHistoryService } from './location-history.service';
+import { FareService } from './fare.service';
 
 interface Location {
   latitude: number;
@@ -441,21 +442,16 @@ export class DriverRideService {
   ): Promise<{
     success: boolean;
     finalFare?: number;
+    finalDriverFare?: number;
+    paymentMethod?: string;
+    platformRemittance?: number;
     error?: string;
   }> {
     try {
       // Get current ride details
       const { data: ride, error: fetchError } = await supabase
         .from('rides')
-        .select(`
-          *,
-          variant:ride_variants(
-            base_price,
-            price_per_km,
-            price_per_minute,
-            minimum_fare
-          )
-        `)
+        .select('*, variant:ride_variants(id, base_price, price_per_km, price_per_minute, minimum_fare)')
         .eq('id', rideId)
         .single();
 
@@ -478,19 +474,18 @@ export class DriverRideService {
         return { success: false, error: transitionValidation.error };
       }
 
-      // Calculate final fare
-      const variant = ride.variant as any;
-      const baseFare = parseFloat(variant.base_price);
-      const distanceFare = data.actualDistance * parseFloat(variant.price_per_km);
-      const timeFare = data.actualDuration * parseFloat(variant.price_per_minute);
-      const minimumFare = parseFloat(variant.minimum_fare);
+      // Calculate final fare using ride_fare_config (same formula as booking)
+      const fareService = new FareService();
+      const fareResult = await fareService.calculateCompletionFare({
+        variantId: (ride.variant as any)?.id ?? ride.variant_id,
+        actualDistance: data.actualDistance,
+        bookingType: ride.booking_type ?? 'for_me',
+      });
 
-      let finalFare = baseFare + distanceFare + timeFare;
-      if (finalFare < minimumFare) {
-        finalFare = minimumFare;
-      }
+      const finalFare       = fareResult.totalFare;
+      const finalDriverFare = fareResult.driverFare;
 
-      // Update ride with completion details
+      // Update ride with completion details including fare breakdown
       const { error: updateError } = await supabase
         .from('rides')
         .update({
@@ -499,6 +494,10 @@ export class DriverRideService {
           actual_distance: data.actualDistance,
           actual_duration: data.actualDuration,
           final_fare: finalFare,
+          final_driver_fare: finalDriverFare,
+          service_fee: fareResult.serviceFee,
+          rounding_fee: fareResult.roundingFee,
+          shared_discount: fareResult.sharedDiscount,
           updated_at: new Date().toISOString(),
         })
         .eq('id', rideId);
@@ -508,8 +507,7 @@ export class DriverRideService {
         return { success: false, error: 'Failed to complete trip' };
       }
 
-      // Convert payment hold to actual payment
-      // Find the hold transaction for this ride
+      // Convert payment hold to actual payment using customer total
       const { data: holdTransaction } = await supabase
         .from('wallet_transactions')
         .select('id')
@@ -528,6 +526,8 @@ export class DriverRideService {
             driver_id: driverId,
             actual_distance: data.actualDistance,
             actual_duration: data.actualDuration,
+            driver_fare: finalDriverFare,
+            service_fee: fareResult.serviceFee,
           },
         });
       } else {
@@ -548,48 +548,36 @@ export class DriverRideService {
         location: data.endLocation,
       });
 
-      // Send push notification to passenger
+      // Send push notification to passenger with customer-facing total
       await this.pushService.sendRideNotification(
         ride.user_id,
         rideId,
         'ride_completed',
-        {
-          finalFare: finalFare.toString(),
-        }
+        { finalFare: finalFare.toString() }
       );
 
-      // Record location visits for recent locations feature
-      // Record pickup location
+      // Record location visits
       if (ride.pickup_address) {
         await this.locationHistoryService.recordLocationVisit(
-          ride.user_id,
-          'pickup',
-          {
-            latitude: parseFloat(ride.pickup_latitude),
-            longitude: parseFloat(ride.pickup_longitude),
-            address: ride.pickup_address,
-          }
+          ride.user_id, 'pickup',
+          { latitude: parseFloat(ride.pickup_latitude), longitude: parseFloat(ride.pickup_longitude), address: ride.pickup_address }
         );
       }
-
-      // Record dropoff location
       if (ride.dropoff_address) {
         await this.locationHistoryService.recordLocationVisit(
-          ride.user_id,
-          'dropoff',
-          {
-            latitude: parseFloat(ride.dropoff_latitude),
-            longitude: parseFloat(ride.dropoff_longitude),
-            address: ride.dropoff_address,
-          }
+          ride.user_id, 'dropoff',
+          { latitude: parseFloat(ride.dropoff_latitude), longitude: parseFloat(ride.dropoff_longitude), address: ride.dropoff_address }
         );
       }
 
-      logger.info(`Driver ${driverId} completed trip ${rideId} with final fare ${finalFare}`);
+      logger.info(`Driver ${driverId} completed trip ${rideId} — customer: ₦${finalFare}, driver: ₦${finalDriverFare}`);
 
       return {
         success: true,
         finalFare,
+        finalDriverFare,
+        paymentMethod: ride.payment_method,
+        platformRemittance: fareResult.serviceFee + fareResult.roundingFee + fareResult.bookingFee,
       };
     } catch (error: any) {
       logger.error('Complete trip error:', error);
@@ -725,6 +713,11 @@ export class DriverRideService {
             id,
             user_id,
             status,
+            payment_method,
+            estimated_fare,
+            driver_fare,
+            service_fee,
+            rounding_fee,
             pickup_latitude,
             pickup_longitude,
             pickup_address,
@@ -786,11 +779,36 @@ export class DriverRideService {
             )
           : 'Customer';
 
+        const isCash = r.ride?.payment_method === 'cash';
+        const serviceFee         = Number(r.ride?.service_fee  ?? 0);
+        const roundingFee        = Number(r.ride?.rounding_fee ?? 0);
+        const bookingFee         = Number(r.ride?.booking_fee  ?? 0);
+        const platformRemittance = serviceFee + roundingFee + bookingFee;
+
+        // Strip raw fare/identity fields from ride — driver should not see them directly
+        const { service_fee, rounding_fee, driver_fare, estimated_fare, payment_method, user_id, ...ridePublic } = r.ride ?? {};
+
         return {
-          ...r,
+          id: r.id,
+          ride_id: r.ride_id,
+          status: r.status,
+          expires_at: r.expires_at,
+          distance_from_pickup: r.distance_from_pickup,
+          estimated_arrival: r.estimated_arrival,
+          created_at: r.created_at,
+          ride: ridePublic,
           customer: {
             name: customerName,
             phone: user?.phone ?? null,
+          },
+          payment_method: r.ride?.payment_method ?? null,
+          fare: {
+            driver_fare: Number(r.ride?.driver_fare ?? 0),
+            currency: 'NGN',
+            ...(isCash ? {
+              collect_from_customer: Number(r.ride?.estimated_fare ?? 0),
+              platform_remittance: platformRemittance,
+            } : {}),
           },
         };
       });

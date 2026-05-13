@@ -495,6 +495,10 @@ export class RideMatchingService {
       .select(`
         id,
         user_id,
+        payment_method,
+        driver_fare,
+        service_fee,
+        rounding_fee,
         pickup_latitude,
         pickup_longitude,
         pickup_address,
@@ -536,6 +540,12 @@ export class RideMatchingService {
         )
       : 'Customer';
 
+    const driverFare    = Number(ride.driver_fare ?? ride.estimated_fare ?? 0);
+    const serviceFee    = Number(ride.service_fee ?? 0);
+    const roundingFee   = Number(ride.rounding_fee ?? 0);
+    const isCash        = ride.payment_method === 'cash';
+    const platformRemittance = serviceFee + roundingFee;
+
     const driverIds = drivers.map(d => d.driverId);
     
     const rideRequestData = {
@@ -556,9 +566,16 @@ export class RideMatchingService {
         address: ride.dropoff_address,
       } : null,
       fare: {
-        estimated: parseFloat(ride.estimated_fare),
-        currency: 'NGN', // TODO: Get from region
+        driver_fare: driverFare,
+        currency: 'NGN',
+        // Cash-specific fields — driver collects total and remits platform fees
+        ...(isCash ? {
+          collect_from_customer: Number(ride.estimated_fare ?? 0),
+          platform_remittance: platformRemittance,
+          rounding_fee: roundingFee,
+        } : {}),
       },
+      payment_method: ride.payment_method,
       trip: {
         estimatedDistance: ride.estimated_distance ? parseFloat(ride.estimated_distance) : null,
         estimatedDuration: ride.estimated_duration,

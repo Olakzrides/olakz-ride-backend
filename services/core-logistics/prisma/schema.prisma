@@ -222,6 +222,14 @@ model Ride {
   actualDuration      Int?      @map("actual_duration")
   estimatedFare       Decimal   @map("estimated_fare") @db.Decimal(10, 2)
   finalFare           Decimal?  @map("final_fare") @db.Decimal(10, 2)
+
+  // Fare breakdown fields — stored at booking time, updated at completion
+  driverFare          Decimal?  @map("driver_fare") @db.Decimal(10, 2)          // driver's portion (billing_unit × distance)
+  finalDriverFare     Decimal?  @map("final_driver_fare") @db.Decimal(10, 2)    // driver's actual earnings after trip
+  serviceFee          Decimal?  @default(0) @map("service_fee") @db.Decimal(10, 2)   // platform fee (hidden from driver)
+  roundingFee         Decimal?  @default(0) @map("rounding_fee") @db.Decimal(10, 2)  // rounding adjustment (hidden from driver)
+  sharedDiscount      Decimal?  @default(0) @map("shared_discount") @db.Decimal(10, 2) // discount applied for shared rides
+  
   paymentMethod       String    @default("wallet") @map("payment_method") @db.VarChar(20)
   paymentStatus       String    @default("pending") @map("payment_status") @db.VarChar(20)
   scheduledAt         DateTime? @map("scheduled_at") @db.Timestamptz(6)
@@ -267,6 +275,44 @@ model Ride {
   @@index([status, createdAt])
   @@map("rides")
 }
+
+
+// ============================================
+// RIDE FARE CONFIGURATION (Admin-managed pricing)
+// ============================================
+
+// Admin-configurable pricing per vehicle category and service tier.
+// Service tiers (standard/premium/vip) only apply to cars.
+// All other vehicle categories use service_tier = 'default'.
+model RideFareConfig {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicleCategory           String   @map("vehicle_category") @db.VarChar(20)  // car | bicycle | motorcycle | bus | truck
+  serviceTier               String   @default("default") @map("service_tier") @db.VarChar(20)  // car: standard | premium | vip   |   all others: default
+  estimatedBillingUnit      Decimal  @default(0) @map("estimated_billing_unit") @db.Decimal(10, 2) // Normal traffic rate per km (e.g. 490) 
+  highTrafficEstimatedBillingUnit    Decimal  @default(0) @map("high_traffic_estimated_billing_unit") @db.Decimal(10, 2)  // Peak hour rate per km (car only)
+
+  minAmountLessThan3km      Decimal  @default(0) @map("min_amount_less_than_3km") @db.Decimal(10, 2)   // Flat fee applied when distance <= 3km (e.g. 3500)
+  minAmountForSharedRide       Decimal  @default(0) @map("min_amount_for_shared_ride") @db.Decimal(10, 2)
+  sharedDiscountPercent     Decimal  @default(0) @map("shared_discount_percent") @db.Decimal(5, 2)  // e.g. 20 = 20% discount for shared rides
+
+  // Platform fees (hidden from driver, added to customer total)
+  serviceFee                Decimal  @default(0) @map("service_fee") @db.Decimal(10, 2) // Flat fee per ride (e.g. 500)
+  roundingFee               Decimal  @default(0) @map("rounding_fee") @db.Decimal(10, 2) // Rounding adjustment (e.g. 50 for car/minibus)
+  bookingFee                Decimal  @default(0) @map("booking_fee") @db.Decimal(10, 2)  // Booking fee for motorcycle rides
+
+  // Fleet commission (% taken from driver earnings)
+  fleetCommissionPercent    Decimal  @default(0) @map("fleet_commission_percent") @db.Decimal(5, 2)
+
+  isActive                  Boolean  @default(true) @map("is_active")
+  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([vehicleCategory, serviceTier])
+  @@index([vehicleCategory])
+  @@index([isActive])
+  @@map("ride_fare_config")
+}
+
 
 // Wallet transactions for ride payments
 model WalletTransaction {
@@ -448,6 +494,11 @@ model Driver {
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  // Platform remittance tracking (cash rides)
+  pendingRemittanceAmount  Decimal  @default(0) @map("pending_remittance_amount") @db.Decimal(10, 2)
+  pendingRemittanceCount   Int      @default(0) @map("pending_remittance_count")
+  remittanceBlocked        Boolean  @default(false) @map("remittance_blocked")
+
   // Relations
   vehicleType       VehicleType          @relation("DriverVehicleType", fields: [vehicleTypeId], references: [id])
   serviceTier       VehicleType          @relation("DriverServiceTier", fields: [serviceTierId], references: [id])
@@ -458,6 +509,7 @@ model Driver {
   rides             Ride[]               @relation("DriverRides")
   rideRequests      RideRequest[]        @relation("DriverRideRequests")
   locationTracking  DriverLocationTracking[] @relation("DriverLocationTracking")
+  remittanceLogs    DriverRemittanceLog[]
 
   @@index([userId])
   @@index([vehicleTypeId])
@@ -539,6 +591,27 @@ model DriverDocument {
   @@index([parentDocumentId])
   @@index([expiryDateExtracted])
   @@map("driver_documents")
+}
+
+// ─── Driver Remittance Log ────────────────────────────────────────────────────
+// Tracks every platform remittance attempt for cash rides.
+model DriverRemittanceLog {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  driverId      String    @map("driver_id") @db.Uuid
+  rideId        String    @map("ride_id") @db.Uuid
+  amount        Decimal   @db.Decimal(10, 2)    // platform_remittance amount
+  status        String    @default("pending") @db.VarChar(20)  // auto_deducted | pending | settled_manually
+  settledAt     DateTime? @map("settled_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  driver        Driver    @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId])
+  @@index([rideId])
+  @@index([status])
+  @@index([driverId, status])
+  @@map("driver_remittance_log")
 }
 
 model DriverAvailability {
@@ -802,6 +875,7 @@ model RecentLocation {
   @@unique([userId, address])
   @@map("recent_locations")
 }
+
 
 
 model payment_cards {
