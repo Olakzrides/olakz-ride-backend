@@ -474,7 +474,6 @@ export class DriverRideService {
         return { success: false, error: transitionValidation.error };
       }
 
-      // Calculate final fare using ride_fare_config (same formula as booking)
       const fareService = new FareService();
       const fareResult = await fareService.calculateCompletionFare({
         variantId: (ride.variant as any)?.id ?? ride.variant_id,
