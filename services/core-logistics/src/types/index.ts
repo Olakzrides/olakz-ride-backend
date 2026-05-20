@@ -110,16 +110,23 @@ export interface RideStatus {
 
 // Fare calculation types
 export interface FareCalculation {
-  totalFare: number;
+  totalFare: number;           // Full amount customer pays
+  driverFare: number;          // Driver's portion only (billing_unit × distance)
+  serviceFee: number;          // Platform fee (hidden from driver)
+  roundingFee: number;         // Rounding adjustment (hidden from driver)
+  bookingFee: number;          // Motorcycle booking fee (hidden from driver)
+  sharedDiscount: number;      // Discount applied (0 if not shared or distance <= 3km)
   distance: number;
   duration: number;
   distanceText: string;
   durationText: string;
+  isSharedRide: boolean;
   fareBreakdown: {
-    baseFare: number;
-    distanceFare: number;
-    timeFare: number;
-    totalBeforeSurge: number;
+    rideFare: number;          // billing_unit × distance (before discount)
+    sharedDiscount: number;    // discount amount (negative, only if shared + > 3km)
+    serviceFee: number;
+    roundingFee: number;
+    bookingFee: number;
   };
 }
 

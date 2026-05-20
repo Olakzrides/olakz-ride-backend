@@ -22,10 +22,14 @@ router.post('/rides/requests/:id/accept', rideController.acceptRideRequest);
 router.post('/rides/requests/:id/decline', rideController.declineRideRequest);
 router.get('/rides/pending', rideController.getPendingRequests);
 
+// Driver Remittance Status
+router.get('/remittance/status', rideController.getRemittanceStatus);
+
 // Driver Ride Lifecycle
 router.post('/rides/:rideId/arrived', rideController.markArrived);
 router.post('/rides/:rideId/start', rideController.startTrip);
 router.post('/rides/:rideId/complete', rideController.completeTrip);
+router.post('/rides/:rideId/confirm-payment', rideController.confirmCashPayment);
 
 // Driver Ride Management
 router.get('/rides/active', rideController.getActiveRide);

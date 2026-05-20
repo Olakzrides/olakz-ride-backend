@@ -43,10 +43,14 @@ function timeAgo(iso: string): string {
 }
 
 function fullName(row: Record<string, unknown>): string {
-  return `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || (row.email as string) || 'Unknown';
+  return (
+    `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() ||
+    (row.first_name as string | undefined)?.trim() ||
+    (row.email ? (row.email as string).split('@')[0] : null) ||
+    'Customer'
+  );
 }
 
-/** Batch fetch user names by IDs */
 async function getUserMap(userIds: string[]): Promise<Map<string, Record<string, unknown>>> {
   const map = new Map<string, Record<string, unknown>>();
   if (!userIds.length) return map;
@@ -220,7 +224,14 @@ async function fetchRides(limit: number): Promise<AdminNotification[]> {
   return data.map((d) => {
     const r = d as Record<string, unknown>;
     const user = userMap.get(r.user_id as string) ?? {} as Record<string, unknown>;
-    const name = fullName(user) || 'Unknown User';
+
+    // Fallback chain: full name → first name → email prefix → 'Customer'
+    const name =
+      `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() ||
+      (user.first_name as string | undefined)?.trim() ||
+      (user.email ? (user.email as string).split('@')[0] : null) ||
+      'Customer';
+
     return {
       id: `ride_${r.id}`,
       type: 'new_ride' as NotificationType,

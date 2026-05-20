@@ -13,6 +13,8 @@ import vendorRoutes from './routes/vendors.routes';
 import userRoutes from './routes/users.routes';
 import ordersRoutes from './routes/orders.routes';
 import notificationsRoutes from './routes/notifications.routes';
+import pricingRoutes from './routes/pricing.routes';
+import remittanceRoutes from './routes/remittance.routes';
 
 const app = express();
 
@@ -54,6 +56,12 @@ app.use('/api/admin/orders', ordersRoutes);
 
 // Step 8: admin notifications
 app.use('/api/admin/notifications', notificationsRoutes);
+
+// Step 9: ride pricing config (admin-managed fare settings)
+app.use('/api/admin/pricing', pricingRoutes);
+
+// Step 10: driver remittance management
+app.use('/api/admin/remittance', remittanceRoutes);
 
 // 404
 app.use((req, res) => {

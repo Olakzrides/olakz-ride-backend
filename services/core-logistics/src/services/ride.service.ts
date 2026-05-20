@@ -74,6 +74,10 @@ export class RideService {
     estimated_distance: number;
     estimated_duration: number;
     estimated_fare: number;
+    driver_fare?: number;
+    service_fee?: number;
+    rounding_fee?: number;
+    shared_discount?: number;
     currency_code: string;
     payment_method: string;
     payment_details?: {
@@ -210,6 +214,10 @@ export class RideService {
         estimated_distance: data.estimated_distance,
         estimated_duration: data.estimated_duration,
         estimated_fare: data.estimated_fare,
+        driver_fare: data.driver_fare ?? data.estimated_fare,
+        service_fee: data.service_fee ?? 0,
+        rounding_fee: data.rounding_fee ?? 0,
+        shared_discount: data.shared_discount ?? 0,
         currency_code: data.currency_code,
         payment_method: 'cash',
         status: data.scheduled_at ? 'scheduled' : RideStatus.SEARCHING,
