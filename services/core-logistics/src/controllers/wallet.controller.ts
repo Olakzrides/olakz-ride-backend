@@ -59,13 +59,14 @@ export class WalletController {
       if (!userId || !userEmail) return ResponseUtil.unauthorized(res);
 
       const { amount, currencyCode = 'NGN', cardId, cardDetails } = req.body;
+      const authToken = req.headers.authorization?.split(' ')[1];
 
       if (!amount || amount <= 0) return ResponseUtil.badRequest(res, 'Invalid amount');
       if (amount < 100) return ResponseUtil.badRequest(res, 'Minimum top-up amount is ₦100');
       if (amount > 500000) return ResponseUtil.badRequest(res, 'Maximum top-up amount is ₦500,000');
       if (!cardId && !cardDetails) return ResponseUtil.badRequest(res, 'Either cardId or cardDetails is required');
 
-      const result = await this.paymentService.topupWallet({ userId, userEmail, amount, currencyCode, cardId, cardDetails });
+      const result = await this.paymentService.topupWallet({ userId, userEmail, amount, currencyCode, cardId, cardDetails, authToken });
 
       if (!result.success) return ResponseUtil.badRequest(res, result.message || 'Top-up failed');
 
@@ -101,10 +102,11 @@ export class WalletController {
       if (!userId) return ResponseUtil.unauthorized(res);
 
       const { flwRef, otp, amount, currencyCode = 'NGN' } = req.body;
+      const authToken = req.headers.authorization?.split(' ')[1];
       if (!flwRef || !otp) return ResponseUtil.badRequest(res, 'flwRef and otp are required');
       if (!amount) return ResponseUtil.badRequest(res, 'amount is required');
 
-      const result = await this.paymentService.validateTopup({ userId, flwRef, otp, amount, currencyCode });
+      const result = await this.paymentService.validateTopup({ userId, flwRef, otp, amount, currencyCode, authToken });
 
       if (!result.success) return ResponseUtil.badRequest(res, result.message || 'Validation failed');
 
@@ -147,8 +149,9 @@ export class WalletController {
 
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
+      const authToken = req.headers.authorization?.split(' ')[1];
 
-      const result = await this.paymentService.getUserTransactions(userId, page, limit);
+      const result = await this.paymentService.getUserTransactions(userId, page, limit, authToken);
 
       return ResponseUtil.success(res, {
         transactions: result.transactions,
