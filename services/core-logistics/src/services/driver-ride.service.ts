@@ -6,6 +6,7 @@ import { DriverAvailabilityService } from './driver-availability.service';
 import { PushNotificationService } from './push-notification.service';
 import { LocationHistoryService } from './location-history.service';
 import { FareService } from './fare.service';
+import { RemittanceService } from './remittance.service';
 
 interface Location {
   latitude: number;
@@ -46,6 +47,16 @@ export class DriverRideService {
     errorCode?: string;
   }> {
     try {
+      // Check if driver is remittance-blocked before allowing acceptance
+      const remittanceStatus = await RemittanceService.getRemittanceStatus(driverId);
+      if (remittanceStatus.blocked) {
+        return {
+          success: false,
+          error: `You cannot accept rides until you clear your outstanding platform remittance of ₦${remittanceStatus.pendingAmount.toLocaleString()}. Please top up your wallet to settle this amount.`,
+          errorCode: 'OUTSTANDING_REMITTANCE',
+        };
+      }
+
       // Get ride request details
       const { data: rideRequest, error: fetchError } = await supabase
         .from('ride_requests')
@@ -445,6 +456,12 @@ export class DriverRideService {
     finalDriverFare?: number;
     paymentMethod?: string;
     platformRemittance?: number;
+    remittanceStatus?: {
+      status: 'auto_deducted' | 'pending' | 'settled';
+      blocked: boolean;
+      pendingAmount: number;
+      pendingCount: number;
+    } | null;
     error?: string;
   }> {
     try {
@@ -536,6 +553,14 @@ export class DriverRideService {
       // Set driver as available again
       await this.availabilityService.setAvailable(driverId, true);
 
+      // For cash rides: remittance is NOT processed here.
+      // The driver must explicitly confirm cash receipt via
+      // POST /api/drivers/rides/:rideId/confirm-cash-payment
+      // Only then is handleCashRideRemittance called.
+      if (ride.payment_method === 'cash') {
+        logger.info(`Cash ride ${rideId} completed — awaiting driver cash confirmation before remittance`);
+      }
+
       // Create status update record
       await supabase.from('ride_status_updates').insert({
         ride_id: rideId,
@@ -576,11 +601,106 @@ export class DriverRideService {
         finalFare,
         finalDriverFare,
         paymentMethod: ride.payment_method,
-        platformRemittance: fareResult.serviceFee + fareResult.roundingFee + fareResult.bookingFee,
+        platformRemittance: ride.payment_method === 'cash'
+          ? fareResult.serviceFee + fareResult.roundingFee + fareResult.bookingFee
+          : undefined,
       };
     } catch (error: any) {
       logger.error('Complete trip error:', error);
       return { success: false, error: 'Failed to complete trip' };
+    }
+  }
+
+  /**
+   * Confirm cash payment received from customer.
+   * Only valid for completed cash rides.
+   * Triggers remittance processing after confirmation.
+   */
+  async confirmCashPayment(
+    driverId: string,
+    rideId: string
+  ): Promise<{
+    success: boolean;
+    remittanceStatus?: {
+      status: 'auto_deducted' | 'pending' | 'settled';
+      blocked: boolean;
+      pendingAmount: number;
+      pendingCount: number;
+    };
+    error?: string;
+  }> {
+    try {
+      // Fetch the ride
+      const { data: ride, error: fetchError } = await supabase
+        .from('rides')
+        .select('id, driver_id, status, payment_method, cash_payment_confirmed, service_fee, rounding_fee, final_fare, estimated_fare')
+        .eq('id', rideId)
+        .single();
+
+      if (fetchError || !ride) {
+        return { success: false, error: 'Ride not found' };
+      }
+
+      // Must be the assigned driver
+      if (ride.driver_id !== driverId) {
+        return { success: false, error: 'Unauthorized' };
+      }
+
+      // Must be a cash ride
+      if (ride.payment_method !== 'cash') {
+        return { success: false, error: 'This endpoint is only for cash rides' };
+      }
+
+      // Must be completed
+      if (ride.status !== 'completed') {
+        return { success: false, error: 'Ride must be completed before confirming cash payment' };
+      }
+
+      // Prevent double confirmation
+      if (ride.cash_payment_confirmed) {
+        return { success: false, error: 'Cash payment already confirmed for this ride' };
+      }
+
+      // Mark cash as confirmed
+      const { error: updateError } = await supabase
+        .from('rides')
+        .update({
+          cash_payment_confirmed: true,
+          cash_payment_confirmed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', rideId);
+
+      if (updateError) {
+        logger.error('Error confirming cash payment:', updateError);
+        return { success: false, error: 'Failed to confirm cash payment' };
+      }
+
+      // Now process remittance — booking_fee is not stored on rides, only service_fee and rounding_fee
+      const platformRemittance =
+        Number(ride.service_fee ?? 0) +
+        Number(ride.rounding_fee ?? 0);
+
+      const remittanceResult = await RemittanceService.handleCashRideRemittance({
+        driverId,
+        rideId,
+        platformRemittance,
+      });
+
+      logger.info(`Driver ${driverId} confirmed cash payment for ride ${rideId}. Remittance:`, remittanceResult);
+
+      return {
+        success: true,
+        remittanceStatus: {
+          status: remittanceResult.status,
+          blocked: remittanceResult.blocked,
+          pendingAmount: remittanceResult.pendingAmount,
+          pendingCount: remittanceResult.pendingCount,
+        },
+      };
+    } catch (error: any) {
+      logger.error('Confirm cash payment error:', error);
+      return { success: false, error: 'Failed to confirm cash payment' };
     }
   }
 

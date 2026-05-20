@@ -1,24 +1,68 @@
 import { supabase } from '../config/database';
 import { logger } from '../config/logger';
 import { v4 as uuidv4 } from 'uuid';
+import { FareService } from './fare.service';
+import { PushNotificationService } from './push-notification.service';
+
+// Resolve vehicle category from vehicle type name (mirrors fare.service.ts logic)
+function resolveVehicleCategory(vehicleTypeName: string): string {
+  const name = (vehicleTypeName ?? '').toLowerCase();
+  if (name.includes('bicycle') || name.includes('bike')) return 'bicycle';
+  if (name.includes('motorcycle') || name.includes('moto') || name.includes('okada')) return 'motorcycle';
+  if (name.includes('bus') || name.includes('minibus')) return 'bus';
+  if (name.includes('truck') || name.includes('lorry')) return 'truck';
+  return 'car';
+}
+
+function resolveServiceTier(variantTitle: string, vehicleCategory: string): string {
+  if (vehicleCategory !== 'car') return 'default';
+  const title = (variantTitle ?? '').toLowerCase();
+  if (title.includes('premium')) return 'premium';
+  if (title.includes('vip')) return 'vip';
+  return 'standard';
+}
 
 export class RideSharingService {
+  private fareService  = new FareService();
+  private pushService  = PushNotificationService.getInstance();
+
   /**
-   * Generate a shareable link for a ride
-   * Link expires 2 hours after ride completion
+   * Generate a shareable link for a ride.
+   * The FIRST time a link is generated, the fare is split between the ride
+   * owner and the second party using shared_discount_percent from ride_fare_config.
+   * Subsequent calls return the existing token without recalculating.
    */
   async generateShareLink(rideId: string, userId: string): Promise<{
     success: boolean;
     shareToken?: string;
     shareUrl?: string;
     expiresAt?: Date;
+    fare_split?: {
+      total_fare: number;
+      owner_share: number;
+      second_party_share: number;
+      split_percent: number;
+      distance_km: number;
+      split_applied: boolean;
+      no_split_reason?: string;
+    };
     error?: string;
   }> {
     try {
-      // Get ride details
+      // Get ride details — include everything needed for split calculation
       const { data: ride, error: fetchError } = await supabase
         .from('rides')
-        .select('id, user_id, status, completed_at, share_token, share_token_revoked')
+        .select(`
+          id, user_id, status, completed_at,
+          share_token, share_token_revoked,
+          share_discount_applied,
+          estimated_fare, estimated_distance,
+          variant_id, driver_id,
+          variant:ride_variants(
+            title,
+            vehicle_type:vehicle_types(name)
+          )
+        `)
         .eq('id', rideId)
         .single();
 
@@ -37,29 +81,114 @@ export class RideSharingService {
         return { success: false, error: 'Ride cannot be shared in current status' };
       }
 
+      // ── Calculate fare split ──────────────────────────────────────────────
+      const totalFare    = Number(ride.estimated_fare ?? 0);
+      const distanceKm   = Number(ride.estimated_distance ?? 0);
+      let fare_split: NonNullable<Awaited<ReturnType<typeof this.generateShareLink>>['fare_split']>;
+
+      if ((ride as any).share_discount_applied) {
+        // Already split — recalculate display values from stored shared_discount
+        const { data: rideWithDiscount } = await supabase
+          .from('rides')
+          .select('shared_discount, estimated_fare')
+          .eq('id', rideId)
+          .single();
+
+        const ownerShare       = Number((rideWithDiscount as any)?.shared_discount ?? 0);
+        const secondPartyShare = totalFare - ownerShare;
+        const splitPercent     = totalFare > 0 ? Math.round((ownerShare / totalFare) * 100) : 0;
+
+        fare_split = {
+          total_fare: totalFare,
+          owner_share: ownerShare,
+          second_party_share: secondPartyShare,
+          split_percent: splitPercent,
+          distance_km: distanceKm,
+          split_applied: true,
+        };
+      } else if (distanceKm > 3 && ride.status !== 'completed') {
+        // First time sharing — calculate the split
+        const variantData  = ride.variant as any;
+        const vehicleName  = variantData?.vehicle_type?.name ?? '';
+        const variantTitle = variantData?.title ?? '';
+        const category     = resolveVehicleCategory(vehicleName);
+        const tier         = resolveServiceTier(variantTitle, category);
+        const config       = await this.fareService.getFareConfig(category, tier);
+
+        const splitPercent = config ? Number(config.shared_discount_percent) : 0;
+
+        if (splitPercent > 0) {
+          const ownerShare       = Math.round(totalFare * (splitPercent / 100));
+          const secondPartyShare = totalFare - ownerShare;
+
+          // Persist the split on the ride record
+          await supabase
+            .from('rides')
+            .update({
+              shared_discount: ownerShare,
+              share_discount_applied: true,
+            })
+            .eq('id', rideId);
+
+          fare_split = {
+            total_fare: totalFare,
+            owner_share: ownerShare,
+            second_party_share: secondPartyShare,
+            split_percent: splitPercent,
+            distance_km: distanceKm,
+            split_applied: true,
+          };
+
+          logger.info(`Ride share split applied for ride ${rideId}: owner=₦${ownerShare}, second=₦${secondPartyShare}`);
+        } else {
+          fare_split = {
+            total_fare: totalFare,
+            owner_share: totalFare,
+            second_party_share: 0,
+            split_percent: 0,
+            distance_km: distanceKm,
+            split_applied: false,
+            no_split_reason: 'No shared ride discount configured for this vehicle type',
+          };
+        }
+      } else {
+        // Distance ≤ 3km or ride already completed — no split
+        fare_split = {
+          total_fare: totalFare,
+          owner_share: totalFare,
+          second_party_share: 0,
+          split_percent: 0,
+          distance_km: distanceKm,
+          split_applied: false,
+          no_split_reason: ride.status === 'completed'
+            ? 'Ride already completed, split no longer available'
+            : 'Trip distance is 3km or under, no split applies',
+        };
+      }
+
+      // ── Generate or return share token ────────────────────────────────────
       // If token exists and not revoked, return existing
-      if (ride.share_token && !ride.share_token_revoked) {
+      if ((ride as any).share_token && !(ride as any).share_token_revoked) {
         const baseUrl = process.env.FRONTEND_URL || 'https://olakzride.com';
         return {
           success: true,
-          shareToken: ride.share_token,
-          shareUrl: `${baseUrl}/track/${ride.share_token}`,
+          shareToken: (ride as any).share_token,
+          shareUrl: `${baseUrl}/track/${(ride as any).share_token}`,
+          fare_split,
         };
       }
 
       // Generate new token
       const shareToken = uuidv4();
-      const now = new Date();
-      
-      // Calculate expiry: 2 hours after ride completion, or 24 hours from now if not completed
+      const now        = new Date();
+
       let expiresAt: Date;
-      if (ride.completed_at) {
-        expiresAt = new Date(new Date(ride.completed_at).getTime() + 2 * 60 * 60 * 1000);
+      if ((ride as any).completed_at) {
+        expiresAt = new Date(new Date((ride as any).completed_at).getTime() + 2 * 60 * 60 * 1000);
       } else {
         expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
       }
 
-      // Update ride with share token
       const { error: updateError } = await supabase
         .from('rides')
         .update({
@@ -75,7 +204,40 @@ export class RideSharingService {
         return { success: false, error: 'Failed to generate share link' };
       }
 
-      const baseUrl = process.env.FRONTEND_URL || 'https://olakzride.com';
+      // ── Notify the assigned driver that a second passenger has been added ──
+      const driverId = (ride as any).driver_id ?? null;
+      if (driverId) {
+        try {
+          const { data: driverRow } = await supabase
+            .from('drivers')
+            .select('user_id')
+            .eq('id', driverId)
+            .single();
+
+          if (driverRow?.user_id) {
+            await this.pushService.sendToUser({
+              userId: driverRow.user_id,
+              rideId,
+              notificationType: 'second_passenger_added',
+              payload: {
+                title: '👥 Second Passenger Added',
+                body: 'Your passenger has shared this ride. Expect a second passenger to board.',
+                data: {
+                  type: 'second_passenger_added',
+                  rideId,
+                },
+              },
+              priority: 'high',
+            });
+            // logger.info(`Driver ${driverId} notified of second passenger for ride ${rideId}`);
+          }
+        } catch (notifyError) {
+          // Non-fatal — log and continue
+          logger.error('Failed to notify driver of second passenger:', notifyError);
+        }
+      }
+
+      const baseUrl  = process.env.FRONTEND_URL || 'https://olakzride.com';
       const shareUrl = `${baseUrl}/track/${shareToken}`;
 
       logger.info('Share link generated', { rideId, shareToken, expiresAt });
@@ -85,6 +247,7 @@ export class RideSharingService {
         shareToken,
         shareUrl,
         expiresAt,
+        fare_split,
       };
     } catch (error: any) {
       logger.error('Generate share link error:', error);
@@ -161,6 +324,9 @@ export class RideSharingService {
           dropoff_address,
           estimated_distance,
           estimated_duration,
+          estimated_fare,
+          shared_discount,
+          share_discount_applied,
           started_at,
           completed_at,
           share_token_expires_at,
@@ -266,6 +432,11 @@ export class RideSharingService {
       }
 
       // Format response (hide sensitive data)
+      const totalFare        = Number(ride.estimated_fare ?? 0);
+      const ownerShare       = Number((ride as any).shared_discount ?? 0);
+      const splitApplied     = (ride as any).share_discount_applied ?? false;
+      const secondPartyShare = splitApplied && ownerShare > 0 ? totalFare - ownerShare : 0;
+
       const publicRideData = {
         id: ride.id,
         status: ride.status,
@@ -294,6 +465,11 @@ export class RideSharingService {
             color: driverData.vehicle[0].color,
             plateNumber: driverData.vehicle[0].plate_number,
           } : null,
+        } : null,
+        // Second party sees their share of the fare
+        fare_split: splitApplied && secondPartyShare > 0 ? {
+          your_share: secondPartyShare,
+          message: `Your share of this ride is ₦${secondPartyShare.toLocaleString()}`,
         } : null,
       };
 

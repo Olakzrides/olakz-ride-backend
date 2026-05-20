@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { DriverRideService } from '../services/driver-ride.service';
 import { RatingService } from '../services/rating.service';
+import { RemittanceService } from '../services/remittance.service';
 import { ResponseUtil } from '../utils/response.util';
 import { logger } from '../config/logger';
 
@@ -37,6 +38,13 @@ export class DriverRideController {
       const result = await this.rideService.acceptRideRequest(driverId, rideRequestId);
 
       if (!result.success) {
+        if (result.errorCode === 'OUTSTANDING_REMITTANCE') {
+          return res.status(403).json({
+            success: false,
+            errorCode: 'OUTSTANDING_REMITTANCE',
+            message: result.error,
+          });
+        }
         if (result.errorCode === 'REQUEST_NO_LONGER_AVAILABLE') {
           return ResponseUtil.badRequest(res, result.error!);
         }
@@ -244,10 +252,12 @@ export class DriverRideController {
       logger.info(`Driver ${driverId} completed trip ${rideId}`);
 
       return ResponseUtil.success(res, {
-        message: 'Trip completed successfully',
+        message: result.paymentMethod === 'cash'
+          ? 'Trip completed. Please collect payment from the customer, then confirm payment.'
+          : 'Trip completed successfully',
         driverFare: result.finalDriverFare,
         ...(result.paymentMethod === 'cash' ? {
-          platform_remittance: result.platformRemittance,
+          platform_remittance: result.platformRemittance
         } : {}),
       });
     } catch (error: any) {
@@ -380,6 +390,95 @@ export class DriverRideController {
     } catch (error: any) {
       logger.error('Rate passenger error:', error);
       return ResponseUtil.error(res, 'Failed to rate passenger');
+    }
+  };
+
+  /**
+   * Confirm cash payment received from customer
+   * POST /api/drivers/rides/:rideId/confirm-cash-payment
+   */
+  confirmCashPayment = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId   = (req as any).user?.id;
+      const userRole = (req as any).user?.role;
+
+      if (!userId || userRole !== 'driver') {
+        return ResponseUtil.unauthorized(res, 'Driver access required');
+      }
+
+      const { rideId } = req.params;
+
+      const driverId = await this.getDriverIdFromUserId(userId);
+      if (!driverId) {
+        return ResponseUtil.notFound(res, 'Driver profile not found');
+      }
+
+      const result = await this.rideService.confirmCashPayment(driverId, rideId);
+
+      if (!result.success) {
+        return ResponseUtil.badRequest(res, result.error!);
+      }
+
+      logger.info(`Driver ${driverId} confirmed cash payment for ride ${rideId}`);
+
+      return ResponseUtil.success(res, {
+        message: 'Cash payment confirmed successfully',
+        ...(result.remittanceStatus ? {
+          remittance: {
+            status: result.remittanceStatus.status,
+            ...(result.remittanceStatus.status === 'pending' ? {
+              warning: result.remittanceStatus.blocked
+                ? `You have been blocked from accepting rides due to ${result.remittanceStatus.pendingCount} unpaid remittances totalling ₦${result.remittanceStatus.pendingAmount.toLocaleString()}. Top up your wallet to unblock.`
+                : `Platform remittance is pending. Please top up your wallet to settle ₦${result.remittanceStatus.pendingAmount.toLocaleString()}.`,
+              outstanding_amount: result.remittanceStatus.pendingAmount,
+              blocked: result.remittanceStatus.blocked,
+            } : {}),
+          },
+        } : {}),
+      });
+    } catch (error: any) {
+      logger.error('Confirm cash payment error:', error);
+      return ResponseUtil.error(res, 'Failed to confirm cash payment');
+    }
+  };
+
+  /**
+   * Get driver's remittance status
+   * GET /api/drivers/remittance/status
+   */
+  getRemittanceStatus = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      const userRole = (req as any).user?.role;
+
+      if (!userId || userRole !== 'driver') {
+        return ResponseUtil.unauthorized(res, 'Driver access required');
+      }
+
+      const driverId = await this.getDriverIdFromUserId(userId);
+      if (!driverId) {
+        return ResponseUtil.notFound(res, 'Driver profile not found');
+      }
+
+      const status = await RemittanceService.getRemittanceStatus(driverId);
+
+      return ResponseUtil.success(res, {
+        blocked: status.blocked,
+        pending_amount: status.pendingAmount,
+        pending_count: status.pendingCount,
+        ...(status.blocked
+          ? {
+              message: `Your account is blocked from accepting rides. You have ₦${status.pendingAmount.toLocaleString()} in outstanding platform remittance. Please top up your wallet or visit the office to pay in cash.`,
+            }
+          : status.pendingAmount > 0
+          ? {
+              message: `You have ₦${status.pendingAmount.toLocaleString()} in pending platform remittance. Please top up your wallet to settle.`,
+            }
+          : {}),
+      });
+    } catch (error: any) {
+      logger.error('Get remittance status error:', error);
+      return ResponseUtil.error(res, 'Failed to get remittance status');
     }
   };
 

@@ -153,7 +153,7 @@ export class RideController {
         pickupLocation,
         dropoffLocation,
         currencyCode: cart.currency_code,
-        bookingType: recipient ? 'for_friend' : 'for_me',
+        bookingType: 'for_me', // discount is never applied at booking time — only when ride is shared
       });
 
       // Create ride with atomic transaction (includes balance check for wallet payments)
@@ -232,9 +232,6 @@ export class RideController {
           estimated_fare: fareDetails.totalFare,
           fare_breakdown: {
             ride_fare: fareDetails.fareBreakdown.rideFare,
-            ...(fareDetails.isSharedRide && fareDetails.fareBreakdown.sharedDiscount < 0
-              ? { shared_discount: fareDetails.fareBreakdown.sharedDiscount }
-              : {}),
             service_fee: fareDetails.fareBreakdown.serviceFee,
             rounding_fee: fareDetails.fareBreakdown.roundingFee,
             ...(fareDetails.fareBreakdown.bookingFee > 0
@@ -567,7 +564,10 @@ export class RideController {
         shareUrl: result.shareUrl,
         whatsappLink,
         expiresAt: result.expiresAt,
-        message: 'Share link generated successfully',
+        fare_split: result.fare_split,
+        message: result.fare_split?.split_applied
+          ? `Share link generated! Your share: ₦${result.fare_split.owner_share.toLocaleString()}, second party's share: ₦${result.fare_split.second_party_share.toLocaleString()}`
+          : 'Share link generated successfully',
       });
     } catch (error: any) {
       logger.error('Generate share link error:', error);
