@@ -154,6 +154,7 @@ export class RideController {
         pickupLocation,
         dropoffLocation,
         currencyCode: cart.currency_code,
+        bookingType: 'for_me', // discount is never applied at booking time — only when ride is shared
       });
 
       // Create ride with atomic transaction (includes balance check for wallet payments)
@@ -167,6 +168,11 @@ export class RideController {
         estimated_distance: fareDetails.distance,
         estimated_duration: fareDetails.duration,
         estimated_fare: fareDetails.totalFare,
+        // Store fare breakdown fields on the ride record
+        driver_fare: fareDetails.driverFare,
+        service_fee: fareDetails.serviceFee,
+        rounding_fee: fareDetails.roundingFee,
+        shared_discount: fareDetails.sharedDiscount,
         currency_code: cart.currency_code,
         payment_method: paymentMethod.type,
         payment_details: {
@@ -180,7 +186,7 @@ export class RideController {
         recipient_phone: recipient?.phone,
         metadata: {
           special_requests: specialRequests,
-          fare_breakdown: fareDetails,
+          fare_breakdown: fareDetails.fareBreakdown,
           cart_id: cartId,
         },
       });
@@ -225,7 +231,14 @@ export class RideController {
           id: rideResult.ride!.id,
           status: rideResult.ride!.status,
           estimated_fare: fareDetails.totalFare,
-          fare_breakdown: fareDetails,
+          fare_breakdown: {
+            ride_fare: fareDetails.fareBreakdown.rideFare,
+            service_fee: fareDetails.fareBreakdown.serviceFee,
+            rounding_fee: fareDetails.fareBreakdown.roundingFee,
+            ...(fareDetails.fareBreakdown.bookingFee > 0
+              ? { booking_fee: fareDetails.fareBreakdown.bookingFee }
+              : {}),
+          },
           pickup_location: pickupLocation,
           dropoff_location: dropoffLocation,
           payment_method: paymentMethod.type,
@@ -588,7 +601,10 @@ export class RideController {
         shareUrl: result.shareUrl,
         whatsappLink,
         expiresAt: result.expiresAt,
-        message: 'Share link generated successfully',
+        fare_split: result.fare_split,
+        message: result.fare_split?.split_applied
+          ? `Share link generated! Your share: ₦${result.fare_split.owner_share.toLocaleString()}, second party's share: ₦${result.fare_split.second_party_share.toLocaleString()}`
+          : 'Share link generated successfully',
       });
     } catch (error: any) {
       logger.error('Generate share link error:', error);
