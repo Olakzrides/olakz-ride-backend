@@ -1,7 +1,7 @@
 # Complete Frontend Integration Guide for Delivery System
 
 **Target Platform:** React Native  
-**Base URL:** `http://localhost:3001/api/delivery`  
+**Base URL:** `https://olakzride.duckdns.org/api/delivery`  
 **Authentication:** All endpoints require JWT token in `Authorization: Bearer <token>` header
 
 ---
@@ -38,11 +38,11 @@
         "displayName": "Bicycle",
         "iconUrl": "https://...",
         "description": "Small packages",
-        "maxWeight": 5,
-        "maxDimensions": "30x30x30 cm",
-        "baseFare": "500.00",
-        "perKmRate": "50.00",
-        "serviceFee": "200.00"
+        "capacity": 1,
+        "baseFare": 500.00,
+        "pricePerKm": 50.00,
+        "minimumFare": 800.00,
+        "currencyCode": "NGN"
       }
     ],
     "message": "Vehicle types retrieved successfully"
@@ -81,10 +81,12 @@
     "fareBreakdown": {
       "baseFare": 500.00,
       "distanceFare": 450.00,
-      "serviceFee": 200.00,
-      "roundingFee": 50.00,
-      "finalFare": 1200.00,
+      "scheduledSurcharge": 0.00,
+      "totalFare": 950.00,
+      "minimumFare": 500.00,
+      "finalFare": 950.00,
       "distance": 9.5,
+      "distanceText": "9.5 km",
       "currencyCode": "NGN"
     },
     "message": "Fare estimated successfully"
@@ -194,9 +196,9 @@
       "id": "uuid",
       "orderNumber": "ORDB0001",
       "status": "searching",
-      "pickupCode": "123456",
-      "deliveryCode": "654321",
-      "estimatedFare": "1200.00",
+      "pickupCode": "GB1-A12-123",
+      "deliveryCode": "XK4-B56-789",
+      "estimatedFare": "950.00",
       "currencyCode": "NGN",
       "deliveryType": "instant",
       "scheduledPickupAt": null,
@@ -206,10 +208,12 @@
     "fareBreakdown": {
       "baseFare": 500.00,
       "distanceFare": 450.00,
-      "serviceFee": 200.00,
-      "roundingFee": 50.00,
-      "finalFare": 1200.00,
+      "scheduledSurcharge": 0.00,
+      "totalFare": 950.00,
+      "minimumFare": 500.00,
+      "finalFare": 950.00,
       "distance": 9.5,
+      "distanceText": "9.5 km",
       "currencyCode": "NGN"
     },
     "message": "Delivery order created successfully. Searching for courier..."
@@ -282,8 +286,8 @@
       "id": "uuid",
       "orderNumber": "ORDB0001",
       "status": "searching",
-      "pickupCode": "123456",
-      "deliveryCode": "654321"
+      "pickupCode": "GB1-A12-123",
+      "deliveryCode": "XK4-B56-789"
     },
     "message": "Payment validated and delivery confirmed"
   },
@@ -352,8 +356,8 @@
         "total_deliveries": 150,
         "delivery_rating": "4.75"
       },
-      "pickupCode": "123456",
-      "deliveryCode": "654321",
+      "pickupCode": "GB1-A12-123",
+      "deliveryCode": "XK4-B56-789",
       "createdAt": "2026-02-27T10:00:00.000Z",
       "assignedAt": "2026-02-27T10:05:00.000Z",
       "pickedUpAt": "2026-02-27T10:15:00.000Z",
@@ -506,7 +510,7 @@
         "longitude": 3.3800,
         "heading": 45.5,
         "speed": 30.0,
-        "updatedAt": "2026-02-27T10:25:00.000Z"
+        "timestamp": "2026-02-27T10:25:00.000Z"
       },
       "eta": {
         "minutes": 15,
@@ -771,7 +775,7 @@
 **Request Body:**
 ```json
 {
-  "code": "123456"
+  "code": "GB1-A12-123"
 }
 ```
 
@@ -930,7 +934,7 @@
 **Request Body:**
 ```json
 {
-  "code": "654321"
+  "code": "XK4-B56-789"
 }
 ```
 
@@ -958,10 +962,6 @@
 **Notes:**
 - Updates delivery status to "delivered"
 - Completes cash payment if payment method is cash
-- Calculates and records courier earnings
-- Platform earnings = service_fee + rounding_fee
-- Courier earnings = total fare - platform earnings
-- Updates courier's delivery rating via database trigger
 - Sends completion notification to customer
 - Recipient provides this code to courier
 
@@ -1206,10 +1206,10 @@
 }
 ```
 
-**3. delivery:location_update**
+**3. delivery:location:updated**
 ```json
 {
-  "event": "delivery:location_update",
+  "event": "delivery:location:updated",
   "data": {
     "deliveryId": "uuid",
     "location": {
@@ -1374,17 +1374,21 @@ courier_earnings = total_fare - platform_earnings
 ### Authentication Codes
 
 **Pickup Code:**
-- 6-digit code generated when delivery is created
+- Format: `XXX-XXX-XXX` (11 characters, e.g., `GB1-A12-123`)
+- Generated when delivery is created
 - Customer shows this code to courier at pickup
 - Courier verifies via `/verify-pickup` endpoint
 - Updates status to `picked_up`
+- Can only be verified once
 
 **Delivery Code:**
-- 6-digit code generated when delivery is created
+- Format: `XXX-XXX-XXX` (11 characters, e.g., `XK4-B56-789`)
+- Generated when delivery is created
 - Customer shares this code with recipient
 - Recipient shows code to courier at delivery
 - Courier verifies via `/verify-delivery` endpoint
 - Updates status to `delivered` and completes payment
+- Can only be verified once (pickup code must be verified first)
 
 ### Real-Time Tracking
 
