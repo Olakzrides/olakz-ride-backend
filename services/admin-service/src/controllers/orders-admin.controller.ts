@@ -15,7 +15,7 @@ export class OrdersAdminController {
    */
   getAllOrders = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
-      const { search, status, service, date_preset, from, to, page, limit } = req.query;
+      const { search, status, service, date_preset, from, to, page, limit, data } = req.query;
 
       const result = await OrdersAdminService.getAllOrders({
         search: search as string | undefined,
@@ -26,7 +26,8 @@ export class OrdersAdminController {
         to: to as string | undefined,
         page: page ? parseInt(page as string, 10) : 1,
         limit: limit ? parseInt(limit as string, 10) : 20,
-      });
+        data: data as string | undefined,
+      } as any);
 
       ResponseUtil.success(res, result, 'Orders retrieved successfully');
     } catch (err: unknown) {

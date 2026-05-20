@@ -269,7 +269,7 @@ async function getRideOrders(
 ): Promise<{ orders: RawOrder[]; total: number }> {
   let q = supabase
     .from('rides')
-    .select('id, passenger_id, status, created_at', { count: 'exact' });
+    .select('id, user_id, status, created_at', { count: 'exact' });
 
   if (filters.status) {
     const raw = rawStatuses(filters.status, STATUS_MAP_RIDE);
@@ -290,7 +290,7 @@ async function getRideOrders(
       const row = o as Record<string, unknown>;
       return {
         id: row.id as string,
-        customer_id: (row.passenger_id ?? row.customer_id) as string,
+        customer_id: row.user_id as string,
         status: row.status as string,
         created_at: row.created_at as string,
         service: 'Olakz Ride',
@@ -336,7 +336,86 @@ async function getDeliveryOrders(
   };
 }
 
-// Core merge + paginate helper
+const STATUS_MAP_AIRTIME_DATA: Record<string, string[]> = {
+  completed: ['successful'],
+  cancelled: ['failed'],
+  pending: ['pending'],
+  'in progress': ['pending'],
+};
+
+async function getAirtimeOrders(
+  filters: OrderFilters & { from?: string; to?: string }
+): Promise<{ orders: RawOrder[]; total: number }> {
+  let q = supabase
+    .from('bill_transactions')
+    .select('id, user_id, status, created_at', { count: 'exact' })
+    .eq('transaction_type', 'airtime');
+
+  if (filters.status) {
+    const raw = rawStatuses(filters.status, STATUS_MAP_AIRTIME_DATA);
+    if (!raw) return { orders: [], total: 0 };
+    q = q.in('status', raw);
+  }
+  if (filters.from) q = q.gte('created_at', filters.from);
+  if (filters.to) q = q.lte('created_at', filters.to);
+
+  const { data, count, error } = await q.order('created_at', { ascending: false });
+  if (error) {
+    logger.warn('getAirtimeOrders: bill_transactions table unavailable', { error: error.message });
+    return { orders: [], total: 0 };
+  }
+
+  return {
+    orders: (data ?? []).map((o) => {
+      const row = o as Record<string, unknown>;
+      return {
+        id: row.id as string,
+        customer_id: row.user_id as string,
+        status: row.status as string,
+        created_at: row.created_at as string,
+        service: 'Airtime',
+      };
+    }),
+    total: count ?? 0,
+  };
+}
+
+async function getDataBundleOrders(
+  filters: OrderFilters & { from?: string; to?: string }
+): Promise<{ orders: RawOrder[]; total: number }> {
+  let q = supabase
+    .from('bill_transactions')
+    .select('id, user_id, status, created_at', { count: 'exact' })
+    .eq('transaction_type', 'data');
+
+  if (filters.status) {
+    const raw = rawStatuses(filters.status, STATUS_MAP_AIRTIME_DATA);
+    if (!raw) return { orders: [], total: 0 };
+    q = q.in('status', raw);
+  }
+  if (filters.from) q = q.gte('created_at', filters.from);
+  if (filters.to) q = q.lte('created_at', filters.to);
+
+  const { data, count, error } = await q.order('created_at', { ascending: false });
+  if (error) {
+    logger.warn('getDataBundleOrders: bill_transactions table unavailable', { error: error.message });
+    return { orders: [], total: 0 };
+  }
+
+  return {
+    orders: (data ?? []).map((o) => {
+      const row = o as Record<string, unknown>;
+      return {
+        id: row.id as string,
+        customer_id: row.user_id as string,
+        status: row.status as string,
+        created_at: row.created_at as string,
+        service: 'Data Bundle',
+      };
+    }),
+    total: count ?? 0,
+  };
+}
 
 async function mergeAndPaginate(
   fetchers: Promise<{ orders: RawOrder[]; total: number }>[],
@@ -409,11 +488,14 @@ export class OrdersAdminService {
     const { search, page = 1, limit = 20 } = filters;
     const { from, to } = resolveDateRange(filters.date_preset, filters.from, filters.to);
 
-    // Treat "all" the same as omitted — no filter applied
     const serviceKey =
       !filters.service || filters.service.toLowerCase() === 'all'
         ? null
         : filters.service.toLowerCase().replace(/[\s-]+/g, '_');
+
+    // ?service=airtime&data — the &data param signals "include data bundles too"
+    const includeDataParam = (filters as any).data !== undefined;
+    const isAirtimeAndData  = serviceKey === 'airtime' && includeDataParam;
 
     const statusKey =
       !filters.status || filters.status.toLowerCase() === 'all'
@@ -423,10 +505,14 @@ export class OrdersAdminService {
     const resolved = { ...filters, from, to, status: statusKey ?? undefined };
 
     const fetchers: Promise<{ orders: RawOrder[]; total: number }>[] = [];
-    if (!serviceKey || serviceKey === 'olakz_food') fetchers.push(getFoodOrders(resolved));
-    if (!serviceKey || serviceKey === 'marketplace') fetchers.push(getMarketplaceOrders(resolved));
-    if (!serviceKey || serviceKey === 'olakz_ride') fetchers.push(getRideOrders(resolved));
+    if (!serviceKey || serviceKey === 'olakz_food')     fetchers.push(getFoodOrders(resolved));
+    if (!serviceKey || serviceKey === 'marketplace')    fetchers.push(getMarketplaceOrders(resolved));
+    if (!serviceKey || serviceKey === 'olakz_ride')     fetchers.push(getRideOrders(resolved));
     if (!serviceKey || serviceKey === 'olakz_delivery') fetchers.push(getDeliveryOrders(resolved));
+    if (!serviceKey || serviceKey === 'airtime' || isAirtimeAndData)
+      fetchers.push(getAirtimeOrders(resolved));
+    if (!serviceKey || serviceKey === 'data_bundle' || serviceKey === 'data' || isAirtimeAndData)
+      fetchers.push(getDataBundleOrders(resolved));
 
     return mergeAndPaginate(fetchers, search, page, limit);
   }
@@ -600,15 +686,17 @@ export class OrdersAdminService {
    * Order counts grouped by status across all services.
    */
   static async getOrderStatusSummary() {
-    const [food, marketplace, ride, delivery] = await Promise.allSettled([
+    const [food, marketplace, ride, delivery, airtime, dataBundle] = await Promise.allSettled([
       supabase.from('food_orders').select('status'),
       supabase.from('marketplace_orders').select('status'),
       supabase.from('rides').select('status'),
       supabase.from('deliveries').select('status'),
+      supabase.from('bill_transactions').select('status').eq('transaction_type', 'airtime'),
+      supabase.from('bill_transactions').select('status').eq('transaction_type', 'data'),
     ]);
 
     const allStatuses: string[] = [];
-    for (const result of [food, marketplace, ride, delivery]) {
+    for (const result of [food, marketplace, ride, delivery, airtime, dataBundle]) {
       if (result.status === 'fulfilled' && result.value.data) {
         for (const row of result.value.data) {
           allStatuses.push(normaliseStatus((row as Record<string, unknown>).status as string));
