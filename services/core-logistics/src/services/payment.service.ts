@@ -56,6 +56,7 @@ export class PaymentService {
       cardholderName?: string;
       pin?: string;
     };
+    authToken?: string;
   }): Promise<{
     success: boolean;
     message?: string;
@@ -71,13 +72,20 @@ export class PaymentService {
         '/api/payment/wallet/topup',
         {
           amount: params.amount,
-          currencyCode: params.currencyCode,
-          cardId: params.cardId,
-          cardDetails: params.cardDetails,
+          currency_code: params.currencyCode,
+          card_id: params.cardId,
+          card_details: params.cardDetails ? {
+            card_number: params.cardDetails.cardNumber,
+            cvv: params.cardDetails.cvv,
+            expiry_month: params.cardDetails.expiryMonth,
+            expiry_year: params.cardDetails.expiryYear,
+            fullname: params.cardDetails.cardholderName,
+            pin: params.cardDetails.pin,
+          } : undefined,
         },
         {
           headers: {
-            // topup is a user-facing endpoint on payment-service — pass user context
+            'Authorization': params.authToken ? `Bearer ${params.authToken}` : '',
             'x-user-id': params.userId,
             'x-user-email': params.userEmail,
           },
@@ -113,17 +121,18 @@ export class PaymentService {
     otp: string;
     amount: number;
     currencyCode: string;
+    authToken?: string;
   }): Promise<{ success: boolean; message?: string; transaction?: any; newBalance?: number }> {
     try {
       const response = await this.client.post(
         '/api/payment/wallet/topup/validate',
         {
-          flwRef: params.flwRef,
+          flw_ref: params.flwRef,
           otp: params.otp,
           amount: params.amount,
-          currencyCode: params.currencyCode,
+          currency_code: params.currencyCode,
         },
-        { headers: { 'x-user-id': params.userId } }
+        { headers: { 'Authorization': params.authToken ? `Bearer ${params.authToken}` : '', 'x-user-id': params.userId } }
       );
 
       const data = response.data?.data;
@@ -138,15 +147,42 @@ export class PaymentService {
     }
   }
 
+  async creditWallet(params: {
+    userId: string;
+    amount: number;
+    currencyCode: string;
+    reference: string;
+    description: string;
+    transactionType?: string;
+  }): Promise<void> {
+    try {
+      await this.client.post(
+        '/api/internal/payment/wallet/credit',
+        {
+          amount: params.amount,
+          currency_code: params.currencyCode,
+          reference: params.reference,
+          description: params.description,
+          transaction_type: params.transactionType || 'credit',
+        },
+        { headers: { 'x-user-id': params.userId } }
+      );
+    } catch (error: any) {
+      logger.error('Credit wallet (via payment-service) error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to credit wallet');
+    }
+  }
+
   async getUserTransactions(
     userId: string,
     page: number = 1,
-    limit: number = 10
+    limit: number = 10,
+    authToken?: string
   ): Promise<{ transactions: any[]; total: number }> {
     try {
       const response = await this.client.get('/api/payment/wallet/transactions', {
         params: { page, limit },
-        headers: { 'x-user-id': userId },
+        headers: { 'Authorization': authToken ? `Bearer ${authToken}` : '', 'x-user-id': userId },
       });
       const data = response.data?.data;
       return {

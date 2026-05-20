@@ -17,6 +17,7 @@ const config = {
     secretKey: process.env.FLUTTERWAVE_SECRET_KEY || '',
     encryptionKey: process.env.FLUTTERWAVE_ENCRYPTION_KEY || '',
     baseUrl: process.env.FLUTTERWAVE_BASE_URL || 'https://api.flutterwave.com/v3',
+    webhookSecret: process.env.FLW_WEBHOOK_SECRET_HASH || '',
   },
 
   internalApiKey: process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure',

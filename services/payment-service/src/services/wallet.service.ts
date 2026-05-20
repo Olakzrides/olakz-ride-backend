@@ -3,6 +3,33 @@ import { flutterwaveService } from './flutterwave.service';
 import logger from '../utils/logger';
 
 export class WalletService {
+  static async getEarnedBalance(userId: string, currencyCode = 'NGN'): Promise<number> {
+    const { data: transactions, error } = await supabase
+      .from('wallet_transactions')
+      .select('amount, transaction_type')
+      .eq('user_id', userId)
+      .eq('currency_code', currencyCode)
+      .eq('status', 'completed')
+      .in('transaction_type', ['earning', 'withdrawal']);
+
+    if (error) {
+      logger.error('Get earned balance error:', error);
+      return 0;
+    }
+
+    let earned = 0;
+    for (const tx of transactions || []) {
+      const amount = parseFloat(tx.amount);
+      if (tx.transaction_type === 'earning') {
+        earned += amount;
+      } else if (tx.transaction_type === 'withdrawal') {
+        earned -= amount;
+      }
+    }
+
+    return Math.max(0, earned);
+  }
+
   static async getBalance(userId: string, currencyCode = 'NGN'): Promise<number> {
     const { data: transactions, error } = await supabase
       .from('wallet_transactions')
@@ -20,9 +47,9 @@ export class WalletService {
     for (const tx of transactions || []) {
       const amount = parseFloat(tx.amount);
       const type = tx.transaction_type;
-      if (type === 'credit' || type === 'refund' || type === 'tip_received') {
+      if (type === 'credit' || type === 'refund' || type === 'tip_received' || type === 'earning') {
         balance += amount;
-      } else if (type === 'debit' || type === 'hold') {
+      } else if (type === 'debit' || type === 'hold' || type === 'withdrawal') {
         balance -= amount;
       } else if (type === 'tip_payment') {
         balance += amount;
@@ -75,14 +102,15 @@ export class WalletService {
     currencyCode?: string;
     reference: string;
     description: string;
+    transactionType?: string;
   }): Promise<{ transactionId: string; newBalance: number }> {
-    const { userId, amount, currencyCode = 'NGN', reference, description } = params;
+    const { userId, amount, currencyCode = 'NGN', reference, description, transactionType = 'credit' } = params;
 
     const { data: tx, error } = await supabase
       .from('wallet_transactions')
       .insert({
         user_id: userId,
-        transaction_type: 'credit',
+        transaction_type: transactionType,
         amount,
         currency_code: currencyCode,
         status: 'completed',
@@ -214,7 +242,7 @@ export class WalletService {
       amount,
       currencyCode,
       reference,
-      description: 'Wallet top-up via card (OTP validated)',
+      description: 'Wallet top-up via card',
     });
 
     return {

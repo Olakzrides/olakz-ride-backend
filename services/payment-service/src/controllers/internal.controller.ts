@@ -56,7 +56,7 @@ export class InternalController {
       const userId = req.headers['x-user-id'] as string;
       if (!userId) return ResponseUtil.badRequest(res, 'x-user-id header is required');
 
-      const { amount, currency_code = 'NGN', reference, description } = req.body;
+      const { amount, currency_code = 'NGN', reference, description, transaction_type } = req.body;
       if (!amount || amount <= 0) return ResponseUtil.badRequest(res, 'Invalid amount');
       if (!reference) return ResponseUtil.badRequest(res, 'reference is required');
 
@@ -66,9 +66,10 @@ export class InternalController {
         currencyCode: currency_code,
         reference,
         description: description || 'Wallet credit',
+        transactionType: transaction_type,
       });
 
-      logger.info('Internal wallet credit', { userId, amount, reference });
+      logger.info('Internal wallet credit', { userId, amount, reference, transaction_type });
       return ResponseUtil.success(res, {
         transaction: { id: transactionId, amount, status: 'completed', reference },
         wallet: { balance: newBalance, currency_code },

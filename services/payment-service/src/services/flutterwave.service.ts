@@ -103,6 +103,72 @@ export class FlutterwaveService {
       throw new Error(error.response?.data?.message || 'Failed to initiate refund');
     }
   }
+
+  async initiateTransfer(payload: {
+    accountNumber: string;
+    bankCode: string;
+    accountName: string;
+    amount: number;
+    narration: string;
+    reference: string;
+    currency?: string;
+  }): Promise<any> {
+    try {
+      const response = await this.client.post('/transfers', {
+        account_bank: payload.bankCode,
+        account_number: payload.accountNumber,
+        amount: payload.amount,
+        narration: payload.narration,
+        currency: payload.currency || 'NGN',
+        reference: payload.reference,
+        beneficiary_name: payload.accountName,
+        callback_url: process.env.FLW_TRANSFER_CALLBACK_URL || '',
+      });
+      logger.info('Transfer initiated', { reference: payload.reference, status: response.data.status });
+      return response.data;
+    } catch (error: any) {
+      logger.error('Transfer initiation failed', { error: error.response?.data || error.message });
+      throw new Error(error.response?.data?.message || 'Failed to initiate transfer');
+    }
+  }
+
+  async getTransferFee(amount: number, currency: string = 'NGN'): Promise<number> {
+    try {
+      const response = await this.client.get('/transfers/fee', {
+        params: { amount, currency, type: 'account' },
+      });
+      const fee = response.data?.data?.[0]?.fee ?? 0;
+      return Number(fee);
+    } catch (error: any) {
+      logger.error('Get transfer fee failed', { error: error.response?.data || error.message });
+      return 0;
+    }
+  }
+
+  async getBanks(country: string = 'NG'): Promise<any> {
+    try {
+      const response = await this.client.get(`/banks/${country}`);
+      logger.info('Banks fetched', { country, count: response.data.data?.length });
+      return response.data;
+    } catch (error: any) {
+      logger.error('Get banks failed', { error: error.response?.data || error.message });
+      throw new Error(error.response?.data?.message || 'Failed to fetch banks');
+    }
+  }
+
+  async resolveAccount(accountNumber: string, bankCode: string): Promise<any> {
+    try {
+      const response = await this.client.post('/accounts/resolve', {
+        account_number: accountNumber,
+        account_bank: bankCode,
+      });
+      logger.info('Account resolved', { accountNumber, bankCode, status: response.data.status });
+      return response.data;
+    } catch (error: any) {
+      logger.error('Account resolve failed', { error: error.response?.data || error.message });
+      throw new Error(error.response?.data?.message || 'Failed to resolve account');
+    }
+  }
 }
 
 export const flutterwaveService = new FlutterwaveService();
