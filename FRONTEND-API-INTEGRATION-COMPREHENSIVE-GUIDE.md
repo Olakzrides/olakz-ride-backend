@@ -289,12 +289,12 @@ Authorization: Bearer <your_jwt_token>
   },
   "vehicleVariantId": "variant-uuid",
   "paymentMethod": {
-    "type": "wallet",  // "wallet", "cash", or "card"
-    "cardId": "card-uuid"  // Required if type is "card"
+    "type": "wallet", 
+    "cardId": "card-uuid" 
   },
-  "scheduledAt": "2026-02-17T14:00:00Z",  // Optional: for scheduled rides
-  "specialRequests": "Please call when you arrive",  // Optional
-  "recipient": {  // Optional: for "Book for Someone Else"
+  "scheduledAt": "2026-02-17T14:00:00Z",  
+  "specialRequests": "Please call when you arrive", 
+  "recipient": { 
     "name": "John Doe",
     "phone": "+2348012345678"
   }

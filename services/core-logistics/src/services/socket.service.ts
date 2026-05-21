@@ -746,13 +746,46 @@ export class SocketService {
         .single();
 
       if (ride) {
+        const driverDetails = await this.getDriverDetailsForPassenger(driverId);
+        const payload = {
+          rideId,
+          driverId,
+          status: 'driver_assigned',
+          driver: driverDetails,
+        };
+
         const customerSocketId = this.customerSockets.get(ride.user_id);
+
+        logger.info('Customer socket emit debug', {
+          userId: ride.user_id,
+          socketId: customerSocketId,
+          room: `user:${ride.user_id}`,
+          payload
+        });
         if (customerSocketId) {
-          this.io.to(customerSocketId).emit('ride:driver:assigned', {
-            rideId,
-            driverId,
-            status: 'driver_assigned',
-          });
+          this.io.to(customerSocketId).emit('ride:driver:assigned', payload);
+          logger.info(`Notified customer ${ride.user_id} via memory socket`);
+        } else {
+          // Fallback 1: room-based emit (every user joins user:{userId} on connect)
+          this.io.to(`user:${ride.user_id}`).emit('ride:driver:assigned', payload);
+          logger.info(`Notified customer ${ride.user_id} via room`);
+
+          // Fallback 2: DB socket lookup
+          const { data: conn } = await supabase
+            .from('socket_connections')
+            .select('socket_id')
+            .eq('user_id', ride.user_id)
+            .eq('is_connected', true)
+            .order('connected_at', { ascending: false })
+            .limit(1)
+            .single();
+
+          if (conn?.socket_id) {
+            this.io.to(conn.socket_id).emit('ride:driver:assigned', payload);
+            // Repair the in-memory map
+            this.customerSockets.set(ride.user_id, conn.socket_id);
+            logger.info(`Notified customer ${ride.user_id} via DB socket fallback`);
+          }
         }
       }
 
@@ -827,6 +860,99 @@ export class SocketService {
         .eq('driver_id', driverId);
     } catch (error) {
       logger.error('Error updating driver last seen:', error);
+    }
+  }
+
+  /**
+   * Fetch full driver details for passenger notification
+   */
+  private async getDriverDetailsForPassenger(driverId: string): Promise<{
+    id: string;
+    name: string;
+    phone: string | null;
+    rating: number;
+    photo: string | null;
+    vehicle: { model: string; color: string; plateNumber: string; manufacturer: string } | null;
+  }> {
+    // No FK constraint between drivers and users — fetch separately
+    const { data: driver } = await supabase
+      .from('drivers')
+      .select(`
+        id, rating,
+        user:users!drivers_user_id_fkey(first_name, last_name, phone, avatar_url),
+        vehicles:driver_vehicles(plate_number, manufacturer, model, color, is_active)
+      `)
+      .eq('id', driverId)
+      .single();
+
+    if (!driver) {
+      return { id: driverId, name: 'Your driver', phone: null, rating: 0, photo: null, vehicle: null };
+    }
+
+    const d = driver as Record<string, unknown>;
+    const user = d.user as Record<string, unknown> | null;
+    const vehicles = (d.vehicles as Array<Record<string, unknown>>) || [];
+    const activeVehicle = vehicles.find(v => v.is_active) || vehicles[0] || null;
+
+    return {
+      id: driverId,
+      name: user ? `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || 'Your driver' : 'Your driver',
+      phone: user?.phone as string | null ?? null,
+      rating: parseFloat(String(d.rating ?? 0)),
+      photo: user?.avatar_url as string | null ?? null,
+      vehicle: activeVehicle ? {
+        plateNumber: activeVehicle.plate_number as string,
+        manufacturer: activeVehicle.manufacturer as string,
+        model: activeVehicle.model as string,
+        color: activeVehicle.color as string,
+      } : null,
+    };
+  }
+
+  /**
+   * Notify passenger that a driver has been assigned (called from REST acceptance path)
+   */
+  async notifyPassengerDriverAssigned(rideId: string, driverId: string): Promise<void> {
+    try {
+      const { data: ride } = await supabase
+        .from('rides')
+        .select('user_id')
+        .eq('id', rideId)
+        .single();
+
+      if (!ride) return;
+
+      const driverDetails = await this.getDriverDetailsForPassenger(driverId);
+
+      const customerSocketId = this.customerSockets.get(ride.user_id);
+      if (customerSocketId) {
+
+
+logger.info('Customer socket emit debug', {
+  userId: ride.user_id,
+  socketId: customerSocketId,
+  room: `user:${ride.user_id}`,
+  
+});
+        this.io.to(customerSocketId).emit('ride:driver:assigned', {
+          rideId,
+          driverId,
+          status: 'driver_assigned',
+          driver: driverDetails,
+        });
+        logger.info(`Notified passenger ${ride.user_id} of driver assignment for ride ${rideId}`);
+      } else {
+        // Also try room-based emit as fallback
+        this.io.to(`user:${ride.user_id}`).emit('ride:driver:assigned', {
+          rideId,
+          driverId,
+          status: 'driver_assigned',
+          driver: driverDetails,
+        });
+        logger.info(`Notified passenger ${ride.user_id} via room for ride ${rideId}`);
+      }
+    } catch (error) {
+      logger.error('Error notifying passenger of driver assignment:', error);
     }
   }
 

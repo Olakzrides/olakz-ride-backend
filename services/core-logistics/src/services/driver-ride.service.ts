@@ -546,6 +546,46 @@ export class DriverRideService {
             service_fee: fareResult.serviceFee,
           },
         });
+
+        // Credit driver's wallet with their earnings (wallet rides only)
+        // Cash drivers keep the physical cash — no wallet credit needed for cash rides
+        if (ride.payment_method === 'wallet') {
+          try {
+            // Get driver's user_id
+            const { data: driverRecord } = await supabase
+              .from('drivers')
+              .select('user_id')
+              .eq('id', driverId)
+              .single();
+
+            if (driverRecord?.user_id) {
+              const earningReference = `earning_ride_${rideId}_${Date.now()}`;
+
+              // Credit driver wallet via payment-service internal API
+              await this.paymentService.creditWallet({
+                userId: driverRecord.user_id,
+                amount: finalDriverFare,
+                currencyCode: ride.currency_code || 'NGN',
+                reference: earningReference,
+                description: `Ride earnings - ${rideId}`,
+                transactionType: 'earning',
+              });
+
+              // Update driver's total_earnings record
+              await supabase.rpc('increment_driver_earnings', {
+                p_driver_id: driverId,
+                p_amount: finalDriverFare,
+              });
+
+              logger.info(`Driver ${driverId} credited ₦${finalDriverFare} for ride ${rideId}`);
+            } else {
+              logger.error(`Could not find user_id for driver ${driverId} — earnings not credited`);
+            }
+          } catch (earningError: any) {
+            // Log but don't fail the ride completion — the ride is already marked complete
+            logger.error(`Failed to credit driver earnings for ride ${rideId}:`, earningError);
+          }
+        }
       } else {
         logger.warn('No payment hold found for ride:', { rideId });
       }
@@ -832,11 +872,6 @@ export class DriverRideService {
             id,
             user_id,
             status,
-            payment_method,
-            estimated_fare,
-            driver_fare,
-            service_fee,
-            rounding_fee,
             pickup_latitude,
             pickup_longitude,
             pickup_address,

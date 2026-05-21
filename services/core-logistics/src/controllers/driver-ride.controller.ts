@@ -51,6 +51,14 @@ export class DriverRideController {
         return ResponseUtil.error(res, result.error!);
       }
 
+      // Emit WebSocket notification to passenger (REST path doesn't go through socket.service)
+      const socketService = (req as any).app.get('socketService');
+      if (socketService && result.ride) {
+        socketService.notifyPassengerDriverAssigned(result.ride.id, driverId).catch((err: unknown) => {
+          logger.error('Failed to notify passenger via socket after REST acceptance:', err);
+        });
+      }
+
       logger.info(`Driver ${driverId} accepted ride request ${rideRequestId}`);
 
       return ResponseUtil.success(res, {
