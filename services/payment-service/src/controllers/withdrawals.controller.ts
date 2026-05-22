@@ -361,12 +361,36 @@ export class WithdrawalsController {
         return res.status(200).json({ message: 'No reference found' });
       }
 
-      // Find the virtual account by flw_ref
-      const { data: virtualAccount } = await supabase
-        .from('virtual_accounts')
-        .select('id, user_id, currency_code')
-        .eq('flw_ref', lookupRef)
-        .single();
+      // Try to extract user_id from tx_ref (format: va_{uuid}_{timestamp})
+      // e.g. va_f19fa9a2-9109-40a9-8edc-cbeba75e1dd7_1779466497433
+      let virtualAccount: any = null;
+
+      if (tx_ref && tx_ref.startsWith('va_')) {
+        // Remove 'va_' prefix, then split by '_' — uuid has dashes, timestamp has no dashes
+        // Last segment is the timestamp, everything before is the uuid
+        const withoutPrefix = tx_ref.slice(3); // remove 'va_'
+        const lastUnderscore = withoutPrefix.lastIndexOf('_');
+        const userId = withoutPrefix.substring(0, lastUnderscore);
+        if (userId) {
+          const { data } = await supabase
+            .from('virtual_accounts')
+            .select('id, user_id, currency_code')
+            .eq('user_id', userId)
+            .single();
+          virtualAccount = data;
+          logger.info('Virtual account lookup by user_id', { userId, found: !!virtualAccount });
+        }
+      }
+
+      // Fallback: try by flw_ref
+      if (!virtualAccount) {
+        const { data } = await supabase
+          .from('virtual_accounts')
+          .select('id, user_id, currency_code')
+          .eq('flw_ref', lookupRef)
+          .single();
+        virtualAccount = data;
+      }
 
       if (!virtualAccount) {
         logger.info('Charge webhook: no virtual account found for ref', { lookupRef });
