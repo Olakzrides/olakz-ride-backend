@@ -219,6 +219,9 @@ export class WithdrawalsController {
       const event = req.body;
       logger.info('Flutterwave webhook received', { event: event.event, reference: event.data?.reference });
 
+      // Log full event for debugging unknown event types
+      logger.info('Flutterwave webhook full event', { eventType: event.event, dataKeys: Object.keys(event.data || {}) });
+
       // Handle virtual account payment (bank transfer to virtual account)
       if (event.event === 'charge.completed') {
         return await this.handleChargeCompleted(event, res);
