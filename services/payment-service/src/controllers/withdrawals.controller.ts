@@ -216,7 +216,19 @@ export class WithdrawalsController {
         return res.status(401).json({ message: 'Invalid signature' });
       }
 
-      const event = req.body;
+      // Parse body — may be Buffer (raw) or already parsed object
+      let event: any;
+      if (Buffer.isBuffer(req.body)) {
+        try {
+          event = JSON.parse(req.body.toString('utf8'));
+        } catch {
+          logger.warn('Failed to parse webhook body as JSON');
+          return res.status(200).json({ message: 'Invalid JSON body' });
+        }
+      } else {
+        event = req.body;
+      }
+
       logger.info('Flutterwave webhook received', { event: event.event, reference: event.data?.reference });
 
       // Log full event for debugging unknown event types
