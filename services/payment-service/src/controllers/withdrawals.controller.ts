@@ -329,6 +329,9 @@ export class WithdrawalsController {
       const data = event.data || {};
       const { status, amount, currency, flw_ref, tx_ref } = data;
 
+      // Log full event data for debugging
+      logger.info('charge.completed event data', { status, amount, currency, flw_ref, tx_ref, meta: data.meta, narration: data.narration });
+
       // Only process successful charges
       if (status !== 'successful') {
         logger.info('Charge webhook ignored — not successful', { status, flw_ref });
