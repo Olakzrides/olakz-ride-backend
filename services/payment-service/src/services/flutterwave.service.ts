@@ -169,6 +169,39 @@ export class FlutterwaveService {
       throw new Error(error.response?.data?.message || 'Failed to resolve account');
     }
   }
+
+  async createVirtualAccount(payload: {
+    email: string;
+    isPermanent: boolean;
+    bvn?: string;
+    txRef: string;
+    amount?: number;
+    currency?: string;
+    narration?: string;
+    firstname?: string;
+    lastname?: string;
+    phonenumber?: string;
+  }): Promise<any> {
+    try {
+      const response = await this.client.post('/virtual-account-numbers', {
+        email: payload.email,
+        is_permanent: payload.isPermanent,
+        bvn: payload.bvn,
+        tx_ref: payload.txRef,
+        amount: payload.amount,
+        currency: payload.currency || 'NGN',
+        narration: payload.narration || 'Olakz wallet funding',
+        firstname: payload.firstname,
+        lastname: payload.lastname,
+        phonenumber: payload.phonenumber,
+      });
+      logger.info('Virtual account created', { txRef: payload.txRef, status: response.data.status });
+      return response.data;
+    } catch (error: any) {
+      logger.error('Virtual account creation failed', { error: error.response?.data || error.message });
+      throw new Error(error.response?.data?.message || 'Failed to create virtual account');
+    }
+  }
 }
 
 export const flutterwaveService = new FlutterwaveService();
