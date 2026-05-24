@@ -202,7 +202,8 @@ export class WithdrawalsController {
 
   /**
    * POST /api/payment/webhooks/flutterwave
-   * Receive Flutterwave transfer webhook — no JWT auth, verified by hash
+   * Receive Flutterwave webhook — handles both transfer.completed and charge.completed
+   * No JWT auth, verified by hash
    */
   flutterwaveWebhook = async (req: Request, res: Response): Promise<Response> => {
     try {
@@ -215,10 +216,30 @@ export class WithdrawalsController {
         return res.status(401).json({ message: 'Invalid signature' });
       }
 
-      const event = req.body;
+      // Parse body — may be Buffer (raw) or already parsed object
+      let event: any;
+      if (Buffer.isBuffer(req.body)) {
+        try {
+          event = JSON.parse(req.body.toString('utf8'));
+        } catch {
+          logger.warn('Failed to parse webhook body as JSON');
+          return res.status(200).json({ message: 'Invalid JSON body' });
+        }
+      } else {
+        event = req.body;
+      }
+
       logger.info('Flutterwave webhook received', { event: event.event, reference: event.data?.reference });
 
-      // Only handle transfer events
+      // Log full event for debugging unknown event types
+      logger.info('Flutterwave webhook full event', { eventType: event.event, dataKeys: Object.keys(event.data || {}) });
+
+      // Handle virtual account payment (bank transfer to virtual account)
+      if (event.event === 'charge.completed') {
+        return await this.handleChargeCompleted(event, res);
+      }
+
+      // Only handle transfer events below
       if (event.event !== 'transfer.completed') {
         return res.status(200).json({ message: 'Event ignored' });
       }
@@ -316,5 +337,99 @@ export class WithdrawalsController {
     });
 
     logger.info('Withdrawal failed and refunded', { withdrawalId, amount: totalDeduction, reason });
+  }
+
+  private async handleChargeCompleted(event: any, res: Response): Promise<Response> {
+    try {
+      const data = event.data || {};
+      const { status, amount, currency, flw_ref, tx_ref } = data;
+
+      // Log full event data for debugging
+      logger.info('charge.completed event data', { status, amount, currency, flw_ref, tx_ref, meta: data.meta, narration: data.narration });
+
+      // Only process successful charges
+      if (status !== 'successful') {
+        logger.info('Charge webhook ignored — not successful', { status, flw_ref });
+        return res.status(200).json({ message: 'Charge not successful, ignored' });
+      }
+
+      // Check if this is a virtual account payment by looking up the flw_ref
+      // Flutterwave sends the virtual account's flw_ref in the tx_ref for bank transfers
+      const lookupRef = tx_ref || flw_ref;
+
+      if (!lookupRef) {
+        return res.status(200).json({ message: 'No reference found' });
+      }
+
+      // Try to extract user_id from tx_ref (format: va_{uuid}_{timestamp})
+      // e.g. va_f19fa9a2-9109-40a9-8edc-cbeba75e1dd7_1779466497433
+      let virtualAccount: any = null;
+
+      if (tx_ref && tx_ref.startsWith('va_')) {
+        // Remove 'va_' prefix, then split by '_' — uuid has dashes, timestamp has no dashes
+        // Last segment is the timestamp, everything before is the uuid
+        const withoutPrefix = tx_ref.slice(3); // remove 'va_'
+        const lastUnderscore = withoutPrefix.lastIndexOf('_');
+        const userId = withoutPrefix.substring(0, lastUnderscore);
+        if (userId) {
+          const { data } = await supabase
+            .from('virtual_accounts')
+            .select('id, user_id, currency_code')
+            .eq('user_id', userId)
+            .single();
+          virtualAccount = data;
+          logger.info('Virtual account lookup by user_id', { userId, found: !!virtualAccount });
+        }
+      }
+
+      // Fallback: try by flw_ref
+      if (!virtualAccount) {
+        const { data } = await supabase
+          .from('virtual_accounts')
+          .select('id, user_id, currency_code')
+          .eq('flw_ref', lookupRef)
+          .single();
+        virtualAccount = data;
+      }
+
+      if (!virtualAccount) {
+        logger.info('Charge webhook: no virtual account found for ref', { lookupRef });
+        return res.status(200).json({ message: 'Virtual account not found, ignored' });
+      }
+
+      // Idempotency check — don't credit twice for same flw_ref + amount
+      const creditReference = `va_topup_${flw_ref}_${amount}`;
+      const { data: existingTx } = await supabase
+        .from('wallet_transactions')
+        .select('id')
+        .eq('reference', creditReference)
+        .single();
+
+      if (existingTx) {
+        logger.info('Charge webhook: already processed', { creditReference });
+        return res.status(200).json({ message: 'Already processed' });
+      }
+
+      // Credit the user's wallet
+      await WalletService.credit({
+        userId: virtualAccount.user_id,
+        amount: Number(amount),
+        currencyCode: currency || virtualAccount.currency_code || 'NGN',
+        reference: creditReference,
+        description: `Wallet funding via bank transfer`,
+        transactionType: 'credit',
+      });
+
+      logger.info('Virtual account payment credited to wallet', {
+        userId: virtualAccount.user_id,
+        amount,
+        flw_ref,
+      });
+
+      return res.status(200).json({ message: 'Webhook processed' });
+    } catch (err: unknown) {
+      logger.error('handleChargeCompleted error:', err);
+      return res.status(200).json({ message: 'Error processing charge webhook' });
+    }
   }
 }
