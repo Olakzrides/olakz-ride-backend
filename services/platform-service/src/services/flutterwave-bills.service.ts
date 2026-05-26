@@ -95,7 +95,7 @@ export class FlutterwaveBillsService {
       logger.info('Fetching data bundles', { billerCode });
 
       const response = await this.client.get<FlutterwaveResponse>(
-        `/billers/${billerCode}/items`
+        `/bill-categories/${billerCode}/items`
       );
 
       logger.info('Data bundles fetched successfully', {
@@ -156,6 +156,7 @@ export class FlutterwaveBillsService {
         amount: payload.amount,
         billerCode: payload.biller_code,
         itemCode: payload.item_code,
+        fullPayload: payload,
       });
 
       const response = await this.client.post<FlutterwaveResponse>('/bills', payload);
