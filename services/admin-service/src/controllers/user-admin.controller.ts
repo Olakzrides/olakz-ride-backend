@@ -38,6 +38,27 @@ export class UserAdminController {
   };
 
   /**
+   * GET /api/admin/users/:userId/view-wallet-balance
+   * Returns only the wallet balance for a specific user.
+   */
+  getUserWalletBalance = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { userId } = req.params;
+      const result = await UserAdminService.getUserWalletBalance(userId);
+      
+      if (!result) {
+        ResponseUtil.notFound(res, 'User not found');
+        return;
+      }
+      
+      ResponseUtil.success(res, result, 'Wallet balance retrieved');
+    } catch (err: unknown) {
+      logger.error('getUserWalletBalance error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, toMessage(err));
+    }
+  };
+
+  /**
    * GET /api/admin/users/:userId/orders
    * Returns the order history for a specific user across all services.
    * Called when admin clicks "View History".

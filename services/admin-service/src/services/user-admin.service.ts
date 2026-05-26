@@ -95,6 +95,52 @@ export class UserAdminService {
   }
 
   /**
+   * GET /api/admin/users/:userId/view-wallet-balance
+   * Returns only the wallet balance for a specific user.
+   */
+  static async getUserWalletBalance(userId: string) {
+    // ── 1. Check if user exists ───────────────────────────────────────────────
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id, email, first_name, last_name, roles, active_role')
+      .eq('id', userId)
+      .single();
+
+    if (userError || !user) return null;
+
+    // ── 2. Calculate wallet balance ───────────────────────────────────────────
+    const { data: txns } = await supabase
+      .from('wallet_transactions')
+      .select('transaction_type, amount, status')
+      .eq('user_id', userId)
+      .eq('status', 'completed');
+
+    let walletBalance = 0;
+    for (const tx of txns ?? []) {
+      const row = tx as Record<string, unknown>;
+      const amt = Number(row.amount ?? 0);
+      if (row.transaction_type === 'credit' || row.transaction_type === 'topup') {
+        walletBalance += amt;
+      } else if (row.transaction_type === 'debit' || row.transaction_type === 'payment') {
+        walletBalance -= amt;
+      }
+    }
+
+    // ── 3. Return wallet balance only ─────────────────────────────────────────
+    return {
+      user_id: user.id,
+      email: user.email,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      roles: user.roles,
+      active_role: user.active_role,
+      wallet_balance: Math.max(0, walletBalance),
+      currency_code: 'NGN',
+      formatted_balance: `₦${Math.max(0, walletBalance).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    };
+  }
+
+  /**
    * GET /api/admin/users/:userId/orders
    * Returns the full order history for a specific user across all services.
    * Called when admin clicks "View History".

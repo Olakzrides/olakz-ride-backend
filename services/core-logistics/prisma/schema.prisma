@@ -281,13 +281,19 @@ model Ride {
 // RIDE FARE CONFIGURATION (Admin-managed pricing)
 // ============================================
 
-// Admin-configurable pricing per vehicle category and service tier.
+// Admin-configurable pricing per vehicle category, service tier, and city tier.
 // Service tiers (standard/premium/vip) only apply to cars.
 // All other vehicle categories use service_tier = 'default'.
+// City tiers (high/middle/low/national) enable location-based pricing.
+
+
 model RideFareConfig {
   id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   vehicleCategory           String   @map("vehicle_category") @db.VarChar(20)  // car | bicycle | motorcycle | bus | truck
   serviceTier               String   @default("default") @map("service_tier") @db.VarChar(20)  // car: standard | premium | vip   |   all others: default
+  cityTier                  String   @default("national") @map("city_tier") @db.VarChar(20)  // high | middle | low | national
+  states                    Json     @default("[]") @map("states")  // Array of state names this config applies to
+  
   estimatedBillingUnit      Decimal  @default(0) @map("estimated_billing_unit") @db.Decimal(10, 2) // Normal traffic rate per km (e.g. 490) 
   highTrafficEstimatedBillingUnit    Decimal  @default(0) @map("high_traffic_estimated_billing_unit") @db.Decimal(10, 2)  // Peak hour rate per km (car only)
 
@@ -307,8 +313,9 @@ model RideFareConfig {
   createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                 DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@unique([vehicleCategory, serviceTier])
+  @@unique([vehicleCategory, serviceTier, cityTier])
   @@index([vehicleCategory])
+  @@index([cityTier])
   @@index([isActive])
   @@map("ride_fare_config")
 }

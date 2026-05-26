@@ -37,6 +37,27 @@ export class VendorAdminController {
   };
 
   /**
+   * GET /api/admin/vendors/:id/view-wallet-balance
+   * Returns only the wallet balance for a specific vendor.
+   */
+  getVendorWalletBalance = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const result = await VendorAdminService.getVendorWalletBalance(id);
+      
+      if (!result) {
+        ResponseUtil.notFound(res, 'Vendor not found');
+        return;
+      }
+      
+      ResponseUtil.success(res, result, 'Vendor wallet balance retrieved');
+    } catch (err: unknown) {
+      logger.error('getVendorWalletBalance error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, toMessage(err));
+    }
+  };
+
+  /**
    * GET /api/admin/vendors/:id/view-order-history
    * Vendor order history across marketplace and food services.
    * Called when admin clicks "View History".

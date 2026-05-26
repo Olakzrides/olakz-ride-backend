@@ -514,4 +514,44 @@ export class AdminDriverService {
     }
     return Math.max(0, balance);
   }
+
+  /**
+   * GET /api/admin/drivers/:driverId/view-wallet-balance
+   * Returns only the wallet balance for a specific driver.
+   */
+  async getDriverWalletBalance(driverId: string) {
+    const { data: driver, error: driverError } = await supabase
+      .from('drivers')
+      .select('id, user_id, license_number, status, rating, total_rides, pending_remittance_amount, remittance_blocked')
+      .eq('id', driverId)
+      .single();
+
+    if (driverError || !driver) return null;
+
+    const row = driver as Record<string, unknown>;
+    const userId = row.user_id as string;
+
+    const userMap = await this.fetchUsers([userId]);
+    const user = userMap.get(userId) ?? {} as Record<string, unknown>;
+    const walletBalance = await this.getWalletBalance(userId);
+
+    return {
+      driver_id: row.id,
+      user_id: userId,
+      first_name: user.first_name ?? null,
+      last_name: user.last_name ?? null,
+      email: user.email ?? null,
+      phone: user.phone ?? null,
+      license_number: row.license_number,
+      driver_status: row.status,
+      rating: row.rating,
+      total_rides: row.total_rides,
+      wallet_balance: walletBalance,
+      currency_code: 'NGN',
+      formatted_balance: `₦${walletBalance.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      // Remittance info
+      pending_remittance_amount: Number(row.pending_remittance_amount ?? 0),
+      remittance_blocked: row.remittance_blocked ?? false,
+    };
+  }
 }
