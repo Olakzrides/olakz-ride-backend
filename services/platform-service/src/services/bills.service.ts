@@ -700,11 +700,8 @@ export class BillsService {
           }
         }
 
-        // Detect Flutterwave test-mode limitation for data bundles
-        const isTestModeLimitation = flwError.message?.toLowerCase().includes('invalid biller');
-        const errorMessage = isTestModeLimitation
-          ? 'Data bundle purchase is not supported in Flutterwave test mode. Switch to a live key to process data purchases.'
-          : flwError.message;
+        const errorMessage = flwError.message;
+        const isTestModeLimitation = false;
 
         await prisma.bill_transactions.update({
           where: { id: transaction.id },
