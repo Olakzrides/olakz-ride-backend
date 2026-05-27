@@ -50,8 +50,8 @@ function resolveServiceTier(variantTitle: string, vehicleCategory: string): stri
 export class FareService {
   /**
    * Resolve which city_tier a given Nigerian state belongs to.
-   * Looks up the city_tier_states table — one clean row per state.
-   * Returns 'national' if the state is not assigned to any tier.
+   * Looks up city_tier_states table. Returns 'low' if not found
+   * (unassigned states implicitly belong to low tier).
    */
   private async resolveCityTierForState(state: string): Promise<string> {
     const { data, error } = await supabase
@@ -60,7 +60,7 @@ export class FareService {
       .ilike('state_name', state)
       .maybeSingle();
 
-    if (error || !data) return 'national';
+    if (error || !data) return 'low';
     return data.city_tier;
   }
 
@@ -68,11 +68,11 @@ export class FareService {
    * Load the fare config for a given vehicle category + service tier.
    *
    * If a pickup state is provided:
-   *   1. Resolve which city_tier that state belongs to.
+   *   1. Resolve which city_tier that state belongs to (high | middle | low).
    *   2. Load the config for that city_tier.
-   *   3. If not found, fall back to 'national'.
+   *   3. If not found, fall back to 'low' (the universal fallback).
    *
-   * If no state is provided, loads the 'national' config directly.
+   * If no state is provided, loads the 'low' config directly.
    * Falls back to 'default' service tier if the specific tier has no config.
    */
   async getFareConfig(
@@ -82,7 +82,7 @@ export class FareService {
   ): Promise<RideFareConfig | null> {
     const cityTier = pickupState
       ? await this.resolveCityTierForState(pickupState)
-      : 'national';
+      : 'low';
 
     // Try exact match: vehicleCategory + serviceTier + cityTier
     const { data, error } = await supabase
@@ -96,27 +96,27 @@ export class FareService {
 
     if (!error && data) return data as RideFareConfig;
 
-    // If city-tier config not found, fall back to national
-    if (cityTier !== 'national') {
-      logger.warn(`No fare config for ${vehicleCategory}/${serviceTier}/${cityTier}, falling back to national`, { pickupState });
-      const { data: national } = await supabase
+    // If city-tier config not found, fall back to 'low' (universal fallback)
+    if (cityTier !== 'low') {
+      logger.warn(`No fare config for ${vehicleCategory}/${serviceTier}/${cityTier}, falling back to low`, { pickupState });
+      const { data: lowConfig } = await supabase
         .from('ride_fare_config')
         .select('*')
         .eq('vehicle_category', vehicleCategory)
         .eq('service_tier', serviceTier)
-        .eq('city_tier', 'national')
+        .eq('city_tier', 'low')
         .eq('is_active', true)
         .single();
-      if (national) return national as RideFareConfig;
+      if (lowConfig) return lowConfig as RideFareConfig;
     }
 
-    // Final fallback: 'default' service tier + national
+    // Final fallback: 'default' service tier + low city tier
     const { data: fallback } = await supabase
       .from('ride_fare_config')
       .select('*')
       .eq('vehicle_category', vehicleCategory)
       .eq('service_tier', 'default')
-      .eq('city_tier', 'national')
+      .eq('city_tier', 'low')
       .eq('is_active', true)
       .single();
 

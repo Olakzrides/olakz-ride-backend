@@ -291,19 +291,17 @@ model RideFareConfig {
   id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   vehicleCategory           String   @map("vehicle_category") @db.VarChar(20)  // car | bicycle | motorcycle | bus | truck
   serviceTier               String   @default("default") @map("service_tier") @db.VarChar(20)  // car: standard | premium | vip   |   all others: default
-  cityTier                  String   @default("national") @map("city_tier") @db.VarChar(20)  // high | middle | low | national
+  cityTier                  String   @default("low") @map("city_tier") @db.VarChar(20)  // high | middle | low  (no national — unassigned states fall to low)
 
-  estimatedBillingUnit      Decimal  @default(0) @map("estimated_billing_unit") @db.Decimal(10, 2)
-  highTrafficEstimatedBillingUnit    Decimal  @default(0) @map("high_traffic_estimated_billing_unit") @db.Decimal(10, 2)
-
-  minAmountLessThan3km      Decimal  @default(0) @map("min_amount_less_than_3km") @db.Decimal(10, 2)
-  minAmountForSharedRide    Decimal  @default(0) @map("min_amount_for_shared_ride") @db.Decimal(10, 2)
-  sharedDiscountPercent     Decimal  @default(0) @map("shared_discount_percent") @db.Decimal(5, 2)
-
-  serviceFee                Decimal  @default(0) @map("service_fee") @db.Decimal(10, 2)
-  roundingFee               Decimal  @default(0) @map("rounding_fee") @db.Decimal(10, 2)
-  bookingFee                Decimal  @default(0) @map("booking_fee") @db.Decimal(10, 2)
-  fleetCommissionPercent    Decimal  @default(0) @map("fleet_commission_percent") @db.Decimal(5, 2)
+  estimatedBillingUnit                Decimal  @default(0) @map("estimated_billing_unit") @db.Decimal(10, 2)
+  highTrafficEstimatedBillingUnit     Decimal  @default(0) @map("high_traffic_estimated_billing_unit") @db.Decimal(10, 2)
+  minAmountLessThan3km                Decimal  @default(0) @map("min_amount_less_than_3km") @db.Decimal(10, 2)
+  minAmountForSharedRide              Decimal  @default(0) @map("min_amount_for_shared_ride") @db.Decimal(10, 2)
+  sharedDiscountPercent               Decimal  @default(0) @map("shared_discount_percent") @db.Decimal(5, 2)
+  serviceFee                          Decimal  @default(0) @map("service_fee") @db.Decimal(10, 2)
+  roundingFee                         Decimal  @default(0) @map("rounding_fee") @db.Decimal(10, 2)
+  bookingFee                          Decimal  @default(0) @map("booking_fee") @db.Decimal(10, 2)
+  fleetCommissionPercent              Decimal  @default(0) @map("fleet_commission_percent") @db.Decimal(5, 2)
 
   isActive                  Boolean  @default(true) @map("is_active")
   createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -318,7 +316,7 @@ model RideFareConfig {
 
 // Normalised state-to-city-tier mapping.
 // One row per (city_tier, state_name). Shared across all vehicle categories.
-// States not listed here fall back to national pricing.
+// States not explicitly assigned to high or middle automatically fall to low.
 model CityTierState {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   cityTier   String   @map("city_tier") @db.VarChar(20)   // high | middle | low

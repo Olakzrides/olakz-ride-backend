@@ -12,17 +12,18 @@ function toMessage(err: unknown): string {
 const VALID_CATEGORIES = ['car', 'bicycle', 'motorcycle', 'bus', 'truck'];
 const VALID_SERVICE_TIERS = ['standard', 'premium', 'vip', 'default'];
 
+// CITY_TIERS is now ['high', 'middle', 'low'] — no national
 function isValidCityTier(tier: string): tier is CityTier {
   return (CITY_TIERS as readonly string[]).includes(tier);
 }
 
 export class PricingAdminController {
 
-  // ── Original endpoints (preserved) ────────────────────────────────────────
+  // ── Overview ───────────────────────────────────────────────────────────────
 
   /**
    * GET /api/admin/pricing
-   * Returns all fare configs grouped by vehicle category.
+   * All fare configs grouped by vehicle category.
    */
   getAllConfigs = async (_req: AdminRequest, res: Response): Promise<void> => {
     try {
@@ -36,17 +37,15 @@ export class PricingAdminController {
 
   /**
    * GET /api/admin/pricing/category/:vehicleCategory
-   * Returns all tier configs for a specific vehicle category.
+   * All configs for a specific vehicle category across all city tiers.
    */
   getConfigsByCategory = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
       const { vehicleCategory } = req.params;
-
       if (!VALID_CATEGORIES.includes(vehicleCategory)) {
         ResponseUtil.badRequest(res, `Invalid vehicle category. Must be one of: ${VALID_CATEGORIES.join(', ')}`, 'INVALID_CATEGORY');
         return;
       }
-
       const configs = await PricingAdminService.getConfigsByCategory(vehicleCategory);
       ResponseUtil.success(res, { configs }, `Pricing configs for ${vehicleCategory} retrieved`);
     } catch (err: unknown) {
@@ -55,80 +54,12 @@ export class PricingAdminController {
     }
   };
 
-  /**
-   * GET /api/admin/pricing/national/:vehicleCategory/:serviceTier
-   * Returns the national fallback config for a vehicle + service tier.
-   */
-  getConfig = async (req: AdminRequest, res: Response): Promise<void> => {
-    try {
-      const { vehicleCategory, serviceTier } = req.params;
-
-      if (!VALID_CATEGORIES.includes(vehicleCategory)) {
-        ResponseUtil.badRequest(res, `Invalid vehicle category. Must be one of: ${VALID_CATEGORIES.join(', ')}`, 'INVALID_CATEGORY');
-        return;
-      }
-      if (!VALID_SERVICE_TIERS.includes(serviceTier)) {
-        ResponseUtil.badRequest(res, `Invalid service tier. Must be one of: ${VALID_SERVICE_TIERS.join(', ')}`, 'INVALID_TIER');
-        return;
-      }
-
-      const config = await PricingAdminService.getConfig(vehicleCategory, serviceTier);
-      if (!config) {
-        ResponseUtil.notFound(res, `Pricing config for ${vehicleCategory}/${serviceTier}`);
-        return;
-      }
-
-      ResponseUtil.success(res, { config }, 'Pricing config retrieved');
-    } catch (err: unknown) {
-      logger.error('getConfig error', { error: toMessage(err) });
-      ResponseUtil.serverError(res, 'Failed to retrieve pricing config', 'PRICING_FETCH_ERROR');
-    }
-  };
-
-  /**
-   * PUT /api/admin/pricing/national/:vehicleCategory/:serviceTier
-   * Update the national fallback fare config.
-   */
-  updateConfig = async (req: AdminRequest, res: Response): Promise<void> => {
-    try {
-      const adminId = req.user?.id;
-      if (!adminId) { ResponseUtil.unauthorized(res); return; }
-
-      const { vehicleCategory, serviceTier } = req.params;
-
-      if (!VALID_CATEGORIES.includes(vehicleCategory)) {
-        ResponseUtil.badRequest(res, `Invalid vehicle category. Must be one of: ${VALID_CATEGORIES.join(', ')}`, 'INVALID_CATEGORY');
-        return;
-      }
-      if (!VALID_SERVICE_TIERS.includes(serviceTier)) {
-        ResponseUtil.badRequest(res, `Invalid service tier. Must be one of: ${VALID_SERVICE_TIERS.join(', ')}`, 'INVALID_TIER');
-        return;
-      }
-      if (!req.body || Object.keys(req.body).length === 0) {
-        ResponseUtil.badRequest(res, 'Request body cannot be empty', 'EMPTY_BODY');
-        return;
-      }
-
-      const config = await PricingAdminService.updateConfig(vehicleCategory, serviceTier, req.body, adminId);
-      ResponseUtil.success(res, { config }, `Pricing config for ${vehicleCategory}/${serviceTier} updated successfully`);
-    } catch (err: unknown) {
-      const msg = toMessage(err);
-      if (msg.includes('cannot be negative') || msg.includes('cannot exceed 100')) {
-        ResponseUtil.badRequest(res, msg, 'INVALID_VALUE'); return;
-      }
-      if (msg.includes('not found') || msg.includes('Config not found')) {
-        ResponseUtil.notFound(res, 'Pricing config'); return;
-      }
-      logger.error('updateConfig error', { error: msg });
-      ResponseUtil.serverError(res, 'Failed to update pricing config', 'PRICING_UPDATE_ERROR');
-    }
-  };
-
-  // ── City-tier endpoints ────────────────────────────────────────────────────
+  // ── Nigerian states ────────────────────────────────────────────────────────
 
   /**
    * GET /api/admin/pricing/states
-   * Returns all 36+1 Nigerian states with their current city tier assignment.
+   * All 36+1 Nigerian states with their current city tier assignment.
+   * Unassigned states are shown as 'low'.
    */
   getStates = async (_req: AdminRequest, res: Response): Promise<void> => {
     try {
@@ -140,9 +71,11 @@ export class PricingAdminController {
     }
   };
 
+  // ── City-tier overview ─────────────────────────────────────────────────────
+
   /**
    * GET /api/admin/pricing/city-tiers
-   * Returns all configs grouped by city tier (high / middle / low / national).
+   * All configs grouped by city tier (high / middle / low), each with assigned states.
    */
   getCityTierConfigs = async (_req: AdminRequest, res: Response): Promise<void> => {
     try {
@@ -156,17 +89,16 @@ export class PricingAdminController {
 
   /**
    * GET /api/admin/pricing/city-tiers/:cityTier
-   * Returns all configs + assigned states for a specific city tier.
+   * All configs + assigned states for one city tier.
+   * For 'low', includes all states not assigned to high or middle.
    */
   getConfigsByCityTier = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
       const { cityTier } = req.params;
-
       if (!isValidCityTier(cityTier)) {
         ResponseUtil.badRequest(res, `Invalid city tier. Must be one of: ${CITY_TIERS.join(', ')}`, 'INVALID_CITY_TIER');
         return;
       }
-
       const result = await PricingAdminService.getConfigsByCityTier(cityTier);
       ResponseUtil.success(res, result, `City tier configs for "${cityTier}" retrieved`);
     } catch (err: unknown) {
@@ -175,10 +107,11 @@ export class PricingAdminController {
     }
   };
 
+  // ── State assignment ───────────────────────────────────────────────────────
+
   /**
    * POST /api/admin/pricing/city-tiers/:cityTier/states
-   * Assign states to a city tier (merges with existing, removes from other tiers).
-   *
+   * Add states to a city tier (merge). Removes them from any other tier automatically.
    * Body: { "states": ["Lagos", "FCT"] }
    */
   assignStatesToCityTier = async (req: AdminRequest, res: Response): Promise<void> => {
@@ -187,7 +120,6 @@ export class PricingAdminController {
       if (!adminId) { ResponseUtil.unauthorized(res); return; }
 
       const { cityTier } = req.params;
-
       if (!isValidCityTier(cityTier)) {
         ResponseUtil.badRequest(res, `Invalid city tier. Must be one of: ${CITY_TIERS.join(', ')}`, 'INVALID_CITY_TIER');
         return;
@@ -203,11 +135,8 @@ export class PricingAdminController {
       ResponseUtil.success(res, result, `States assigned to "${cityTier}" city tier`);
     } catch (err: unknown) {
       const msg = toMessage(err);
-      if (msg.includes('Invalid state names') || msg.includes('Cannot assign')) {
+      if (msg.includes('Invalid state names')) {
         ResponseUtil.badRequest(res, msg, 'INVALID_STATES'); return;
-      }
-      if (msg.includes('No config rows found')) {
-        ResponseUtil.badRequest(res, msg, 'NO_CONFIGS_FOR_TIER'); return;
       }
       logger.error('assignStatesToCityTier error', { error: msg });
       ResponseUtil.serverError(res, 'Failed to assign states', 'STATE_ASSIGN_ERROR');
@@ -216,9 +145,9 @@ export class PricingAdminController {
 
   /**
    * PUT /api/admin/pricing/city-tiers/:cityTier/states
-   * Overwrite (replace) the full states list for a city tier.
-   *
-   * Body: { "states": ["Lagos", "FCT", "Rivers"] }
+   * Replace the full states list for a city tier (overwrite).
+   * Removed states automatically fall to low.
+   * Body: { "states": ["Lagos", "FCT"] }
    */
   setStatesForCityTier = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
@@ -226,7 +155,6 @@ export class PricingAdminController {
       if (!adminId) { ResponseUtil.unauthorized(res); return; }
 
       const { cityTier } = req.params;
-
       if (!isValidCityTier(cityTier)) {
         ResponseUtil.badRequest(res, `Invalid city tier. Must be one of: ${CITY_TIERS.join(', ')}`, 'INVALID_CITY_TIER');
         return;
@@ -242,7 +170,7 @@ export class PricingAdminController {
       ResponseUtil.success(res, result, `States for "${cityTier}" city tier updated`);
     } catch (err: unknown) {
       const msg = toMessage(err);
-      if (msg.includes('Invalid state names') || msg.includes('Cannot assign')) {
+      if (msg.includes('Invalid state names')) {
         ResponseUtil.badRequest(res, msg, 'INVALID_STATES'); return;
       }
       logger.error('setStatesForCityTier error', { error: msg });
@@ -252,8 +180,7 @@ export class PricingAdminController {
 
   /**
    * DELETE /api/admin/pricing/city-tiers/:cityTier/states
-   * Remove specific states from a city tier.
-   *
+   * Remove specific states from a city tier. They fall to low automatically.
    * Body: { "states": ["Lagos"] }
    */
   removeStatesFromCityTier = async (req: AdminRequest, res: Response): Promise<void> => {
@@ -262,7 +189,6 @@ export class PricingAdminController {
       if (!adminId) { ResponseUtil.unauthorized(res); return; }
 
       const { cityTier } = req.params;
-
       if (!isValidCityTier(cityTier)) {
         ResponseUtil.badRequest(res, `Invalid city tier. Must be one of: ${CITY_TIERS.join(', ')}`, 'INVALID_CITY_TIER');
         return;
@@ -275,10 +201,10 @@ export class PricingAdminController {
       }
 
       const result = await PricingAdminService.removeStatesFromCityTier(cityTier, states, adminId);
-      ResponseUtil.success(res, result, `States removed from "${cityTier}" city tier`);
+      ResponseUtil.success(res, result, `States removed from "${cityTier}" — they now fall to low tier`);
     } catch (err: unknown) {
       const msg = toMessage(err);
-      if (msg.includes('Invalid state names') || msg.includes('Cannot modify')) {
+      if (msg.includes('Invalid state names')) {
         ResponseUtil.badRequest(res, msg, 'INVALID_STATES'); return;
       }
       logger.error('removeStatesFromCityTier error', { error: msg });
@@ -286,10 +212,11 @@ export class PricingAdminController {
     }
   };
 
+  // ── Per-vehicle pricing config ─────────────────────────────────────────────
+
   /**
    * GET /api/admin/pricing/city-tiers/:cityTier/:vehicleCategory/:serviceTier
-   * Get a single config for a specific vehicle + service tier + city tier.
-   * Returns a default empty config (with zeros) if the row doesn't exist yet,
+   * Single pricing config. Returns zeroed default if row doesn't exist yet
    * so the frontend can render the form without treating a missing row as an error.
    */
   getCityTierConfig = async (req: AdminRequest, res: Response): Promise<void> => {
@@ -311,13 +238,12 @@ export class PricingAdminController {
 
       const config = await PricingAdminService.getCityTierConfig(vehicleCategory, serviceTier, cityTier);
 
-      // Return a default zero config if the row doesn't exist yet.
-      // The frontend uses this to pre-fill the form — saving will upsert the row.
+      // Return zeroed default when row doesn't exist yet — frontend renders empty form,
+      // saving will upsert the row.
       const result = config ?? {
         vehicle_category: vehicleCategory,
         service_tier: serviceTier,
         city_tier: cityTier,
-        states: [],
         estimated_billing_unit: 0,
         high_traffic_estimated_billing_unit: 0,
         min_amount_less_than_3km: 0,
@@ -340,8 +266,7 @@ export class PricingAdminController {
 
   /**
    * PUT /api/admin/pricing/city-tiers/:cityTier/:vehicleCategory/:serviceTier
-   * Update pricing for a specific vehicle + service tier + city tier.
-   *
+   * Upsert pricing for a vehicle + service tier + city tier.
    * Body: { "estimated_billing_unit": 650, "service_fee": 700, ... }
    */
   updateCityTierConfig = async (req: AdminRequest, res: Response): Promise<void> => {
@@ -368,15 +293,14 @@ export class PricingAdminController {
         return;
       }
 
-      const config = await PricingAdminService.updateCityTierConfig(vehicleCategory, serviceTier, cityTier, req.body, adminId);
-      ResponseUtil.success(res, { config }, `Pricing config for ${vehicleCategory}/${serviceTier}/${cityTier} updated`);
+      const config = await PricingAdminService.updateCityTierConfig(
+        vehicleCategory, serviceTier, cityTier, req.body, adminId
+      );
+      ResponseUtil.success(res, { config }, `Pricing config for ${vehicleCategory}/${serviceTier}/${cityTier} saved`);
     } catch (err: unknown) {
       const msg = toMessage(err);
       if (msg.includes('cannot be negative') || msg.includes('cannot exceed 100')) {
         ResponseUtil.badRequest(res, msg, 'INVALID_VALUE'); return;
-      }
-      if (msg.includes('not found') || msg.includes('Config not found')) {
-        ResponseUtil.notFound(res, 'Pricing config'); return;
       }
       logger.error('updateCityTierConfig error', { error: msg });
       ResponseUtil.serverError(res, 'Failed to update pricing config', 'PRICING_UPDATE_ERROR');
@@ -385,8 +309,7 @@ export class PricingAdminController {
 
   /**
    * POST /api/admin/pricing/city-tiers/:cityTier/:vehicleCategory/:serviceTier
-   * Create a new pricing config for a vehicle + service tier + city tier.
-   *
+   * Create a new pricing config (upsert — safe to call even if row exists).
    * Body: { "estimated_billing_unit": 650, "service_fee": 700, ... }
    */
   createCityTierConfig = async (req: AdminRequest, res: Response): Promise<void> => {
@@ -409,13 +332,12 @@ export class PricingAdminController {
         return;
       }
 
-      const config = await PricingAdminService.createCityTierConfig(vehicleCategory, serviceTier, cityTier, req.body ?? {}, adminId);
+      const config = await PricingAdminService.createCityTierConfig(
+        vehicleCategory, serviceTier, cityTier, req.body ?? {}, adminId
+      );
       ResponseUtil.created(res, { config }, `Pricing config for ${vehicleCategory}/${serviceTier}/${cityTier} created`);
     } catch (err: unknown) {
       const msg = toMessage(err);
-      if (msg.includes('already exists')) {
-        ResponseUtil.badRequest(res, msg, 'CONFIG_EXISTS'); return;
-      }
       if (msg.includes('cannot be negative') || msg.includes('cannot exceed 100')) {
         ResponseUtil.badRequest(res, msg, 'INVALID_VALUE'); return;
       }

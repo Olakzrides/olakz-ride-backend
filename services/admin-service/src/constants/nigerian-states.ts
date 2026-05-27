@@ -59,7 +59,7 @@ export const GEO_POLITICAL_ZONES: Record<string, string[]> = {
   'South West': ['Ekiti', 'Lagos', 'Ogun', 'Ondo', 'Osun', 'Oyo']
 };
 
-export const CITY_TIERS = ['high', 'middle', 'low', 'national'] as const;
+export const CITY_TIERS = ['high', 'middle', 'low'] as const;
 export type CityTier = typeof CITY_TIERS[number];
 
 /**
