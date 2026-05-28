@@ -60,6 +60,15 @@ export class CartController {
         pickupPoint.longitude
       );
 
+      // Resolve Nigerian state from pickup coordinates for city-tier pricing
+      const pickupState = MapsUtil.extractStateFromAddress(pickupPoint.address ?? '') 
+        ?? await MapsUtil.resolveNigerianState(
+          { latitude: pickupPoint.latitude, longitude: pickupPoint.longitude },
+          pickupPoint.address
+        );
+
+      logger.info('City-tier state resolution (createCart)', { pickupState, address: pickupPoint.address });
+
       // Passengers defaults to 1 if not provided (kept in DB for analytics)
       const passengerCount = passengers || 1;
 
@@ -78,11 +87,14 @@ export class CartController {
       const variants = await this.variantService.getAllRideVariants();
 
       // Calculate prices for each variant (no dropoff yet, so return minimum fares)
+      // Pass pickupState so city-tier pricing is applied even for minimum fare display
       const variantsWithPrices = await this.fareService.calculateVariantPrices(
         variants,
         pickupPoint,
         null,
-        region.currency_code
+        region.currency_code,
+        'for_me',
+        pickupState ?? undefined
       );
 
       // Get user's recent rides
@@ -154,7 +166,16 @@ export class CartController {
       // Get all ride variants
       const variants = await this.variantService.getAllRideVariants();
 
-      // Recalculate variant prices with actual distance
+      // Resolve Nigerian state from pickup for city-tier pricing
+      const pickupState = MapsUtil.extractStateFromAddress(cart.pickup_address ?? '')
+        ?? await MapsUtil.resolveNigerianState(
+          { latitude: parseFloat(cart.pickup_latitude), longitude: parseFloat(cart.pickup_longitude) },
+          cart.pickup_address
+        );
+
+      logger.info('City-tier state resolution (updateDropoff)', { pickupState, address: cart.pickup_address });
+
+      // Recalculate variant prices with actual distance + city-tier pricing
       const variantsWithPrices = await this.fareService.calculateVariantPrices(
         variants,
         {
@@ -163,7 +184,9 @@ export class CartController {
           address: cart.pickup_address,
         },
         dropoffPoint,
-        cart.currency_code
+        cart.currency_code,
+        'for_me',
+        pickupState ?? undefined
       );
 
       return ResponseUtil.success(res, {
@@ -208,7 +231,15 @@ export class CartController {
         return ResponseUtil.notFound(res, 'Variant not found');
       }
 
-      // Calculate final price
+      // Calculate final price with city-tier pricing
+      const pickupState = MapsUtil.extractStateFromAddress(cart.pickup_address ?? '')
+        ?? await MapsUtil.resolveNigerianState(
+          { latitude: parseFloat(cart.pickup_latitude), longitude: parseFloat(cart.pickup_longitude) },
+          cart.pickup_address
+        );
+
+      logger.info('City-tier state resolution (addLineItem)', { pickupState, address: cart.pickup_address });
+
       const fareDetails = await this.fareService.calculateFinalFare({
         variantId,
         pickupLocation: {
@@ -222,6 +253,7 @@ export class CartController {
           address: cart.dropoff_address,
         },
         currencyCode: cart.currency_code,
+        pickupState: pickupState ?? undefined,
       });
 
       // Remove existing line items (only one variant can be selected)

@@ -7,6 +7,7 @@ import { PushNotificationService } from './push-notification.service';
 import { LocationHistoryService } from './location-history.service';
 import { FareService } from './fare.service';
 import { RemittanceService } from './remittance.service';
+import { MapsUtil } from '../utils/maps.util';
 
 interface Location {
   latitude: number;
@@ -492,10 +493,22 @@ export class DriverRideService {
       }
 
       const fareService = new FareService();
+
+      // Resolve pickup state from the stored pickup address for city-tier pricing
+      // This ensures completion fare uses the same city tier as the booking fare
+      const pickupState = MapsUtil.extractStateFromAddress(ride.pickup_address ?? '') ?? undefined;
+
+      logger.info('completeTrip: resolving city tier for fare', {
+        rideId,
+        pickupAddress: ride.pickup_address,
+        pickupState,
+      });
+
       const fareResult = await fareService.calculateCompletionFare({
         variantId: (ride.variant as any)?.id ?? ride.variant_id,
         actualDistance: data.actualDistance,
         bookingType: ride.booking_type ?? 'for_me',
+        pickupState,
       });
 
       const finalFare       = fareResult.totalFare;

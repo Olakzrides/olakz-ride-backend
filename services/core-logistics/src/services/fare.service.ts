@@ -8,7 +8,6 @@ interface RideFareConfig {
   vehicle_category: string;
   service_tier: string;
   city_tier: string;
-  states: string[];
   estimated_billing_unit: number;
   high_traffic_estimated_billing_unit: number;
   min_amount_less_than_3km: number;
@@ -60,7 +59,17 @@ export class FareService {
       .ilike('state_name', state)
       .maybeSingle();
 
-    if (error || !data) return 'low';
+    if (error) {
+      logger.error('resolveCityTierForState DB error', { state, error: error.message });
+      return 'low';
+    }
+
+    if (!data) {
+      logger.warn('resolveCityTierForState: state not found in city_tier_states — defaulting to low', { state });
+      return 'low';
+    }
+
+    logger.info('resolveCityTierForState: resolved', { state, cityTier: data.city_tier });
     return data.city_tier;
   }
 
@@ -83,6 +92,8 @@ export class FareService {
     const cityTier = pickupState
       ? await this.resolveCityTierForState(pickupState)
       : 'low';
+
+    logger.info('getFareConfig: looking up config', { vehicleCategory, serviceTier, cityTier, pickupState });
 
     // Try exact match: vehicleCategory + serviceTier + cityTier
     const { data, error } = await supabase
