@@ -196,6 +196,74 @@ export class VendorAdminService {
     };
   }
 
+  /**
+   * GET /api/admin/vendors/:id/view-wallet-balance
+   * Returns only the wallet balance for a specific vendor.
+   */
+  static async getVendorWalletBalance(vendorId: string) {
+    // Try by vendor id first, then fall back to user_id
+    let { data, error } = await supabase
+      .from('vendors')
+      .select('id, user_id, business_name, business_type, service_type, verification_status, is_active')
+      .eq('id', vendorId)
+      .single();
+
+    // If not found by vendor id, try by user_id
+    if (error || !data) {
+      const fallback = await supabase
+        .from('vendors')
+        .select('id, user_id, business_name, business_type, service_type, verification_status, is_active')
+        .eq('user_id', vendorId)
+        .single();
+      data = fallback.data;
+      error = fallback.error;
+    }
+
+    if (error || !data) return null;
+    const v = data as Record<string, unknown>;
+
+    // Fetch user details
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email, phone')
+      .eq('id', v.user_id as string)
+      .single();
+
+    const u = (user ?? {}) as Record<string, unknown>;
+
+    // Calculate wallet balance
+    const { data: txns } = await supabase
+      .from('wallet_transactions')
+      .select('transaction_type, amount')
+      .eq('user_id', v.user_id as string)
+      .eq('status', 'completed');
+
+    let walletBalance = 0;
+    for (const tx of txns ?? []) {
+      const t = tx as Record<string, unknown>;
+      const amt = Number(t.amount ?? 0);
+      if (t.transaction_type === 'credit' || t.transaction_type === 'topup') walletBalance += amt;
+      else if (t.transaction_type === 'debit' || t.transaction_type === 'payment') walletBalance -= amt;
+    }
+
+    return {
+      vendor_id: v.id,
+      user_id: v.user_id,
+      business_name: v.business_name,
+      business_type: v.business_type,
+      service_type: v.service_type,
+      verification_status: v.verification_status,
+      is_active: v.is_active,
+      first_name: u.first_name ?? null,
+      last_name: u.last_name ?? null,
+      email: u.email ?? v.email,
+      phone: u.phone ?? v.phone,
+      wallet_balance: Math.max(0, walletBalance),
+      currency_code: 'NGN',
+      formatted_balance: `₦${Math.max(0, walletBalance).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    };
+  }
+
   // ─── Vendor order history ─────────────────────────────────────────────────
 
   static async getVendorOrders(vendorId: string, filters: {

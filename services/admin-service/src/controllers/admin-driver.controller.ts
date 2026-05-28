@@ -151,6 +151,27 @@ export class AdminDriverController {
   };
 
   /**
+   * GET /api/admin/drivers/:driverId/view-wallet-balance
+   * Returns only the wallet balance for a specific driver.
+   */
+  getDriverWalletBalance = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const { driverId } = req.params;
+      const result = await this.adminDriverService.getDriverWalletBalance(driverId);
+      
+      if (!result) {
+        ResponseUtil.notFound(res, 'Driver not found');
+        return;
+      }
+      
+      ResponseUtil.success(res, result, 'Driver wallet balance retrieved');
+    } catch (err: unknown) {
+      logger.error('getDriverWalletBalance error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, 'Failed to retrieve driver wallet balance', 'DRIVER_WALLET_FETCH_ERROR');
+    }
+  };
+
+  /**
    * GET /api/admin/drivers/:driverId/rides
    * Driver ride history — location, rating, date, time, status, fare.
    * Called when admin clicks "View History".

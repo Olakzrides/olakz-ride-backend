@@ -18,6 +18,7 @@ router.post('/:driverId/review', auditMiddleware('review_driver'), ctrl.reviewDr
 
 router.get('/', auditMiddleware('get_all_drivers'), ctrl.getAllDrivers);
 router.get('/:driverId/profile', auditMiddleware('get_driver_by_id'), ctrl.getDriverById);
+router.get('/:driverId/view-wallet-balance', auditMiddleware('get_driver_wallet_balance'), ctrl.getDriverWalletBalance);
 router.get('/:driverId/view-rides-history', auditMiddleware('get_driver_rides'), ctrl.getDriverRides);
 router.patch('/:driverId/suspend', auditMiddleware('suspend_driver'), ctrl.suspendDriver);
 router.patch('/:driverId/terminate', auditMiddleware('terminate_driver'), ctrl.terminateDriver);

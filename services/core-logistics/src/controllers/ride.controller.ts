@@ -11,6 +11,7 @@ import { LocationHistoryService } from '../services/location-history.service';
 import { RideSharingService } from '../services/ride-sharing.service';
 import { TipService } from '../services/tip.service';
 import { ResponseUtil } from '../utils/response.util';
+import { MapsUtil } from '../utils/maps.util';
 import { logger } from '../config/logger';
 import { RideRequestRequest } from '../types';
 import { supabase } from '../config/database';
@@ -143,18 +144,28 @@ export class RideController {
         return ResponseUtil.badRequest(res, 'Dropoff location is required');
       }
 
-      // Get variant and calculate final fare
+      // Get variant and calculate final fare with city-tier pricing
       const variant = await this.variantService.getVariant(vehicleVariantId);
       if (!variant) {
         return ResponseUtil.badRequest(res, 'Invalid vehicle variant');
       }
+
+      // Resolve Nigerian state from pickup coordinates for city-tier pricing
+      const pickupState = MapsUtil.extractStateFromAddress(pickupLocation.address ?? '')
+        ?? await MapsUtil.resolveNigerianState(
+          { latitude: pickupLocation.latitude, longitude: pickupLocation.longitude },
+          pickupLocation.address
+        );
+
+      logger.info('City-tier state resolution (requestRide)', { pickupState, address: pickupLocation.address });
 
       const fareDetails = await this.fareService.calculateFinalFare({
         variantId: vehicleVariantId,
         pickupLocation,
         dropoffLocation,
         currencyCode: cart.currency_code,
-        bookingType: 'for_me', // discount is never applied at booking time — only when ride is shared
+        bookingType: 'for_me',
+        pickupState: pickupState ?? undefined,
       });
 
       // Create ride with atomic transaction (includes balance check for wallet payments)

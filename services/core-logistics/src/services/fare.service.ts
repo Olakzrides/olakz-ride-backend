@@ -7,6 +7,7 @@ import { logger } from '../config/logger';
 interface RideFareConfig {
   vehicle_category: string;
   service_tier: string;
+  city_tier: string;
   estimated_billing_unit: number;
   high_traffic_estimated_billing_unit: number;
   min_amount_less_than_3km: number;
@@ -47,34 +48,90 @@ function resolveServiceTier(variantTitle: string, vehicleCategory: string): stri
 
 export class FareService {
   /**
+   * Resolve which city_tier a given Nigerian state belongs to.
+   * Looks up city_tier_states table. Returns 'low' if not found
+   * (unassigned states implicitly belong to low tier).
+   */
+  private async resolveCityTierForState(state: string): Promise<string> {
+    const { data, error } = await supabase
+      .from('city_tier_states')
+      .select('city_tier')
+      .ilike('state_name', state)
+      .maybeSingle();
+
+    if (error) {
+      logger.error('resolveCityTierForState DB error', { state, error: error.message });
+      return 'low';
+    }
+
+    if (!data) {
+      logger.warn('resolveCityTierForState: state not found in city_tier_states — defaulting to low', { state });
+      return 'low';
+    }
+
+    logger.info('resolveCityTierForState: resolved', { state, cityTier: data.city_tier });
+    return data.city_tier;
+  }
+
+  /**
    * Load the fare config for a given vehicle category + service tier.
-   * Falls back to 'default' tier if the specific tier is not found.
+   *
+   * If a pickup state is provided:
+   *   1. Resolve which city_tier that state belongs to (high | middle | low).
+   *   2. Load the config for that city_tier.
+   *   3. If not found, fall back to 'low' (the universal fallback).
+   *
+   * If no state is provided, loads the 'low' config directly.
+   * Falls back to 'default' service tier if the specific tier has no config.
    */
   async getFareConfig(
     vehicleCategory: string,
-    serviceTier: string
+    serviceTier: string,
+    pickupState?: string
   ): Promise<RideFareConfig | null> {
+    const cityTier = pickupState
+      ? await this.resolveCityTierForState(pickupState)
+      : 'low';
+
+    logger.info('getFareConfig: looking up config', { vehicleCategory, serviceTier, cityTier, pickupState });
+
+    // Try exact match: vehicleCategory + serviceTier + cityTier
     const { data, error } = await supabase
       .from('ride_fare_config')
       .select('*')
       .eq('vehicle_category', vehicleCategory)
       .eq('service_tier', serviceTier)
+      .eq('city_tier', cityTier)
       .eq('is_active', true)
       .single();
 
-    if (error || !data) {
-      // Fallback to 'default' tier
-      const { data: fallback } = await supabase
+    if (!error && data) return data as RideFareConfig;
+
+    // If city-tier config not found, fall back to 'low' (universal fallback)
+    if (cityTier !== 'low') {
+      logger.warn(`No fare config for ${vehicleCategory}/${serviceTier}/${cityTier}, falling back to low`, { pickupState });
+      const { data: lowConfig } = await supabase
         .from('ride_fare_config')
         .select('*')
         .eq('vehicle_category', vehicleCategory)
-        .eq('service_tier', 'default')
+        .eq('service_tier', serviceTier)
+        .eq('city_tier', 'low')
         .eq('is_active', true)
         .single();
-      return fallback ?? null;
+      if (lowConfig) return lowConfig as RideFareConfig;
     }
 
-    return data as RideFareConfig;
+    // Final fallback: 'default' service tier + low city tier
+    const { data: fallback } = await supabase
+      .from('ride_fare_config')
+      .select('*')
+      .eq('vehicle_category', vehicleCategory)
+      .eq('service_tier', 'default')
+      .eq('city_tier', 'low')
+      .eq('is_active', true)
+      .single();
+
+    return fallback ?? null;
   }
 
   /**
@@ -144,13 +201,17 @@ export class FareService {
   /**
    * Calculate prices for all variants shown to the customer on the cart screen.
    * Called when the customer sets a dropoff location.
+   *
+   * @param pickupState - Optional Nigerian state name derived from pickup coordinates.
+   *                      When provided, city-tier pricing is applied automatically.
    */
   async calculateVariantPrices(
     variants: any[],
     pickupLocation: Location,
     dropoffLocation: Location | null,
     currencyCode: string = 'NGN',
-    bookingType: string = 'for_me'
+    bookingType: string = 'for_me',
+    pickupState?: string
   ): Promise<VariantWithPrice[]> {
     try {
       const isSharedRide = bookingType === 'for_friend';
@@ -161,7 +222,7 @@ export class FareService {
         for (const variant of variants) {
           const vehicleCategory = resolveVehicleCategory(variant.vehicle_type?.name ?? '');
           const serviceTier = resolveServiceTier(variant.title ?? '', vehicleCategory);
-          const config = await this.getFareConfig(vehicleCategory, serviceTier);
+          const config = await this.getFareConfig(vehicleCategory, serviceTier, pickupState);
           const minFare = config ? Number(config.min_amount_less_than_3km) : Number(variant.minimum_fare ?? 0);
 
           results.push({
@@ -194,7 +255,7 @@ export class FareService {
       for (const variant of variants) {
         const vehicleCategory = resolveVehicleCategory(variant.vehicle_type?.name ?? '');
         const serviceTier = resolveServiceTier(variant.title ?? '', vehicleCategory);
-        const config = await this.getFareConfig(vehicleCategory, serviceTier);
+        const config = await this.getFareConfig(vehicleCategory, serviceTier, pickupState);
 
         if (!config) {
           // Fallback to old formula if no config found
@@ -259,6 +320,9 @@ export class FareService {
   /**
    * Calculate the final fare for a specific variant at booking time.
    * Returns both the customer total and the driver's portion.
+   *
+   * @param pickupState - Optional Nigerian state name derived from pickup coordinates.
+   *                      When provided, city-tier pricing is applied automatically.
    */
   async calculateFinalFare(params: {
     variantId: string;
@@ -266,9 +330,10 @@ export class FareService {
     dropoffLocation: Location;
     currencyCode: string;
     bookingType?: string;
+    pickupState?: string;
   }): Promise<FareCalculation> {
     try {
-      const { variantId, pickupLocation, dropoffLocation, bookingType = 'for_me' } = params;
+      const { variantId, pickupLocation, dropoffLocation, bookingType = 'for_me', pickupState } = params;
       const isSharedRide = bookingType === 'for_friend';
 
       // Get variant + vehicle type name
@@ -285,7 +350,7 @@ export class FareService {
 
       const vehicleCategory = resolveVehicleCategory((variant.vehicle_type as any)?.name ?? '');
       const serviceTier = resolveServiceTier(variant.title ?? '', vehicleCategory);
-      const config = await this.getFareConfig(vehicleCategory, serviceTier);
+      const config = await this.getFareConfig(vehicleCategory, serviceTier, pickupState);
 
       // Get route info
       const routeInfo = await MapsUtil.getDirections(
@@ -355,11 +420,15 @@ export class FareService {
   /**
    * Calculate the final fare at trip completion using actual distance.
    * Used by completeTrip() in driver-ride.service.ts.
+   *
+   * @param pickupState - Optional Nigerian state name. When provided, city-tier
+   *                      pricing is applied (same config used at booking time).
    */
   async calculateCompletionFare(params: {
     variantId: string;
     actualDistance: number;
     bookingType?: string;
+    pickupState?: string;
   }): Promise<{
     totalFare: number;
     driverFare: number;
@@ -369,7 +438,7 @@ export class FareService {
     sharedDiscount: number;
   }> {
     try {
-      const { variantId, actualDistance, bookingType = 'for_me' } = params;
+      const { variantId, actualDistance, bookingType = 'for_me', pickupState } = params;
       const isSharedRide = bookingType === 'for_friend';
 
       const { data: variant } = await supabase
@@ -382,7 +451,7 @@ export class FareService {
 
       const vehicleCategory = resolveVehicleCategory((variant.vehicle_type as any)?.name ?? '');
       const serviceTier = resolveServiceTier(variant.title ?? '', vehicleCategory);
-      const config = await this.getFareConfig(vehicleCategory, serviceTier);
+      const config = await this.getFareConfig(vehicleCategory, serviceTier, pickupState);
 
       if (!config) {
         // Fallback

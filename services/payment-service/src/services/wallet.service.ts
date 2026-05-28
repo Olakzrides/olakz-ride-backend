@@ -1,6 +1,7 @@
 import { supabase } from '../config/database';
 import { flutterwaveService } from './flutterwave.service';
 import logger from '../utils/logger';
+import axios from 'axios';
 
 export class WalletService {
   static async getEarnedBalance(userId: string, currencyCode = 'NGN'): Promise<number> {
@@ -213,6 +214,68 @@ export class WalletService {
       reference,
       description: 'Wallet top-up via card',
     });
+
+    // ✅ Auto-settle outstanding remittance if user is a driver
+    try {
+      const { data: driver } = await supabase
+        .from('drivers')
+        .select('id, pending_remittance_amount, remittance_blocked')
+        .eq('user_id', userId)
+        .single();
+
+      if (driver) {
+        const pendingAmount = Number(driver.pending_remittance_amount ?? 0);
+        
+        if (pendingAmount > 0 && newBalance >= pendingAmount) {
+          // Call core-logistics remittance service via internal API
+          const coreLogisticsUrl = process.env.CORE_LOGISTICS_URL || 'http://localhost:3001';
+          
+          await axios.post(
+            `${coreLogisticsUrl}/api/wallet/internal/deduct`,
+            {
+              amount: pendingAmount,
+              currency_code: 'NGN',
+              reference: `remittance_settlement_${Date.now()}`,
+              description: 'Platform remittance settlement',
+            },
+            {
+              headers: {
+                'x-internal-api-key': process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure',
+                'x-user-id': userId,
+              },
+              timeout: 10000,
+            }
+          );
+
+          // Update driver record
+          await supabase
+            .from('drivers')
+            .update({
+              pending_remittance_amount: 0,
+              pending_remittance_count: 0,
+              remittance_blocked: false,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', driver.id);
+
+          // Update remittance log
+          await supabase
+            .from('driver_remittance_log')
+            .update({ status: 'settled', settled_at: new Date().toISOString() })
+            .eq('driver_id', driver.id)
+            .eq('status', 'pending');
+
+          logger.info(`✅ Auto-settled ₦${pendingAmount} remittance for driver ${driver.id} after wallet top-up`);
+          
+          if (driver.remittance_blocked) {
+            logger.info(`🔓 Driver ${driver.id} unblocked after remittance settlement`);
+          }
+        }
+      }
+    } catch (remittanceError: any) {
+      // Log error but don't fail the top-up
+      logger.error('Remittance settlement error (non-critical):', remittanceError);
+    }
 
     return {
       success: true,
