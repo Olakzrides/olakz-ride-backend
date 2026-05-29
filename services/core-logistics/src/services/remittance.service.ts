@@ -289,11 +289,15 @@ export class RemittanceService {
       .eq('user_id', driver.user_id)
       .eq('status', 'completed');
 
+    const CREDIT_TYPES = new Set(['credit', 'topup', 'refund', 'tip_received', 'earning', 'tip_payment']);
+    const DEBIT_TYPES  = new Set(['debit', 'hold', 'withdrawal', 'payment']);
+
     let balance = 0;
     for (const tx of txns ?? []) {
-      const amt = Number(tx.amount ?? 0);
-      if (tx.transaction_type === 'credit' || tx.transaction_type === 'topup') balance += amt;
-      else if (tx.transaction_type === 'debit' || tx.transaction_type === 'payment') balance -= amt;
+      const amt  = parseFloat(String(tx.amount ?? 0));
+      const type = String(tx.transaction_type ?? '');
+      if (CREDIT_TYPES.has(type))     balance += amt;
+      else if (DEBIT_TYPES.has(type)) balance -= amt;
     }
     return Math.max(0, balance);
   }

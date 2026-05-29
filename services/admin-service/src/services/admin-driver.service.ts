@@ -505,12 +505,18 @@ export class AdminDriverService {
       .eq('user_id', userId)
       .eq('status', 'completed');
 
+    // Credit types — must match payment-service WalletService.getBalance exactly
+    const CREDIT_TYPES = new Set(['credit', 'topup', 'refund', 'tip_received', 'earning', 'tip_payment']);
+    // Debit types
+    const DEBIT_TYPES  = new Set(['debit', 'hold', 'withdrawal', 'payment']);
+
     let balance = 0;
     for (const tx of txns ?? []) {
-      const r = tx as Record<string, unknown>;
-      const amt = Number(r.amount ?? 0);
-      if (r.transaction_type === 'credit' || r.transaction_type === 'topup') balance += amt;
-      else if (r.transaction_type === 'debit' || r.transaction_type === 'payment') balance -= amt;
+      const r   = tx as Record<string, unknown>;
+      const amt = parseFloat(String(r.amount ?? 0));
+      const type = String(r.transaction_type ?? '');
+      if (CREDIT_TYPES.has(type))      balance += amt;
+      else if (DEBIT_TYPES.has(type))  balance -= amt;
     }
     return Math.max(0, balance);
   }

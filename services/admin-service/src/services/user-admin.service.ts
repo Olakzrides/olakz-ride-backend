@@ -51,15 +51,16 @@ export class UserAdminService {
       .eq('user_id', userId)
       .eq('status', 'completed');
 
+    const CREDIT_TYPES = new Set(['credit', 'topup', 'refund', 'tip_received', 'earning', 'tip_payment']);
+    const DEBIT_TYPES  = new Set(['debit', 'hold', 'withdrawal', 'payment']);
+
     let walletBalance = 0;
     for (const tx of txns ?? []) {
-      const row = tx as Record<string, unknown>;
-      const amt = Number(row.amount ?? 0);
-      if (row.transaction_type === 'credit' || row.transaction_type === 'topup') {
-        walletBalance += amt;
-      } else if (row.transaction_type === 'debit' || row.transaction_type === 'payment') {
-        walletBalance -= amt;
-      }
+      const row  = tx as Record<string, unknown>;
+      const amt  = parseFloat(String(row.amount ?? 0));
+      const type = String(row.transaction_type ?? '');
+      if (CREDIT_TYPES.has(type))     walletBalance += amt;
+      else if (DEBIT_TYPES.has(type)) walletBalance -= amt;
     }
 
     // ── 3. Build response (no orders — use GET /:userId/orders for that) ──────
@@ -115,15 +116,16 @@ export class UserAdminService {
       .eq('user_id', userId)
       .eq('status', 'completed');
 
+    const CREDIT_TYPES = new Set(['credit', 'topup', 'refund', 'tip_received', 'earning', 'tip_payment']);
+    const DEBIT_TYPES  = new Set(['debit', 'hold', 'withdrawal', 'payment']);
+
     let walletBalance = 0;
     for (const tx of txns ?? []) {
-      const row = tx as Record<string, unknown>;
-      const amt = Number(row.amount ?? 0);
-      if (row.transaction_type === 'credit' || row.transaction_type === 'topup') {
-        walletBalance += amt;
-      } else if (row.transaction_type === 'debit' || row.transaction_type === 'payment') {
-        walletBalance -= amt;
-      }
+      const row  = tx as Record<string, unknown>;
+      const amt  = parseFloat(String(row.amount ?? 0));
+      const type = String(row.transaction_type ?? '');
+      if (CREDIT_TYPES.has(type))     walletBalance += amt;
+      else if (DEBIT_TYPES.has(type)) walletBalance -= amt;
     }
 
     // ── 3. Return wallet balance only ─────────────────────────────────────────
