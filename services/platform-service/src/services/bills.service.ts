@@ -494,12 +494,19 @@ export class BillsService {
         const bundleName: string = item.biller_name || item.short_name || item.name || bundleCode;
         const validityDays: string | null = item.validity_period ? `${item.validity_period} day(s)` : null;
 
+        // Parse data_size from bundle name (e.g. "MTN 1.5GB data bundle" → "1.5 GB")
+        const dataSizeMatch = bundleName.match(/(\d+(?:\.\d+)?)\s*(MB|GB|TB)/i);
+        const dataSize: string | null = dataSizeMatch
+          ? `${dataSizeMatch[1]} ${dataSizeMatch[2].toUpperCase()}`
+          : null;
+
         await prisma.data_bundles.upsert({
           where: { network_code_bundle_code: { network_code: networkCode, bundle_code: bundleCode } },
           update: {
             bundle_name: bundleName,
             amount,
             flw_item_code: itemCode,
+            data_size: dataSize,
             validity: validityDays,
             is_active: true,
             sort_order: sortOrder++,
@@ -511,6 +518,7 @@ export class BillsService {
             bundle_name: bundleName,
             amount,
             flw_item_code: itemCode,
+            data_size: dataSize,
             validity: validityDays,
             is_active: true,
             sort_order: sortOrder++,
