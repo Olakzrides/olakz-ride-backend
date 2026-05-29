@@ -173,6 +173,30 @@ export class PaymentService {
     }
   }
 
+  async deductWallet(params: {
+    userId: string;
+    amount: number;
+    currencyCode: string;
+    reference: string;
+    description: string;
+  }): Promise<void> {
+    try {
+      await this.client.post(
+        '/api/internal/payment/wallet/deduct',
+        {
+          amount: params.amount,
+          currency_code: params.currencyCode,
+          reference: params.reference,
+          description: params.description,
+        },
+        { headers: { 'x-user-id': params.userId } }
+      );
+    } catch (error: any) {
+      logger.error('Deduct wallet (via payment-service) error:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to deduct wallet');
+    }
+  }
+
   async getUserTransactions(
     userId: string,
     page: number = 1,
