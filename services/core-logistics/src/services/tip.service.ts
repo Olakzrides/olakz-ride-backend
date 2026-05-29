@@ -143,46 +143,43 @@ export class TipService {
     const { rideId, userId, driverId, tipAmount } = params;
 
     try {
-      // Start transaction-like operations
       const now = new Date().toISOString();
+      const tipRef = `tip_${rideId}_${Date.now()}`;
 
-      // 1. Deduct from passenger wallet
-      const { error: deductError } = await supabase.from('wallet_transactions').insert({
-        user_id: userId,
-        ride_id: rideId,
-        transaction_type: 'tip_payment',
-        amount: -tipAmount,
-        currency_code: 'NGN',
-        status: 'completed',
-        description: `Tip for ride ${rideId}`,
-        metadata: { tip_amount: tipAmount, driver_id: driverId },
-        created_at: now,
-        updated_at: now,
-      });
-
-      if (deductError) {
-        logger.error('❌ Error deducting tip from wallet:', deductError);
-        return { success: false, error: 'Failed to deduct tip from wallet' };
-      }
-
-      // 2. Add to driver wallet
-      const { error: addError } = await supabase.from('wallet_transactions').insert({
-        user_id: driverId,
-        ride_id: rideId,
-        transaction_type: 'tip_received',
+      // 1. Deduct from passenger wallet via payment-service
+      await this.paymentService.deductWallet({
+        userId,
         amount: tipAmount,
-        currency_code: 'NGN',
-        status: 'completed',
-        description: `Tip received for ride ${rideId}`,
-        metadata: { tip_amount: tipAmount, passenger_id: userId },
-        created_at: now,
-        updated_at: now,
+        currencyCode: 'NGN',
+        reference: `${tipRef}_passenger`,
+        description: `Tip for ride ${rideId}`,
       });
 
-      if (addError) {
-        logger.error('❌ Error adding tip to driver wallet:', addError);
-        // TODO: Rollback passenger deduction
-        return { success: false, error: 'Failed to add tip to driver wallet' };
+      // 2. Credit driver wallet via payment-service
+      try {
+        await this.paymentService.creditWallet({
+          userId: driverId,
+          amount: tipAmount,
+          currencyCode: 'NGN',
+          reference: `${tipRef}_driver`,
+          description: `Tip received for ride ${rideId}`,
+          transactionType: 'earning',
+        });
+      } catch (creditError: any) {
+        // Passenger was deducted but driver credit failed — refund passenger
+        logger.error('❌ Driver credit failed, refunding passenger:', creditError);
+        try {
+          await this.paymentService.creditWallet({
+            userId,
+            amount: tipAmount,
+            currencyCode: 'NGN',
+            reference: `${tipRef}_refund`,
+            description: `Refund: tip credit to driver failed for ride ${rideId}`,
+          });
+        } catch (refundError: any) {
+          logger.error('❌ CRITICAL: Tip refund to passenger also failed:', refundError);
+        }
+        return { success: false, error: 'Failed to credit tip to driver' };
       }
 
       // 3. Update ride with tip info
@@ -198,10 +195,10 @@ export class TipService {
 
       if (updateRideError) {
         logger.error('❌ Error updating ride with tip:', updateRideError);
-        return { success: false, error: 'Failed to update ride with tip' };
+        // Non-critical — payments already processed
       }
 
-      // 4. Update driver total earnings
+      // 4. Update driver total earnings (non-critical)
       const { error: updateDriverError } = await supabase.rpc('increment_driver_earnings', {
         p_driver_id: driverId,
         p_amount: tipAmount,
@@ -209,20 +206,14 @@ export class TipService {
 
       if (updateDriverError) {
         logger.warn('⚠️ Error updating driver earnings (non-critical):', updateDriverError);
-        // Non-critical, continue
       }
 
-      logger.info('✅ Tip payment processed:', {
-        rideId,
-        userId,
-        driverId,
-        tipAmount,
-      });
+      logger.info('✅ Tip payment processed:', { rideId, userId, driverId, tipAmount });
 
       return { success: true };
     } catch (error: any) {
       logger.error('❌ Process tip payment error:', error);
-      return { success: false, error: 'Failed to process tip payment' };
+      return { success: false, error: error.message || 'Failed to process tip payment' };
     }
   }
 
