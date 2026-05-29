@@ -81,6 +81,20 @@ export class TipService {
         };
       }
 
+      // Resolve driver's auth user_id from drivers table
+      const { data: driver, error: driverError } = await supabase
+        .from('drivers')
+        .select('user_id')
+        .eq('id', ride.driver_id)
+        .single();
+
+      if (driverError || !driver?.user_id) {
+        logger.error('❌ Could not resolve driver user_id:', { driverId: ride.driver_id, error: driverError });
+        return { success: false, error: 'Could not resolve driver account' };
+      }
+
+      const driverUserId = driver.user_id;
+
       // Check if tip already exists
       if (ride.tip_amount && ride.tip_amount > 0) {
         return {
@@ -104,6 +118,7 @@ export class TipService {
         rideId,
         userId,
         driverId: ride.driver_id,
+        driverUserId,
         tipAmount,
       });
 
@@ -115,6 +130,7 @@ export class TipService {
         rideId,
         userId,
         driverId: ride.driver_id,
+        driverUserId,
         tipAmount,
       });
 
@@ -138,9 +154,10 @@ export class TipService {
     rideId: string;
     userId: string;
     driverId: string;
+    driverUserId: string;
     tipAmount: number;
   }): Promise<{ success: boolean; error?: string }> {
-    const { rideId, userId, driverId, tipAmount } = params;
+    const { rideId, userId, driverId, driverUserId, tipAmount } = params;
 
     try {
       const now = new Date().toISOString();
@@ -155,10 +172,10 @@ export class TipService {
         description: `Tip for ride ${rideId}`,
       });
 
-      // 2. Credit driver wallet via payment-service
+      // 2. Credit driver wallet via payment-service (using auth user_id, not driver table id)
       try {
         await this.paymentService.creditWallet({
-          userId: driverId,
+          userId: driverUserId,
           amount: tipAmount,
           currencyCode: 'NGN',
           reference: `${tipRef}_driver`,
