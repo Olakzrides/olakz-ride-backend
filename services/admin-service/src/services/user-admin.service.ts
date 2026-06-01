@@ -205,7 +205,7 @@ export class UserAdminService {
     }
     if (!serviceKey || serviceKey === 'olakz_delivery') {
       fetchers.push(buildFetcher(
-        supabase.from('deliveries').select('id, status, created_at').eq('sender_id', userId).order('created_at', { ascending: false }),
+        supabase.from('deliveries').select('id, status, created_at').eq('customer_id', userId).order('created_at', { ascending: false }),
         'Olakz Delivery'
       ));
     }

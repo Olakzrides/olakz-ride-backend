@@ -305,7 +305,7 @@ async function getDeliveryOrders(
 ): Promise<{ orders: RawOrder[]; total: number }> {
   let q = supabase
     .from('deliveries')
-    .select('id, sender_id, status, created_at', { count: 'exact' });
+    .select('id, customer_id, status, created_at', { count: 'exact' });
 
   if (filters.status) {
     const raw = rawStatuses(filters.status, STATUS_MAP_DELIVERY);
@@ -326,7 +326,7 @@ async function getDeliveryOrders(
       const row = o as Record<string, unknown>;
       return {
         id: row.id as string,
-        customer_id: (row.sender_id ?? row.customer_id) as string,
+        customer_id: row.customer_id as string,
         status: row.status as string,
         created_at: row.created_at as string,
         service: 'Olakz Delivery',
