@@ -578,6 +578,28 @@ export class DeliveriesController {
         return ResponseUtil.error(res, 'Driver profile not found. Please complete driver registration first.');
       }
 
+      // Only online couriers can see available deliveries
+      // If the courier is offline, they cannot receive delivery requests
+      const { data: availability } = await supabase
+        .from('driver_availability')
+        .select('is_online, is_available')
+        .eq('driver_id', driver.id)
+        .single();
+
+      if (!availability || !availability.is_online) {
+        return ResponseUtil.badRequest(
+          res,
+          'You must be online to view available deliveries. Please go online first.'
+        );
+      }
+
+      if (!availability.is_available) {
+        return ResponseUtil.badRequest(
+          res,
+          'You are currently marked as unavailable. Please set yourself as available to receive delivery requests.'
+        );
+      }
+
       // Get courier's most recent location from driver_locations table
       let courierLocation: { latitude: number; longitude: number } | undefined;
       
@@ -927,15 +949,45 @@ export class DeliveriesController {
       }
 
       if (currentDelivery.courier_id) {
-        return ResponseUtil.error(res, 'This delivery has already been assigned to another courier');
+        return ResponseUtil.error(res, 'This delivery has already been accepted by another courier');
       }
 
       if (!['pending', 'searching'].includes(currentDelivery.status)) {
         return ResponseUtil.error(res, `Cannot accept delivery with status: ${currentDelivery.status}`);
       }
 
-      // Mark delivery request as accepted
-      const { error: requestError } = await supabase
+      // Atomic assignment — only succeeds if courier_id is still NULL and status is still searching/pending.
+      // This prevents two couriers accepting simultaneously (race condition).
+      const { data: atomicResult, error: atomicError } = await supabase
+        .from('deliveries')
+        .update({
+          courier_id: driver.id,
+          assigned_at: new Date().toISOString(),
+          status: 'assigned',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .is('courier_id', null)                          // only if not yet assigned
+        .in('status', ['pending', 'searching'])          // only if still open
+        .select('id, status, assigned_at, courier_id')
+        .single();
+
+      if (atomicError || !atomicResult) {
+        // Another courier won the race — fetch current state to return a clear message
+        const { data: latest } = await supabase
+          .from('deliveries')
+          .select('status, courier_id')
+          .eq('id', id)
+          .single();
+
+        if (latest?.courier_id && latest.courier_id !== driver.id) {
+          return ResponseUtil.error(res, 'This delivery has already been accepted by another courier');
+        }
+        return ResponseUtil.error(res, 'Unable to accept delivery — it may have been cancelled or already assigned');
+      }
+
+      // Mark this courier's delivery_request as accepted
+      await supabase
         .from('delivery_requests')
         .update({
           status: 'accepted',
@@ -945,14 +997,7 @@ export class DeliveriesController {
         .eq('courier_id', driver.id)
         .eq('status', 'pending');
 
-      if (requestError) {
-        logger.error('Error updating delivery request:', requestError);
-      }
-
-      // Assign courier to delivery
-      const delivery = await DeliveryService.assignCourier(id, driver.id);
-
-      // Mark other pending requests as expired
+      // Cancel all other pending requests for this delivery
       await supabase
         .from('delivery_requests')
         .update({
@@ -962,6 +1007,16 @@ export class DeliveriesController {
         .eq('delivery_id', id)
         .eq('status', 'pending')
         .neq('courier_id', driver.id);
+
+      // Add status history entry
+      await supabase.from('delivery_status_history').insert({
+        delivery_id: id,
+        status: 'assigned',
+        notes: `Courier ${driver.id} accepted delivery`,
+        created_by: driver.id,
+      });
+
+      const delivery = atomicResult;
 
       // Get courier details to return
       const { data: courierUser } = await supabase
