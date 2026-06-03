@@ -714,12 +714,13 @@ export class DriverRideService {
         return { success: false, error: 'Cash payment already confirmed for this ride' };
       }
 
-      // Mark cash as confirmed
+      // Mark cash as confirmed and update payment_status to 'completed'
       const { error: updateError } = await supabase
         .from('rides')
         .update({
           cash_payment_confirmed: true,
           cash_payment_confirmed_at: new Date().toISOString(),
+          payment_status: 'completed',   // cash received — payment is now complete
           updated_at: new Date().toISOString(),
         })
         .eq('id', rideId);

@@ -314,7 +314,16 @@ export class RidesAdminService {
         serviceFee:    ride.service_fee ? parseFloat(ride.service_fee) : null,
         roundingFee:   ride.rounding_fee ? parseFloat(ride.rounding_fee) : null,
         paymentMethod: ride.payment_method,
-        paymentStatus: ride.payment_status,
+        paymentStatus: (() => {
+          const ps = ride.payment_status;
+          const pm = ride.payment_method;
+          if (ps === 'completed') return 'Paid';
+          if (pm === 'cash' && ps === 'pending') return 'Awaiting Cash Confirmation';
+          if (ps === 'pending') return 'Pending';
+          if (ps === 'hold')    return 'Hold';
+          if (ps === 'refunded') return 'Refunded';
+          return ps ?? 'Pending';
+        })(),
       },
       vehicleType: variant?.vehicle_type?.display_name ?? variant?.title ?? null,
       ratings: {

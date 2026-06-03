@@ -16,6 +16,7 @@ import notificationsRoutes from './routes/notifications.routes';
 import pricingRoutes from './routes/pricing.routes';
 import paymentsRoutes from './routes/payments.routes';
 import ridesRoutes from './routes/rides.routes';
+import deliveriesOrdersRoutes from './routes/deliveries-orders.routes';
 import remittanceRoutes from './routes/remittance.routes';
 
 const app = express();
@@ -70,6 +71,9 @@ app.use('/api/admin/payments', paymentsRoutes);
 
 // Step 12: ride orders management
 app.use('/api/admin/rides', ridesRoutes);
+
+// Step 13: delivery orders management
+app.use('/api/admin/deliveries', deliveriesOrdersRoutes);
 
 // 404
 app.use((req, res) => {
