@@ -17,6 +17,7 @@ import pricingRoutes from './routes/pricing.routes';
 import paymentsRoutes from './routes/payments.routes';
 import ridesRoutes from './routes/rides.routes';
 import deliveriesOrdersRoutes from './routes/deliveries-orders.routes';
+import airtimeRoutes from './routes/airtime.routes';
 import remittanceRoutes from './routes/remittance.routes';
 
 const app = express();
@@ -74,6 +75,9 @@ app.use('/api/admin/rides', ridesRoutes);
 
 // Step 13: delivery orders management
 app.use('/api/admin/deliveries', deliveriesOrdersRoutes);
+
+// Step 14: airtime & data orders management
+app.use('/api/admin/airtime', airtimeRoutes);
 
 // 404
 app.use((req, res) => {
