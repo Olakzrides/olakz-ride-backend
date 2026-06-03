@@ -14,6 +14,8 @@ import userRoutes from './routes/users.routes';
 import ordersRoutes from './routes/orders.routes';
 import notificationsRoutes from './routes/notifications.routes';
 import pricingRoutes from './routes/pricing.routes';
+import paymentsRoutes from './routes/payments.routes';
+import ridesRoutes from './routes/rides.routes';
 import remittanceRoutes from './routes/remittance.routes';
 
 const app = express();
@@ -62,6 +64,12 @@ app.use('/api/admin/pricing', pricingRoutes);
 
 // Step 10: driver remittance management
 app.use('/api/admin/remittance', remittanceRoutes);
+
+// Step 11: payment transactions
+app.use('/api/admin/payments', paymentsRoutes);
+
+// Step 12: ride orders management
+app.use('/api/admin/rides', ridesRoutes);
 
 // 404
 app.use((req, res) => {
