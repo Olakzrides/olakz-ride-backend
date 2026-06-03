@@ -278,6 +278,36 @@ export class RidesAdminService {
       }
     }
 
+    // Status history from ride_status_updates table
+    const { data: statusUpdates } = await supabase
+      .from('ride_status_updates')
+      .select('id, status, previous_status, updated_by_type, message, location, metadata, created_at')
+      .eq('ride_id', rideId)
+      .order('created_at', { ascending: true });
+
+    const statusLabels: Record<string, string> = {
+      searching:              'Ride Requested',
+      driver_assigned:        'Driver Accepted',
+      driver_arriving:        'Driver En Route to Pickup',
+      driver_arrived:         'Driver Arrived at Pickup',
+      in_progress:            'Trip Started — En Route to Dropoff',
+      completed:              'Trip Completed',
+      cancelled:              'Ride Cancelled',
+      cash_payment_confirmed: 'Cash Payment Confirmed by Driver',
+      no_drivers_available:   'No Drivers Available',
+    };
+
+    const timeline = (statusUpdates ?? []).map(u => ({
+      id:             u.id,
+      status:         u.status,
+      label:          statusLabels[u.status] ?? u.status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+      previousStatus: u.previous_status ?? null,
+      updatedByType:  u.updated_by_type,
+      message:        u.message ?? null,
+      location:       u.location && Object.keys(u.location).length > 0 ? u.location : null,
+      createdAt:      u.created_at,
+    }));
+
     const variant = ride.variant as any;
     const fare = ride.final_fare ?? ride.estimated_fare;
 
@@ -338,6 +368,7 @@ export class RidesAdminService {
       cancelledAt:  ride.cancelled_at ?? null,
       cancellationReason: ride.cancellation_reason ?? null,
       createdAt:    ride.created_at,
+      statusTimeline: timeline,
     };
   }
 }

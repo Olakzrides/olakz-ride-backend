@@ -730,6 +730,17 @@ export class DriverRideService {
         return { success: false, error: 'Failed to confirm cash payment' };
       }
 
+      // Record cash payment confirmation in ride_status_updates
+      await supabase.from('ride_status_updates').insert({
+        ride_id:          rideId,
+        status:           'cash_payment_confirmed',
+        previous_status:  'completed',
+        updated_by:       driverId,
+        updated_by_type:  'driver',
+        message:          'Driver confirmed cash payment received from customer',
+        metadata:         { payment_method: 'cash', confirmed_by_driver: driverId },
+      });
+
       // Now process remittance — booking_fee is not stored on rides, only service_fee and rounding_fee
       const platformRemittance =
         Number(ride.service_fee ?? 0) +
