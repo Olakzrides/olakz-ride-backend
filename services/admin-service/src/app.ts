@@ -19,6 +19,7 @@ import ridesRoutes from './routes/rides.routes';
 import deliveriesOrdersRoutes from './routes/deliveries-orders.routes';
 import airtimeRoutes from './routes/airtime.routes';
 import remittanceRoutes from './routes/remittance.routes';
+import storageRoutes from './routes/storage.routes';
 
 const app = express();
 
@@ -78,6 +79,9 @@ app.use('/api/admin/deliveries', deliveriesOrdersRoutes);
 
 // Step 14: airtime & data orders management
 app.use('/api/admin/airtime', airtimeRoutes);
+
+// Step 15: private storage proxy — signed URLs for driver documents & other assets
+app.use('/api/admin/storage', storageRoutes);
 
 // 404
 app.use((req, res) => {

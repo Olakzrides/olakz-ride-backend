@@ -13,6 +13,11 @@ router.get('/pending', auditMiddleware('get_pending_drivers'), ctrl.getPendingDr
 router.get('/statistics', auditMiddleware('get_driver_statistics'), ctrl.getReviewStatistics);
 router.get('/search', auditMiddleware('search_drivers'), ctrl.searchDrivers);
 router.post('/bulk-approve', auditMiddleware('bulk_approve_drivers'), ctrl.bulkApproveDrivers);
+
+// ─── Registration progress (must come before /:driverId routes) ───────────────
+router.get('/registrations', auditMiddleware('get_driver_registrations'), ctrl.getRegistrations);
+router.get('/registrations/:sessionId', auditMiddleware('get_driver_registration_by_id'), ctrl.getRegistrationById);
+
 router.get('/:driverId', auditMiddleware('get_driver_for_review'), ctrl.getDriverForReview);
 router.post('/:driverId/review', auditMiddleware('review_driver'), ctrl.reviewDriver);
 
