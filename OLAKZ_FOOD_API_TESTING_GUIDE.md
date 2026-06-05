@@ -1,24 +1,11 @@
-# OLAKZ Food API Testing Guide
+# OLAKZ Food API Integration Guide
 
-Base URL (via gateway): `http://localhost:3000`
-Direct food service: `http://localhost:3005`
+Base URL: `https://olakzride.duckdns.org`
 
 All authenticated requests require:
 ```
 Authorization: Bearer <jwt_token>
 ```
-
----
-
-## Phase 1 — Core Ordering Flow
-
-### Prerequisites
-
-1. Run migration in Supabase SQL editor: `services/food-service/prisma/migrations/20260316_phase1_food_core/migration.sql`
-2. Start food service: `cd services/food-service && npm run dev`
-3. Have a valid JWT token from auth-service (customer account)
-4. Have a second JWT token for a vendor account
-5. Ensure wallet has sufficient balance for order tests
 
 ---
 
@@ -936,37 +923,6 @@ Expected response `200`:
 
 ---
 
-## Phase 1 Testing Flow (Recommended Order)
-
-1. `GET /api/food/health` — confirm service is up
-2. `GET /api/food/categories` — see seeded categories
-3. Insert a test restaurant directly in Supabase (or via admin API in Phase 4)
-4. `GET /api/food/restaurants` — confirm restaurant appears
-5. Insert test menu items directly in Supabase
-6. `GET /api/food/restaurants/:id/menu` — confirm menu loads
-7. `POST /api/food/cart/add` — add item (customer token)
-8. `GET /api/food/cart` — confirm cart state
-9. `POST /api/food/payment/estimate` — check fare calculation
-10. `POST /api/food/order` — place order (wallet)
-11. `GET /api/vendor/orders` — vendor sees new order (vendor token)
-12. `POST /api/vendor/orders/:id/accept` — vendor accepts
-13. `GET /api/food/orders/:id` — customer sees status = accepted
-14. `PUT /api/vendor/orders/:id/status` — vendor moves to preparing
-15. `POST /api/food/orders/:id/cancel` — test cancel on pending order (use a fresh order)
-
----
-
-## Phase 2 — Real-time & Courier Assignment
-
-### Prerequisites
-
-1. Run migration in Supabase SQL editor: `services/food-service/prisma/migrations/20260317_phase2_realtime_courier/migration.sql`
-2. Have a courier account with an approved driver profile in the `drivers` table (same Supabase DB as core-logistics)
-3. Courier must have an active vehicle in `driver_vehicles` and be online in `driver_availability`
-4. Socket.IO client for testing real-time events (e.g. Postman WebSocket or a simple HTML test client)
-
----
-
 ## COURIER FLOW OVERVIEW
 
 ```
@@ -990,7 +946,6 @@ Consistent pattern: **courier always enters both codes** (pickup code from vendo
 ---
 
 ## 6. Courier — Food Delivery (Requires Auth — Courier/Driver Account)
-
 ### 6.1 Get Available Food Deliveries
 
 ```
@@ -1352,11 +1307,11 @@ Expected response `200`:
 
 ## Phase 2 Socket Events Reference
 
-Connect to food-service directly: `http://localhost:3005`
+Connect to: `https://olakzride.duckdns.org`
 
 All namespaces require auth token in handshake:
 ```js
-const socket = io('http://localhost:3005/food-orders', {
+const socket = io('https://olakzride.duckdns.org/food-orders', {
   auth: { token: '<jwt_token>' }
 });
 ```
@@ -1390,69 +1345,43 @@ const socket = io('http://localhost:3005/food-orders', {
 
 ---
 
-## Phase 2 Testing Flow (Recommended Order)
+## Phase 2 Socket Events Reference
 
-1. Run Phase 2 migration in Supabase SQL editor
-2. Connect courier socket to `/courier-deliveries` with courier JWT
-3. Connect customer socket to `/food-orders` with customer JWT
-4. Connect vendor socket to `/vendor-orders` with vendor JWT
-5. `POST /api/food/order` — customer places order
-6. Vendor receives `food:order:new_request` socket event
-7. `POST /api/vendor/orders/:id/accept` — vendor accepts → courier search starts immediately
-8. Courier receives `food:delivery:new_request` socket event
-9. `GET /api/food/courier/available` — courier sees the order
-10. `POST /api/food/courier/:id/accept` — courier accepts → courier heads to vendor immediately
-11. Customer receives `food:order:courier_assigned` socket event
-12. `PUT /api/vendor/orders/:id/status` body `{ "status": "preparing" }` — vendor starts preparing
-13. `PUT /api/vendor/orders/:id/status` body `{ "status": "ready_for_pickup" }` — vendor marks ready → pickup record auto-created
-14. `GET /api/vendor-pickup/vendor/requests` — vendor sees pickup record
-15. Test re-queuing: accept an order, then `POST /api/food/courier/:id/cancel`
-16. Verify customer gets `searching_courier` socket event, vendor gets `courier_dropped`esponse needed |
-| `food:delivery:accepted_by_another` | Another courier took it |
-| `food:delivery:ready_for_pickup` | Vendor marked order ready |
+Connect to: `https://olakzride.duckdns.org`
 
-### Vendor-Courier namespace `/vendor-pickups`
+All namespaces require auth token in handshake:
+```js
+const socket = io('https://olakzride.duckdns.org/food-orders', {
+  auth: { token: '<jwt_token>' }
+});
+```
+
+### Customer namespace `/food-orders`
 
 | Event | When |
 |---|---|
-| `vendor_pickup:courier_assigned` | Courier accepted pickup |
-| `vendor_pickup:courier_arrived` | Courier arrived at vendor |
-| `vendor_pickup:package_picked_up` | Package collected |
-| `vendor_pickup:courier_location` | Live courier location |
+| `food:order:new_request` | Order placed confirmation |
+| `food:order:status_update` | Any status change |
+| `food:order:courier_assigned` | Courier accepted the order |
+| `food:order:courier_location` | Live courier location update |
 
----
+### Vendor namespace `/vendor-orders`
 
-## Phase 2 Testing Flow (Recommended Order)
+| Event | When |
+|---|---|
+| `food:order:new_request` | New order placed |
+| `food:order:cancelled` | Customer cancelled |
+| `food:order:courier_assigned` | Courier assigned |
+| `food:order:courier_dropped` | Courier cancelled after accepting |
 
-1. Run Phase 2 migration in Supabase SQL editor
-2. Connect courier socket to `/courier-deliveries` with courier JWT
-3. Connect customer socket to `/food-orders` with customer JWT
-4. Connect vendor socket to `/vendor-orders` with vendor JWT
-5. `POST /api/food/order` — customer places order
-6. Vendor receives `food:order:new_request` socket event
-7. `POST /api/vendor/orders/:id/accept` — vendor accepts → courier search starts
-8. Courier receives `food:delivery:new_request` socket event
-9. `GET /api/food/courier/available` — courier sees the order
-10. `POST /api/food/courier/:id/accept` — courier accepts
-11. Customer receives `food:order:courier_assigned` socket event
-12. `PUT /api/vendor/orders/:id/status` — vendor moves to `ready_for_pickup`
-13. Pickup record auto-created, courier receives `food:delivery:ready_for_pickup`
-14. `GET /api/vendor-pickup/vendor/requests` — vendor sees pickup
-15. `POST /api/vendor-pickup/accept` — courier accepts pickup
-16. `PUT /api/vendor-pickup/:id/status` body `{ "status": "courier_arrived" }`
-17. `POST /api/vendor-pickup/:id/verify-code` — courier enters pickup code
-18. Test re-queuing: accept an order, then `POST /api/food/courier/:id/cancel`
-19. Verify customer gets `searching_courier` socket event, vendor gets `courier_dropped`
+### Courier namespace `/courier-deliveries`
 
----
-
-## Phase 3 — Delivery Execution, Ratings & History
-
-### Prerequisites
-
-1. Run migration in Supabase SQL editor: `services/food-service/prisma/migrations/20260318_phase3_delivery_execution/migration.sql`
-2. Have an active order in `accepted` status with a courier assigned
-3. Customer's `delivery_code` is visible in the order details response — customer holds this and gives it to courier at delivery
+| Event | When |
+|---|---|
+| `food:delivery:new_request` | New food delivery available (broadcast) |
+| `food:delivery:request_expired` | 10-min round timeout — no response needed |
+| `food:delivery:accepted_by_another` | Another courier took it |
+| `food:delivery:ready_for_pickup` | Vendor marked order ready |
 
 ---
 
@@ -1861,34 +1790,6 @@ Expected response `200`:
 
 ---
 
-## Phase 3 Testing Flow (Recommended Order)
-
-1. Run Phase 3 migration in Supabase SQL editor
-2. Place an order and have vendor accept it (Phase 1 flow)
-3. Have courier accept the delivery (Phase 2 flow)
-4. Note the `delivery_code` from `GET /api/food/orders/:id` — customer holds this
-5. `POST /api/food/courier/:id/arrived-vendor` — courier arrives at restaurant (can do this before food is ready)
-6. Vendor marks order preparing: `PUT /api/vendor/orders/:id/status` body `{ "status": "preparing" }`
-7. Vendor marks order ready: `PUT /api/vendor/orders/:id/status` body `{ "status": "ready_for_pickup" }`
-8. Vendor checks their order details to get the `pickup_code` — reads it to courier
-9. `POST /api/food/courier/:id/verify-pickup` — courier enters `pickup_code` from vendor
-10. `POST /api/food/courier/:id/picked-up` — courier confirms pickup (optionally with photo)
-11. `POST /api/food/courier/location` — send a few location updates, verify customer socket receives `food:order:courier_location`
-12. `POST /api/food/courier/:id/arrived-delivery` — courier arrives at customer
-13. Customer checks their order details for `delivery_code` — gives it to courier
-14. `POST /api/food/courier/:id/verify-delivery` — courier enters `delivery_code` from customer
-15. `POST /api/food/courier/:id/delivered` — mark delivered (optionally with photo)
-16. `GET /api/food/orders/:id` — customer sees status = `delivered`
-17. `POST /api/food/orders/:id/rate` — customer rates the order
-18. `GET /api/food/courier/earnings` — courier sees earnings record
-19. `GET /api/food/courier/history` — courier sees delivery in history
-
-Test cancel while waiting at vendor:
-- Accept an order, call `arrived-vendor`, then `POST /api/food/courier/:id/cancel`
-- Verify order goes back to `searching_courier`, customer and vendor get socket events
-
----
-
 ## Common Error Responses
 
 `401 Unauthorized` — missing or invalid token:
@@ -1911,24 +1812,9 @@ Test cancel while waiting at vendor:
 { "success": false, "message": "Internal server error" }
 ```
 
-
 ---
 
-## Phase 4 — Vendor Management, Admin & Analytics
-
-### Prerequisites
-
-1. Run migrations in Supabase SQL editor (in order):
-   - `services/platform-service/prisma/migrations/20260318_create_vendors_table/migration.sql`
-   - `services/food-service/prisma/migrations/20260318_phase4_vendor_link/migration.sql`
-2. Start platform-service: `cd services/platform-service && npm run dev`
-3. Have a valid JWT token for a vendor account (any user can register as a vendor)
-4. Have a valid JWT token for an admin account (role must include `admin` or `super_admin`)
-5. Vendor must be approved before accessing `/api/vendor/profile`, menu, or store endpoints
-
----
-
-## 11. Vendor Onboarding (platform-service — port 3004)
+## 11. Vendor Onboarding
 
 ### 11.1 Submit Vendor Registration
 
@@ -2919,265 +2805,10 @@ Expected response `200`:
 
 ---
 
-## 16. Admin — Food Service Management
+## Important Notes
 
-All admin endpoints require `Authorization: Bearer <admin_token>` (role: `admin` or `super_admin`).
-
-### 16.1 Get All Orders (Admin)
-
-```
-GET /api/food/admin/orders
-Authorization: Bearer <admin_token>
-```
-
-Query params (optional):
-```
-status=pending
-restaurant_id=uuid
-from=2026-03-01
-to=2026-03-31
-page=1
-limit=20
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "data": {
-    "orders": [
-      {
-        "id": "uuid",
-        "customer_id": "uuid",
-        "status": "pending",
-        "payment_status": "paid",
-        "total_amount": "3500.00",
-        "created_at": "2026-03-18T10:00:00.000Z",
-        "restaurant": { "id": "uuid", "name": "Mama's Kitchen" },
-        "order_items": [{ "item_name": "Jollof Rice", "quantity": 2 }]
-      }
-    ],
-    "total": 350,
-    "page": 1,
-    "limit": 20
-  }
-}
-```
-
----
-
-### 16.2 Override Order Status (Admin)
-
-```
-PUT /api/food/admin/orders/:order_id/status
-Authorization: Bearer <admin_token>
-Content-Type: application/json
-```
-
-Request body:
-```json
-{
-  "status": "cancelled"
-}
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "message": "Order status updated",
-  "data": { "order": { "id": "uuid", "status": "cancelled" } }
-}
-```
-
----
-
-### 16.3 Get All Vendors (Admin)
-
-```
-GET /api/food/admin/vendors
-Authorization: Bearer <admin_token>
-```
-
-Query params (optional):
-```
-is_verified=true
-is_active=true
-page=1
-limit=20
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "data": {
-    "vendors": [
-      {
-        "id": "uuid",
-        "owner_id": "uuid",
-        "name": "Mama's Kitchen",
-        "city": "Lagos",
-        "state": "Lagos",
-        "is_active": true,
-        "is_verified": true,
-        "average_rating": "4.50",
-        "total_orders": 350,
-        "created_at": "2026-03-18T10:00:00.000Z"
-      }
-    ],
-    "total": 12,
-    "page": 1,
-    "limit": 20
-  }
-}
-```
-
----
-
-### 16.4 Approve Vendor (Admin — food-service)
-
-Marks the restaurant as verified and active in food-service.
-
-```
-PUT /api/food/admin/vendors/:restaurant_id/approve
-Authorization: Bearer <admin_token>
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "message": "Vendor approved",
-  "data": { "vendor": { "id": "uuid", "is_verified": true, "is_active": true } }
-}
-```
-
-Note: For full vendor onboarding approval (platform-wide), use `PUT /api/vendor/admin/vendors/:id/approve` (section 12.2).
-
----
-
-### 16.5 Suspend Vendor (Admin)
-
-```
-PUT /api/food/admin/vendors/:restaurant_id/suspend
-Authorization: Bearer <admin_token>
-Content-Type: application/json
-```
-
-Request body (optional):
-```json
-{
-  "reason": "Multiple customer complaints"
-}
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "message": "Vendor suspended",
-  "data": { "vendor": { "id": "uuid", "is_active": false } }
-}
-```
-
----
-
-### 16.6 Get All Couriers (Admin)
-
-```
-GET /api/food/admin/couriers
-Authorization: Bearer <admin_token>
-```
-
-Query params (optional):
-```
-page=1
-limit=20
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "data": {
-    "couriers": [
-      {
-        "courier_id": "uuid",
-        "total_deliveries": 45,
-        "total_earnings": "20250.00"
-      }
-    ],
-    "total": 8,
-    "page": 1,
-    "limit": 20
-  }
-}
-```
-
----
-
-### 16.7 Platform Analytics (Admin)
-
-```
-GET /api/food/admin/analytics
-Authorization: Bearer <admin_token>
-```
-
-Expected response `200`:
-```json
-{
-  "success": true,
-  "data": {
-    "total_orders": 1250,
-    "total_restaurants": 18,
-    "active_restaurants": 14,
-    "this_month": {
-      "orders": 350,
-      "revenue": 875000.00,
-      "completed": 310,
-      "cancelled": 40
-    }
-  }
-}
-```
-
----
-
-## Phase 4 Testing Flow (Recommended Order)
-
-1. Run both Phase 4 migrations in Supabase SQL editor
-2. Start platform-service: `npm run dev` (port 3004)
-3. **Vendor onboarding:**
-   - `POST /api/vendor/register` — submit registration (vendor token)
-   - `GET /api/vendor/register/upload-url?file_type=logo&file_name=logo.jpg` — get upload URL
-   - Upload file directly to Supabase using the signed URL
-   - `PUT /api/vendor/register/documents` — submit document URLs
-   - `GET /api/vendor/register/status` — confirm status is `pending`
-4. **Admin approves:**
-   - `GET /api/vendor/admin/vendors?status=pending` — admin sees pending vendors
-   - `PUT /api/vendor/admin/vendors/:id/approve` — admin approves
-5. **Vendor sets up store (now approved):**
-   - `GET /api/vendor/profile` — confirm 403 before approval, 200 after
-   - `PUT /api/vendor/profile` — update business info
-   - `PUT /api/vendor/store-details` — set `is_open: true`
-   - `PUT /api/vendor/store-operations` — set operating hours
-6. **Vendor builds menu:**
-   - `POST /api/vendor/categories` — create a category
-   - `POST /api/vendor/products` — create products under that category
-   - `POST /api/vendor/extras` — create add-ons
-   - `PUT /api/vendor/products/:id/availability` — toggle availability
-7. **Analytics:**
-   - `GET /api/analytics/vendor/dashboard` — vendor sees their stats
-   - `GET /api/analytics/courier/earnings` — courier sees earnings
-   - `GET /api/analytics/orders/trends` — admin sees trends (admin token)
-   - `GET /api/analytics/customer/behavior` — admin sees behavior (admin token)
-8. **Admin food management:**
-   - `GET /api/food/admin/orders` — see all orders
-   - `GET /api/food/admin/vendors` — see all restaurants
-   - `PUT /api/food/admin/vendors/:id/suspend` — test suspend
-   - `GET /api/food/admin/analytics` — platform-wide stats
-9. **Rejected vendor re-registration:**
-   - `PUT /api/vendor/admin/vendors/:id/reject` with a reason
-   - `GET /api/vendor/register/status` — vendor sees `rejected` + reason
-   - `POST /api/vendor/register` — vendor re-submits (resets to pending)
+- `latitude` and `longitude` on the restaurant profile are required for fare calculation and courier matching. Orders will fail if the restaurant has coordinates of `0,0`. Always set these when creating or updating a restaurant profile.
+- Vendor must be approved via `PUT /api/admin/vendors/:id/approve` before they can access any `/api/vendor/profile`, menu, or store endpoints. Unapproved vendors get `403`.
+- Courier endpoints require the authenticated user to have a driver record in the `drivers` table. If not found, all courier endpoints return `404`.
+- Card payment for food orders is not yet implemented. Only `wallet` is supported as `payment_method`.
+- Photo uploads (`picked-up`, `delivered`, `upload-photo`) use `multipart/form-data`. All other endpoints use `application/json`.

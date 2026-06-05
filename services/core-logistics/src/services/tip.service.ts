@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+ import { createClient } from '@supabase/supabase-js';
 import { config } from '../config/env';
 import { logger } from '../config/logger';
 import { PushNotificationService } from './push-notification.service';
