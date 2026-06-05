@@ -77,7 +77,16 @@ class ProfileService {
     }
 
     const ext = mimeType.split('/')[1];
-    const filePath = `avatars/${userId}.${ext}`;
+    const filePath = `${userId}/avatar.${ext}`;
+
+    // Delete any existing avatar files for this user (different extensions)
+    const { data: existingFiles } = await supabase.storage
+      .from('avatars')
+      .list(userId);
+    if (existingFiles && existingFiles.length > 0) {
+      const toDelete = existingFiles.map((f) => `${userId}/${f.name}`);
+      await supabase.storage.from('avatars').remove(toDelete);
+    }
 
     const { error: uploadError } = await supabase.storage
       .from('avatars')
