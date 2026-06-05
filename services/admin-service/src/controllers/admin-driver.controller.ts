@@ -244,4 +244,68 @@ export class AdminDriverController {
       ResponseUtil.serverError(res, 'Failed to terminate driver account', 'DRIVER_TERMINATE_ERROR');
     }
   };
+
+  /**
+   * GET /api/admin/drivers/registrations
+   * Driver registration sessions that are NOT yet completed.
+   * Only returns: initiated | in_progress | expired | cancelled
+   * Drivers who finished registration are excluded — use GET /drivers for those.
+   *
+   * Query params:
+   *   status - all | initiated | in_progress | expired | cancelled  (NOT completed)
+   *   search - user name or email
+   *   page   - default 1
+   *   limit  - default 20
+   */
+  getRegistrations = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const page  = Math.max(1, parseInt(req.query.page  as string) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+
+      const result = await this.adminDriverService.getRegistrationProgress({
+        status: req.query.status as string | undefined,
+        search: req.query.search as string | undefined,
+        page,
+        limit,
+      });
+
+      ResponseUtil.success(res, result, 'Driver registration sessions retrieved');
+    } catch (err: unknown) {
+      logger.error('getRegistrations error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, 'Failed to retrieve registration sessions', 'REGISTRATIONS_FETCH_ERROR');
+    }
+  };
+
+  /**
+   * GET /api/admin/drivers/registrations/:sessionId
+   * Full detail of a single incomplete registration session — step data, documents, progress.
+   * Returns 404 if the session does not exist.
+   * Returns 400 if the session is already completed (use GET /drivers to view completed drivers).
+   */
+  getRegistrationById = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const { sessionId } = req.params;
+      const session = await this.adminDriverService.getRegistrationSessionById(sessionId);
+
+      if (!session) {
+        ResponseUtil.notFound(res, 'Registration session');
+        return;
+      }
+
+      // Session is completed — direct admin to the drivers list instead
+      if ((session as Record<string, unknown>).__completed) {
+        ResponseUtil.badRequest(
+          res,
+          'This registration has been completed. The driver appears in GET /api/admin/drivers.',
+          'REGISTRATION_ALREADY_COMPLETED'
+        );
+        return;
+      }
+
+      ResponseUtil.success(res, { session }, 'Registration session retrieved');
+    } catch (err: unknown) {
+      logger.error('getRegistrationById error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, 'Failed to retrieve registration session', 'REGISTRATION_FETCH_ERROR');
+    }
+  };
 }

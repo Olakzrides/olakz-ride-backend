@@ -152,12 +152,16 @@ export class VendorAdminService {
       .eq('user_id', v.user_id as string)
       .eq('status', 'completed');
 
+    const CREDIT_TYPES = new Set(['credit', 'topup', 'refund', 'tip_received', 'earning', 'tip_payment']);
+    const DEBIT_TYPES  = new Set(['debit', 'hold', 'withdrawal', 'payment']);
+
     let walletBalance = 0;
     for (const tx of txns ?? []) {
-      const t = tx as Record<string, unknown>;
-      const amt = Number(t.amount ?? 0);
-      if (t.transaction_type === 'credit' || t.transaction_type === 'topup') walletBalance += amt;
-      else if (t.transaction_type === 'debit' || t.transaction_type === 'payment') walletBalance -= amt;
+      const t    = tx as Record<string, unknown>;
+      const amt  = parseFloat(String(t.amount ?? 0));
+      const type = String(t.transaction_type ?? '');
+      if (CREDIT_TYPES.has(type))     walletBalance += amt;
+      else if (DEBIT_TYPES.has(type)) walletBalance -= amt;
     }
 
     return {
@@ -238,12 +242,16 @@ export class VendorAdminService {
       .eq('user_id', v.user_id as string)
       .eq('status', 'completed');
 
+    const CREDIT_TYPES_V = new Set(['credit', 'topup', 'refund', 'tip_received', 'earning', 'tip_payment']);
+    const DEBIT_TYPES_V  = new Set(['debit', 'hold', 'withdrawal', 'payment']);
+
     let walletBalance = 0;
     for (const tx of txns ?? []) {
-      const t = tx as Record<string, unknown>;
-      const amt = Number(t.amount ?? 0);
-      if (t.transaction_type === 'credit' || t.transaction_type === 'topup') walletBalance += amt;
-      else if (t.transaction_type === 'debit' || t.transaction_type === 'payment') walletBalance -= amt;
+      const t    = tx as Record<string, unknown>;
+      const amt  = parseFloat(String(t.amount ?? 0));
+      const type = String(t.transaction_type ?? '');
+      if (CREDIT_TYPES_V.has(type))     walletBalance += amt;
+      else if (DEBIT_TYPES_V.has(type)) walletBalance -= amt;
     }
 
     return {

@@ -34,9 +34,13 @@ interface DeliveryMatchingCriteria {
  */
 export class DeliveryMatchingService {
   private socketService: SocketService;
-  private readonly MAX_COURIERS_PER_REQUEST = 5;
-  private readonly REQUEST_TIMEOUT_SECONDS = 600; // 10 minutes
+  private readonly MAX_COURIERS_PER_REQUEST = 10;  // Match ride matching — notify 10 couriers per batch
+  private readonly BATCH_TIMEOUT_SECONDS = 300;    // 5 minutes per batch before trying next batch
+  private readonly TOTAL_SEARCH_WINDOW_SECONDS = 900; // 15 minutes total before no_couriers_available
   private readonly MAX_SEARCH_RADIUS_KM = 15;
+
+  // Keep REQUEST_TIMEOUT_SECONDS as an alias for backward compat with expiresAt calculations
+  private get REQUEST_TIMEOUT_SECONDS() { return this.BATCH_TIMEOUT_SECONDS; }
 
   constructor(socketService: SocketService) {
     this.socketService = socketService;
@@ -102,8 +106,9 @@ export class DeliveryMatchingService {
         batchNumber,
       });
 
-      // Set timeout to handle no responses
-      this.scheduleRequestTimeout(deliveryId, batchNumber, rankedCouriers);
+      // Set timeout to handle no responses — pass searchStartedAt so total window is enforced
+      const searchStartedAt = Date.now();
+      this.scheduleRequestTimeout(deliveryId, batchNumber, rankedCouriers, searchStartedAt);
 
       logger.info(`⏰ Scheduled timeout for delivery requests`, {
         deliveryId,
@@ -461,25 +466,31 @@ export class DeliveryMatchingService {
   }
 
   /**
-   * Schedule timeout handling for delivery requests
+   * Schedule timeout handling for delivery requests.
+   * Each batch gets BATCH_TIMEOUT_SECONDS (2 min) to respond.
+   * If the total search window (10 min) has elapsed, flip to no_couriers_available.
    */
   private scheduleRequestTimeout(
     deliveryId: string,
     batchNumber: number,
-    allAvailableCouriers: CourierMatch[]
+    allAvailableCouriers: CourierMatch[],
+    searchStartedAt: number
   ): void {
     setTimeout(async () => {
-      await this.handleRequestTimeout(deliveryId, batchNumber, allAvailableCouriers);
-    }, this.REQUEST_TIMEOUT_SECONDS * 1000);
+      await this.handleRequestTimeout(deliveryId, batchNumber, allAvailableCouriers, searchStartedAt);
+    }, this.BATCH_TIMEOUT_SECONDS * 1000);
   }
 
   /**
-   * Handle timeout when no couriers respond
+   * Handle timeout when no couriers respond within the batch window.
+   * - If total search window (10 min) has not elapsed → try next batch
+   * - If total search window has elapsed → flip to no_couriers_available
    */
   private async handleRequestTimeout(
     deliveryId: string,
     batchNumber: number,
-    allAvailableCouriers: CourierMatch[]
+    allAvailableCouriers: CourierMatch[],
+    searchStartedAt: number
   ): Promise<void> {
     try {
       // Check if delivery is still searching
@@ -493,7 +504,7 @@ export class DeliveryMatchingService {
         return; // Delivery was already accepted or cancelled
       }
 
-      // Mark expired requests
+      // Mark expired requests for this batch
       await supabase
         .from('delivery_requests')
         .update({
@@ -504,24 +515,13 @@ export class DeliveryMatchingService {
         .eq('batch_number', batchNumber)
         .eq('status', 'pending');
 
-      // Check if there are more couriers to try
-      const usedCourierIds = await this.getUsedCourierIds(deliveryId);
-      const remainingCouriers = allAvailableCouriers.filter(
-        courier => !usedCourierIds.includes(courier.courierId)
-      );
+      // Check if total search window has elapsed
+      const elapsedSeconds = (Date.now() - searchStartedAt) / 1000;
+      const totalWindowExceeded = elapsedSeconds >= this.TOTAL_SEARCH_WINDOW_SECONDS;
 
-      if (remainingCouriers.length > 0) {
-        // Send to next batch of couriers
-        logger.info(`Timeout reached for delivery ${deliveryId}, trying next batch of ${Math.min(remainingCouriers.length, this.MAX_COURIERS_PER_REQUEST)} couriers`);
-        
-        const nextBatch = remainingCouriers.slice(0, this.MAX_COURIERS_PER_REQUEST);
-        const nextBatchNumber = await this.createDeliveryRequests(deliveryId, nextBatch);
-        await this.broadcastDeliveryRequestToCouriers(deliveryId, nextBatch, nextBatchNumber);
-        this.scheduleRequestTimeout(deliveryId, nextBatchNumber, allAvailableCouriers);
-      } else {
-        // No more couriers available
-        logger.warn(`No couriers accepted delivery ${deliveryId}, marking as no_couriers_available`);
-        
+      if (totalWindowExceeded) {
+        logger.warn(`Total search window (${this.TOTAL_SEARCH_WINDOW_SECONDS}s) exceeded for delivery ${deliveryId} — marking as no_couriers_available`);
+
         await supabase
           .from('deliveries')
           .update({
@@ -530,7 +530,36 @@ export class DeliveryMatchingService {
           })
           .eq('id', deliveryId);
 
-        // Notify customer
+        await this.notifyCustomerNoCouriersAvailable(deliveryId);
+        return;
+      }
+
+      // Check if there are more couriers to try
+      const usedCourierIds = await this.getUsedCourierIds(deliveryId);
+      const remainingCouriers = allAvailableCouriers.filter(
+        courier => !usedCourierIds.includes(courier.courierId)
+      );
+
+      if (remainingCouriers.length > 0) {
+        const nextBatch = remainingCouriers.slice(0, this.MAX_COURIERS_PER_REQUEST);
+        logger.info(`Batch timeout for delivery ${deliveryId} — trying next batch of ${nextBatch.length} couriers (${Math.round(elapsedSeconds)}s elapsed of ${this.TOTAL_SEARCH_WINDOW_SECONDS}s window)`);
+
+        const nextBatchNumber = await this.createDeliveryRequests(deliveryId, nextBatch);
+        await this.broadcastDeliveryRequestToCouriers(deliveryId, nextBatch, nextBatchNumber);
+        this.scheduleRequestTimeout(deliveryId, nextBatchNumber, allAvailableCouriers, searchStartedAt);
+      } else {
+        // All available couriers have been tried — wait for total window to close naturally
+        // or flip now if we've exhausted everyone
+        logger.warn(`All available couriers exhausted for delivery ${deliveryId} — marking as no_couriers_available`);
+
+        await supabase
+          .from('deliveries')
+          .update({
+            status: 'no_couriers_available',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', deliveryId);
+
         await this.notifyCustomerNoCouriersAvailable(deliveryId);
       }
     } catch (error) {
