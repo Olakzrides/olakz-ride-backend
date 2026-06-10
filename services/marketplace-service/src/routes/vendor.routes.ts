@@ -11,6 +11,9 @@ const orderCtrl = new VendorOrderController();
 router.use(authenticate);
 router.use(isVendorApproved);
 
+// Upload URL for product images and store media (must hit before creating product)
+router.get('/upload-url', storeCtrl.getUploadUrl);
+
 // Store profile
 router.get('/store', storeCtrl.getProfile);
 router.put('/store', storeCtrl.updateProfile);
