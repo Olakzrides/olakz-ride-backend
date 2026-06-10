@@ -83,8 +83,14 @@ export class VendorRegistrationController {
         return ResponseUtil.error(res, 'file_type and file_name are required', 400);
       }
 
-      const signedUrl = await VendorRegistrationService.getSignedUploadUrl(userId, file_type, file_name);
-      return ResponseUtil.success(res, 'Upload URL generated', { signed_url: signedUrl, file_type, file_name });
+      const result = await VendorRegistrationService.getSignedUploadUrl(userId, file_type, file_name);
+      return ResponseUtil.success(res, 'Upload URL generated', {
+        signed_url: result.signedUrl,
+        public_url: result.publicUrl,
+        file_path: result.filePath,
+        file_type,
+        file_name,
+      });
     } catch (err: any) {
       return ResponseUtil.serverError(res, err.message);
     }

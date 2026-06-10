@@ -1,8 +1,25 @@
 import { Request, Response } from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import { VendorStoreService } from '../services/vendor-store.service';
 import { AnalyticsService } from '../services/analytics.service';
 import { ResponseUtil } from '../utils/response';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { supabase } from '../config/database';
+import logger from '../utils/logger';
+
+const PUBLIC_BUCKET = 'marketplace-images';
+
+const ALLOWED_FILE_TYPES = ['product_image', 'store_logo', 'store_banner'];
+
+async function ensurePublicBucket() {
+  const { data: buckets } = await supabase.storage.listBuckets();
+  if (!buckets?.some((b) => b.name === PUBLIC_BUCKET)) {
+    await supabase.storage.createBucket(PUBLIC_BUCKET, {
+      public: true,
+      fileSizeLimit: 10 * 1024 * 1024, // 10MB
+    });
+  }
+}
 
 export class VendorStoreController {
   getProfile = async (req: Request, res: Response): Promise<Response> => {
@@ -109,6 +126,47 @@ export class VendorStoreController {
       return ResponseUtil.success(res, { product }, 'Availability updated');
     } catch (err: any) {
       if (err.message?.includes('not found')) return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  getUploadUrl = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const ownerId = (req as AuthRequest).user!.id;
+      const { file_type, file_name } = req.query as { file_type: string; file_name: string };
+
+      if (!file_type || !file_name) {
+        return ResponseUtil.badRequest(res, 'file_type and file_name are required');
+      }
+
+      if (!ALLOWED_FILE_TYPES.includes(file_type)) {
+        return ResponseUtil.badRequest(res, `file_type must be one of: ${ALLOWED_FILE_TYPES.join(', ')}`);
+      }
+
+      await ensurePublicBucket();
+
+      const ext = file_name.split('.').pop() || 'jpg';
+      const filePath = `${ownerId}/${file_type}/${uuidv4()}.${ext}`;
+
+      const { data, error } = await supabase.storage
+        .from(PUBLIC_BUCKET)
+        .createSignedUploadUrl(filePath);
+
+      if (error) {
+        logger.error('Failed to generate marketplace upload URL:', error);
+        return ResponseUtil.serverError(res, 'Failed to generate upload URL');
+      }
+
+      const { data: urlData } = supabase.storage.from(PUBLIC_BUCKET).getPublicUrl(filePath);
+
+      return ResponseUtil.success(res, {
+        signed_url: data.signedUrl,
+        public_url: urlData.publicUrl,
+        file_path: filePath,
+        file_type,
+        file_name,
+      }, 'Upload URL generated');
+    } catch (err: any) {
       return ResponseUtil.serverError(res, err.message);
     }
   };
