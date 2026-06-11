@@ -12,12 +12,12 @@ export class FareService {
       where: { vehicleType: 'motorcycle', isActive: true },
     });
 
-    const pricePerKm = config ? parseFloat(config.pricePerKm.toString()) : 150;
+    const estimatedBillingUnit = config ? parseFloat(config.estimatedBillingUnit.toString()) : 150;
     const minFee = config ? parseFloat(config.minimumDeliveryFee.toString()) : 300;
     const serviceFee = config ? parseFloat(config.serviceFee.toString()) : 50;
 
     const distanceKm = haversineKm(params.storeLat, params.storeLng, params.deliveryLat, params.deliveryLng);
-    const rawDeliveryFee = distanceKm * pricePerKm;
+    const rawDeliveryFee = distanceKm * estimatedBillingUnit;
     const deliveryFee = Math.max(rawDeliveryFee, minFee);
 
     return {
