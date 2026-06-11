@@ -32,6 +32,13 @@ export class FareService {
     const distanceKm     = haversineKm(params.storeLat, params.storeLng, params.deliveryLat, params.deliveryLng);
     const rawDeliveryFee = distanceKm * pricePerKm;
     const deliveryFee    = Math.max(rawDeliveryFee, minFee);
+    const estimatedBillingUnit = config ? parseFloat(config.estimatedBillingUnit.toString()) : 150;
+    const minFee = config ? parseFloat(config.minAmountLessThan3km.toString()) : 300;
+    const serviceFee = config ? parseFloat(config.serviceFee.toString()) : 50;
+
+    const distanceKm = haversineKm(params.storeLat, params.storeLng, params.deliveryLat, params.deliveryLng);
+    const rawDeliveryFee = distanceKm * estimatedBillingUnit;
+    const deliveryFee = Math.max(rawDeliveryFee, minFee);
 
     return {
       distanceKm:   Math.round(distanceKm * 100) / 100,
