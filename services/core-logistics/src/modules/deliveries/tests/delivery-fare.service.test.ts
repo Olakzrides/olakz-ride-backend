@@ -1,47 +1,54 @@
 /**
  * Unit Tests for DeliveryFareService
- * Tests fare calculation logic with various scenarios
+ * Tests fare calculation logic with the new city-tiered pricing schema.
+ *
+ * FareBreakdown shape (new):
+ *   distanceKm, distanceText, deliveryFee, serviceFee (= service + rounding),
+ *   totalAmount, currencyCode
  */
 
 import { DeliveryFareService } from '../services/delivery-fare.service';
 
-// Mock the dependencies
+// ── Mock DB ───────────────────────────────────────────────────────────────────
+// Returns a config that matches the new delivery_fare_config columns
 jest.mock('../../../config/database', () => ({
   supabase: {
     from: jest.fn(() => ({
-      select: jest.fn(() => ({
-        eq: jest.fn(() => ({
-          eq: jest.fn(() => ({
-            eq: jest.fn(() => ({
-              maybeSingle: jest.fn(() => ({
-                data: {
-                  base_fare: '500',
-                  price_per_km: '100',
-                  minimum_fare: '300',
-                  scheduled_delivery_surcharge: '200',
-                  currency_code: 'NGN',
-                },
-                error: null,
-              })),
-            })),
-          })),
-        })),
-      })),
+      select: jest.fn().mockReturnThis(),
+      eq:     jest.fn().mockReturnThis(),
+      limit:  jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn(() =>
+        Promise.resolve({
+          data: {
+            vehicle_type:                        'motorcycle',
+            city_tier:                           'low',
+            estimated_billing_unit:              '100',
+            high_traffic_estimated_billing_unit: '130',
+            min_amount_less_than_3km:            '300',
+            service_fee:                         '150',
+            rounding_fee:                        '50',
+            booking_fee:                         '0',
+            fleet_commission_percent:            '10',
+            currency_code:                       'NGN',
+            is_active:                           true,
+          },
+          error: null,
+        })
+      ),
     })),
   },
 }));
 
+// ── Mock Maps ─────────────────────────────────────────────────────────────────
 jest.mock('../../../utils/maps.util', () => ({
   MapsUtil: {
     getDirections: jest.fn((origin, destination) => {
-      // Calculate simple distance for testing
       const latDiff = Math.abs(destination.latitude - origin.latitude);
       const lonDiff = Math.abs(destination.longitude - origin.longitude);
-      const distance = Math.sqrt(latDiff * latDiff + lonDiff * lonDiff) * 111; // Rough km conversion
-      
+      const distance = Math.sqrt(latDiff * latDiff + lonDiff * lonDiff) * 111;
       return Promise.resolve({
-        distance: parseFloat(distance.toFixed(2)),
-        duration: Math.ceil(distance * 2),
+        distance:     parseFloat(distance.toFixed(2)),
+        duration:     Math.ceil(distance * 2),
         distanceText: `${distance.toFixed(1)} km`,
         durationText: `${Math.ceil(distance * 2)} mins`,
       });
@@ -50,217 +57,112 @@ jest.mock('../../../utils/maps.util', () => ({
 }));
 
 jest.mock('../../../config/logger', () => ({
-  logger: {
-    info: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-  },
+  logger: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
 }));
 
+// ─────────────────────────────────────────────────────────────────────────────
+
 describe('DeliveryFareService', () => {
-  describe('calculateFare', () => {
-    const baseParams = {
-      vehicleTypeId: 'test-vehicle-id',
-      regionId: 'test-region-id',
-      pickupLatitude: 6.5244,
-      pickupLongitude: 3.3792,
-      dropoffLatitude: 6.4281,
-      dropoffLongitude: 3.4219,
-      deliveryType: 'instant' as const,
-    };
+  const baseParams = {
+    vehicleType:      'motorcycle',
+    cityTier:         'low' as const,
+    pickupLatitude:    6.5244,
+    pickupLongitude:   3.3792,
+    dropoffLatitude:   6.4281,
+    dropoffLongitude:  3.4219,
+  };
 
-    it('should calculate fare for instant delivery', async () => {
+  describe('calculateFare — normal distance (≥ 3 km)', () => {
+    it('returns a defined fare breakdown', async () => {
       const result = await DeliveryFareService.calculateFare(baseParams);
-
       expect(result).toBeDefined();
-      expect(result.baseFare).toBe(500);
-      expect(result.distanceFare).toBeGreaterThan(0);
-      expect(result.totalFare).toBeGreaterThan(0);
-      expect(result.finalFare).toBeGreaterThan(0);
       expect(result.currencyCode).toBe('NGN');
-      expect(result.scheduledSurcharge).toBe(0);
     });
 
-    it('should calculate fare for scheduled delivery', async () => {
-      const scheduledParams = {
-        ...baseParams,
-        deliveryType: 'scheduled' as const,
-      };
-
-      const result = await DeliveryFareService.calculateFare(scheduledParams);
-
-      expect(result.scheduledSurcharge).toBe(200);
-      expect(result.totalFare).toBeGreaterThan(result.baseFare + result.distanceFare);
-    });
-
-    it('should apply minimum fare when total is below minimum', async () => {
-      // Use very close locations to get low distance fare
-      const shortDistanceParams = {
-        ...baseParams,
-        pickupLatitude: 6.5244,
-        pickupLongitude: 3.3792,
-        dropoffLatitude: 6.5245,
-        dropoffLongitude: 3.3793,
-      };
-
-      const result = await DeliveryFareService.calculateFare(shortDistanceParams);
-
-      expect(result.minimumFare).toBe(300);
-      expect(result.finalFare).toBeGreaterThanOrEqual(result.minimumFare);
-    });
-
-    it('should include distance information', async () => {
+    it('delivery fee = distance × estimated_billing_unit', async () => {
       const result = await DeliveryFareService.calculateFare(baseParams);
+      const expected = result.distanceKm * 100;
+      expect(result.deliveryFee).toBeCloseTo(Math.round(expected), 0);
+    });
 
-      expect(result.distance).toBeGreaterThan(0);
-      expect(result.distanceText).toBeDefined();
+    it('service fee = service_fee + rounding_fee combined (150 + 50 = 200)', async () => {
+      const result = await DeliveryFareService.calculateFare(baseParams);
+      expect(result.serviceFee).toBe(200);
+    });
+
+    it('total = deliveryFee + serviceFee', async () => {
+      const result = await DeliveryFareService.calculateFare(baseParams);
+      expect(result.totalAmount).toBe(result.deliveryFee + result.serviceFee);
+    });
+
+    it('includes distance info', async () => {
+      const result = await DeliveryFareService.calculateFare(baseParams);
+      expect(result.distanceKm).toBeGreaterThan(0);
       expect(typeof result.distanceText).toBe('string');
     });
-
-    it('should calculate distance fare correctly', async () => {
-      const result = await DeliveryFareService.calculateFare(baseParams);
-
-      // Distance fare should be distance * price_per_km
-      const expectedDistanceFare = result.distance * 100;
-      expect(result.distanceFare).toBeCloseTo(expectedDistanceFare, 2);
-    });
-
-    it('should calculate total fare correctly', async () => {
-      const result = await DeliveryFareService.calculateFare(baseParams);
-
-      const expectedTotal = result.baseFare + result.distanceFare + result.scheduledSurcharge;
-      expect(result.totalFare).toBeCloseTo(expectedTotal, 2);
-    });
   });
 
-  describe('Fare calculation edge cases', () => {
-    const baseParams = {
-      vehicleTypeId: 'test-vehicle-id',
-      regionId: 'test-region-id',
-      pickupLatitude: 6.5244,
-      pickupLongitude: 3.3792,
-      dropoffLatitude: 6.5244,
-      dropoffLongitude: 3.3792,
-      deliveryType: 'instant' as const,
-    };
-
-    it('should handle same pickup and dropoff locations', async () => {
-      const result = await DeliveryFareService.calculateFare(baseParams);
-
-      expect(result.finalFare).toBeGreaterThanOrEqual(result.minimumFare);
-    });
-
-    it('should handle long distances', async () => {
-      const longDistanceParams = {
+  describe('calculateFare — short distance (< 3 km)', () => {
+    it('uses min_amount_less_than_3km (300) when raw fee is lower', async () => {
+      const shortParams = {
         ...baseParams,
-        dropoffLatitude: 7.5244,
-        dropoffLongitude: 4.3792,
+        pickupLatitude:  6.5244,
+        pickupLongitude: 3.3792,
+        dropoffLatitude: 6.5250,  // ~0.07 km apart
+        dropoffLongitude: 3.3793,
       };
-
-      const result = await DeliveryFareService.calculateFare(longDistanceParams);
-
-      expect(result.distance).toBeGreaterThan(10);
-      expect(result.distanceFare).toBeGreaterThan(1000);
+      const result = await DeliveryFareService.calculateFare(shortParams);
+      expect(result.deliveryFee).toBeGreaterThanOrEqual(300);
     });
   });
 
-  describe('Fare breakdown structure', () => {
-    it('should return all required fare breakdown fields', async () => {
-      const params = {
-        vehicleTypeId: 'test-vehicle-id',
-        regionId: 'test-region-id',
-        pickupLatitude: 6.5244,
-        pickupLongitude: 3.3792,
-        dropoffLatitude: 6.4281,
-        dropoffLongitude: 3.4219,
-        deliveryType: 'instant' as const,
-      };
-
-      const result = await DeliveryFareService.calculateFare(params);
-
-      expect(result).toHaveProperty('baseFare');
-      expect(result).toHaveProperty('distanceFare');
-      expect(result).toHaveProperty('scheduledSurcharge');
-      expect(result).toHaveProperty('totalFare');
-      expect(result).toHaveProperty('minimumFare');
-      expect(result).toHaveProperty('finalFare');
-      expect(result).toHaveProperty('distance');
+  describe('FareBreakdown shape', () => {
+    it('has all required fields', async () => {
+      const result = await DeliveryFareService.calculateFare(baseParams);
+      expect(result).toHaveProperty('distanceKm');
       expect(result).toHaveProperty('distanceText');
+      expect(result).toHaveProperty('deliveryFee');
+      expect(result).toHaveProperty('serviceFee');
+      expect(result).toHaveProperty('totalAmount');
       expect(result).toHaveProperty('currencyCode');
     });
 
-    it('should have numeric values for fare fields', async () => {
-      const params = {
-        vehicleTypeId: 'test-vehicle-id',
-        regionId: 'test-region-id',
-        pickupLatitude: 6.5244,
-        pickupLongitude: 3.3792,
-        dropoffLatitude: 6.4281,
-        dropoffLongitude: 3.4219,
-        deliveryType: 'instant' as const,
-      };
-
-      const result = await DeliveryFareService.calculateFare(params);
-
-      expect(typeof result.baseFare).toBe('number');
-      expect(typeof result.distanceFare).toBe('number');
-      expect(typeof result.scheduledSurcharge).toBe('number');
-      expect(typeof result.totalFare).toBe('number');
-      expect(typeof result.minimumFare).toBe('number');
-      expect(typeof result.finalFare).toBe('number');
-      expect(typeof result.distance).toBe('number');
+    it('all numeric fields are numbers', async () => {
+      const result = await DeliveryFareService.calculateFare(baseParams);
+      expect(typeof result.distanceKm).toBe('number');
+      expect(typeof result.deliveryFee).toBe('number');
+      expect(typeof result.serviceFee).toBe('number');
+      expect(typeof result.totalAmount).toBe('number');
     });
 
-    it('should have non-negative fare values', async () => {
-      const params = {
-        vehicleTypeId: 'test-vehicle-id',
-        regionId: 'test-region-id',
-        pickupLatitude: 6.5244,
-        pickupLongitude: 3.3792,
-        dropoffLatitude: 6.4281,
-        dropoffLongitude: 3.4219,
-        deliveryType: 'instant' as const,
-      };
-
-      const result = await DeliveryFareService.calculateFare(params);
-
-      expect(result.baseFare).toBeGreaterThanOrEqual(0);
-      expect(result.distanceFare).toBeGreaterThanOrEqual(0);
-      expect(result.scheduledSurcharge).toBeGreaterThanOrEqual(0);
-      expect(result.totalFare).toBeGreaterThanOrEqual(0);
-      expect(result.minimumFare).toBeGreaterThanOrEqual(0);
-      expect(result.finalFare).toBeGreaterThanOrEqual(0);
-      expect(result.distance).toBeGreaterThanOrEqual(0);
+    it('all fare values are non-negative', async () => {
+      const result = await DeliveryFareService.calculateFare(baseParams);
+      expect(result.distanceKm).toBeGreaterThanOrEqual(0);
+      expect(result.deliveryFee).toBeGreaterThanOrEqual(0);
+      expect(result.serviceFee).toBeGreaterThanOrEqual(0);
+      expect(result.totalAmount).toBeGreaterThanOrEqual(0);
     });
   });
 
   describe('estimateFare', () => {
-    it('should provide fare estimate without creating delivery', async () => {
+    it('returns fare estimate with new signature', async () => {
       const result = await DeliveryFareService.estimateFare(
-        'test-vehicle-id',
-        'test-region-id',
-        6.5244,
-        3.3792,
-        6.4281,
-        3.4219,
-        'instant'
+        'motorcycle',
+        6.5244, 3.3792,
+        6.4281, 3.4219,
+        'low'
       );
-
       expect(result).toBeDefined();
-      expect(result.finalFare).toBeGreaterThan(0);
+      expect(result.totalAmount).toBeGreaterThan(0);
     });
 
-    it('should default to instant delivery type', async () => {
+    it('defaults city tier to low', async () => {
       const result = await DeliveryFareService.estimateFare(
-        'test-vehicle-id',
-        'test-region-id',
-        6.5244,
-        3.3792,
-        6.4281,
-        3.4219
+        'motorcycle',
+        6.5244, 3.3792,
+        6.4281, 3.4219
       );
-
-      expect(result.scheduledSurcharge).toBe(0);
+      expect(result.serviceFee).toBe(200); // 150 + 50
     });
   });
 });

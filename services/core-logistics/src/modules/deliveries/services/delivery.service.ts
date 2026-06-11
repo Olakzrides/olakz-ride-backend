@@ -67,13 +67,13 @@ export class DeliveryService {
 
       // Step 2: Calculate fare
       const fareBreakdown = await DeliveryFareService.calculateFare({
-        vehicleTypeId: params.vehicleTypeId,
-        regionId: regionId,
-        pickupLatitude: params.pickupLatitude,
-        pickupLongitude: params.pickupLongitude,
-        dropoffLatitude: params.dropoffLatitude,
+        vehicleTypeId:    params.vehicleTypeId,
+        regionId:         regionId,
+        pickupLatitude:   params.pickupLatitude,
+        pickupLongitude:  params.pickupLongitude,
+        dropoffLatitude:  params.dropoffLatitude,
         dropoffLongitude: params.dropoffLongitude,
-        deliveryType: params.deliveryType,
+        deliveryType:     params.deliveryType,
       });
 
       // Step 3: Create delivery record
@@ -96,9 +96,9 @@ export class DeliveryService {
           scheduled_pickup_at: params.scheduledPickupAt,
           pickup_code: pickupCode,
           delivery_code: deliveryCode,
-          estimated_fare: fareBreakdown.finalFare,
+          estimated_fare: fareBreakdown.totalAmount,
           currency_code: fareBreakdown.currencyCode,
-          distance_km: fareBreakdown.distance,
+          distance_km: fareBreakdown.distanceKm,
           payment_method: params.paymentMethod,
           payment_status: 'pending',
           region_id: regionId,
@@ -119,7 +119,7 @@ export class DeliveryService {
         deliveryId: delivery.id,
         customerId: params.customerId,
         customerEmail: params.customerEmail,
-        amount: fareBreakdown.finalFare,
+        amount: fareBreakdown.totalAmount,
         currencyCode: fareBreakdown.currencyCode,
         paymentMethod: params.paymentMethod,
         cardId: params.cardId,
@@ -130,7 +130,17 @@ export class DeliveryService {
       if (paymentResult.requiresAuthorization) {
         return {
           delivery,
-          fareBreakdown,
+          fare_breakdown: {
+            subtotal:      0,
+            delivery_fee:  fareBreakdown.deliveryFee,
+            service_fee:   fareBreakdown.serviceFee,
+            total_fees:    fareBreakdown.serviceFee + fareBreakdown.deliveryFee,
+            total_amount:  fareBreakdown.totalAmount,
+            distance_km:   fareBreakdown.distanceKm,
+            distance_text: fareBreakdown.distanceText,
+            city_tier:     fareBreakdown.cityTier,
+            currency_code: fareBreakdown.currencyCode,
+          },
           paymentResult: {
             requiresAuthorization: true,
             authorization: paymentResult.authorization,
@@ -163,7 +173,7 @@ export class DeliveryService {
         orderNumber: delivery.order_number,
         pickupAddress: params.pickupAddress,
         dropoffAddress: params.dropoffAddress,
-        fare: fareBreakdown.finalFare,
+        fare: fareBreakdown.totalAmount,
         currencyCode: fareBreakdown.currencyCode,
         pickupCode,
         deliveryCode,
@@ -199,7 +209,17 @@ export class DeliveryService {
 
       return {
         delivery,
-        fareBreakdown,
+        fare_breakdown: {
+          subtotal:      0,
+          delivery_fee:  fareBreakdown.deliveryFee,
+          service_fee:   fareBreakdown.serviceFee,
+          total_fees:    fareBreakdown.serviceFee + fareBreakdown.deliveryFee,
+          total_amount:  fareBreakdown.totalAmount,
+          distance_km:   fareBreakdown.distanceKm,
+          distance_text: fareBreakdown.distanceText,
+          city_tier:     fareBreakdown.cityTier,
+          currency_code: fareBreakdown.currencyCode,
+        },
         paymentResult: {
           success: true,
           message: 'Payment processed successfully',

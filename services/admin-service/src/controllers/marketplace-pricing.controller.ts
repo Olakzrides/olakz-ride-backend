@@ -21,7 +21,7 @@ function isValidVehicleType(vt: string): boolean {
 }
 
 const VEHICLE_TYPE_LIST = MARKETPLACE_VEHICLE_TYPES.join(', ');
-const TIER_LIST         = CITY_TIERS.join(', ');
+const TIER_LIST = CITY_TIERS.join(', ');
 
 export class MarketplacePricingController {
 
