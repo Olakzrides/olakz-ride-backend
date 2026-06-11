@@ -98,7 +98,7 @@ model MarketplaceFareConfig {
   id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   vehicleType        String   @unique @map("vehicle_type") @db.VarChar(50)
   estimatedBillingUnit Decimal @map("estimated_billing_unit") @db.Decimal(10, 2)
-  minimumDeliveryFee Decimal  @map("minimum_delivery_fee") @db.Decimal(10, 2)
+  minAmountLessThan3km Decimal @map("min_amount_less_than_3km") @db.Decimal(10, 2)
   serviceFee         Decimal  @default(0.00) @map("service_fee") @db.Decimal(10, 2)
   currencyCode       String   @default("NGN") @map("currency_code") @db.VarChar(10)
   isActive           Boolean  @default(true) @map("is_active")
