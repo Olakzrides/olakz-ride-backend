@@ -109,7 +109,7 @@ model MarketplaceFareConfig {
   createdAt                         DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                         DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-
+  @@unique([vehicleType, cityTier])
   @@map("marketplace_fare_config")
 }
 
