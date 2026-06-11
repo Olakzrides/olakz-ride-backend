@@ -94,17 +94,23 @@ export class FlutterwaveBillsService {
     try {
       logger.info('Fetching data bundles', { billerCode });
 
-      const response = await this.client.get<FlutterwaveResponse>(
-        `/billers/${billerCode}/items`
+      // Flutterwave returns all bill categories in one endpoint — filter by biller_code
+      const response = await this.client.get<FlutterwaveResponse>('/bill-categories');
+
+      if (response.data.status !== 'success' || !Array.isArray(response.data.data)) {
+        throw new Error(response.data.message || 'Failed to fetch bill categories');
+      }
+
+      const bundles = response.data.data.filter(
+        (item: any) => item.biller_code === billerCode && item.country === 'NG'
       );
 
       logger.info('Data bundles fetched successfully', {
         billerCode,
-        status: response.data.status,
-        count: response.data.data?.length || 0,
+        count: bundles.length,
       });
 
-      return response.data;
+      return { status: 'success', message: 'Fetched', data: bundles };
     } catch (error: any) {
       logger.error('Failed to fetch data bundles', {
         billerCode,
@@ -156,6 +162,7 @@ export class FlutterwaveBillsService {
         amount: payload.amount,
         billerCode: payload.biller_code,
         itemCode: payload.item_code,
+        fullPayload: payload,
       });
 
       const response = await this.client.post<FlutterwaveResponse>('/bills', payload);

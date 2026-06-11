@@ -494,12 +494,19 @@ export class BillsService {
         const bundleName: string = item.biller_name || item.short_name || item.name || bundleCode;
         const validityDays: string | null = item.validity_period ? `${item.validity_period} day(s)` : null;
 
+        // Parse data_size from bundle name (e.g. "MTN 1.5GB data bundle" → "1.5 GB")
+        const dataSizeMatch = bundleName.match(/(\d+(?:\.\d+)?)\s*(MB|GB|TB)/i);
+        const dataSize: string | null = dataSizeMatch
+          ? `${dataSizeMatch[1]} ${dataSizeMatch[2].toUpperCase()}`
+          : null;
+
         await prisma.data_bundles.upsert({
           where: { network_code_bundle_code: { network_code: networkCode, bundle_code: bundleCode } },
           update: {
             bundle_name: bundleName,
             amount,
             flw_item_code: itemCode,
+            data_size: dataSize,
             validity: validityDays,
             is_active: true,
             sort_order: sortOrder++,
@@ -511,6 +518,7 @@ export class BillsService {
             bundle_name: bundleName,
             amount,
             flw_item_code: itemCode,
+            data_size: dataSize,
             validity: validityDays,
             is_active: true,
             sort_order: sortOrder++,
@@ -632,7 +640,7 @@ export class BillsService {
           country: 'NG',
           customer: phoneNumber,
           amount,
-          type: 'DATA_BUNDLE',
+          type: bundle.bundle_name.trim(),
           reference: txRef,
           biller_code: (networkProvider as any).flw_data_biller_code || networkProvider.flw_biller_code,
           item_code: bundle.flw_item_code,
@@ -700,11 +708,8 @@ export class BillsService {
           }
         }
 
-        // Detect Flutterwave test-mode limitation for data bundles
-        const isTestModeLimitation = flwError.message?.toLowerCase().includes('invalid biller');
-        const errorMessage = isTestModeLimitation
-          ? 'Data bundle purchase is not supported in Flutterwave test mode. Switch to a live key to process data purchases.'
-          : flwError.message;
+        const errorMessage = flwError.message;
+        const isTestModeLimitation = false;
 
         await prisma.bill_transactions.update({
           where: { id: transaction.id },
@@ -811,7 +816,7 @@ export class BillsService {
           country: 'NG',
           customer: transaction.phone_number,
           amount,
-          type: 'DATA_BUNDLE',
+          type: transaction.bundle_name?.trim() || transaction.flw_biller_code!,
           reference: newTxRef,
           biller_code: transaction.flw_biller_code!,
           item_code: transaction.flw_item_code!,

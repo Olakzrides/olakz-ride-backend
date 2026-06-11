@@ -10,7 +10,8 @@ const prisma = Database.getInstance();
 // Supabase client for storage
 const supabase = createClient(config.supabase.url, config.supabase.serviceRoleKey || config.supabase.anonKey);
 
-const BUCKET = 'vendor-documents';
+const BUCKET = 'vendor-documents';          // private — NIN, CAC, selfie
+const PUBLIC_BUCKET = 'marketplace-images'; // public  — product images, store banners
 
 export interface VendorRegistrationInput {
   userId: string;
@@ -141,19 +142,46 @@ export class VendorRegistrationService {
   }
 
   /**
-   * Generate signed upload URL for vendor documents
+   * Generate signed upload URL for vendor documents/images.
+   * Returns both the signed upload URL (for PUT upload) and the public URL (to store in DB).
+   *
+   * file_type values:
+   *   - logo, profile_picture, cac_document, store_image  → private bucket (vendor-documents)
+   *   - product_image, store_banner                       → public bucket (marketplace-images)
    */
-  static async getSignedUploadUrl(userId: string, fileType: string, fileName: string): Promise<string> {
-    await this.ensureBucket();
+  static async getSignedUploadUrl(
+    userId: string,
+    fileType: string,
+    fileName: string,
+  ): Promise<{ signedUrl: string; publicUrl: string; filePath: string }> {
     const ext = fileName.split('.').pop() || 'jpg';
     const filePath = `${userId}/${fileType}/${uuidv4()}.${ext}`;
 
+    // Product/store display images go in a separate public bucket
+    const PUBLIC_TYPES = ['product_image', 'store_banner', 'store_logo'];
+    const isPublic = PUBLIC_TYPES.includes(fileType);
+    const bucket = isPublic ? PUBLIC_BUCKET : BUCKET;
+
+    if (isPublic) {
+      await this.ensurePublicBucket();
+    } else {
+      await this.ensureBucket();
+    }
+
     const { data, error } = await supabase.storage
-      .from(BUCKET)
+      .from(bucket)
       .createSignedUploadUrl(filePath);
 
     if (error) throw new Error(`Failed to generate upload URL: ${error.message}`);
-    return data.signedUrl;
+
+    // Public URL — usable directly in <Image> after upload completes
+    const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(filePath);
+
+    return {
+      signedUrl: data.signedUrl,
+      publicUrl: urlData.publicUrl,
+      filePath,
+    };
   }
 
   /**
@@ -293,6 +321,13 @@ export class VendorRegistrationService {
     const { data: buckets } = await supabase.storage.listBuckets();
     if (!buckets?.some((b) => b.name === BUCKET)) {
       await supabase.storage.createBucket(BUCKET, { public: false, fileSizeLimit: 10 * 1024 * 1024 });
+    }
+  }
+
+  private static async ensurePublicBucket() {
+    const { data: buckets } = await supabase.storage.listBuckets();
+    if (!buckets?.some((b) => b.name === PUBLIC_BUCKET)) {
+      await supabase.storage.createBucket(PUBLIC_BUCKET, { public: true, fileSizeLimit: 10 * 1024 * 1024 });
     }
   }
 }
