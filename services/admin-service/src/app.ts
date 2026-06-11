@@ -14,7 +14,13 @@ import userRoutes from './routes/users.routes';
 import ordersRoutes from './routes/orders.routes';
 import notificationsRoutes from './routes/notifications.routes';
 import pricingRoutes from './routes/pricing.routes';
+import paymentsRoutes from './routes/payments.routes';
+import ridesRoutes from './routes/rides.routes';
+import deliveriesOrdersRoutes from './routes/deliveries-orders.routes';
+import airtimeRoutes from './routes/airtime.routes';
 import remittanceRoutes from './routes/remittance.routes';
+import storageRoutes from './routes/storage.routes';
+import marketplacePricingRoutes from './routes/marketplace-pricing.routes';
 
 const app = express();
 
@@ -62,6 +68,24 @@ app.use('/api/admin/pricing', pricingRoutes);
 
 // Step 10: driver remittance management
 app.use('/api/admin/remittance', remittanceRoutes);
+
+// Step 11: payment transactions
+app.use('/api/admin/payments', paymentsRoutes);
+
+// Step 12: ride orders management
+app.use('/api/admin/rides', ridesRoutes);
+
+// Step 13: delivery orders management
+app.use('/api/admin/deliveries', deliveriesOrdersRoutes);
+
+// Step 14: airtime & data orders management
+app.use('/api/admin/airtime', airtimeRoutes);
+
+// Step 15: private storage proxy — signed URLs for driver documents & other assets
+app.use('/api/admin/storage', storageRoutes);
+
+// Step 16: marketplace delivery pricing config
+app.use('/api/admin/marketplace/pricing', marketplacePricingRoutes);
 
 // 404
 app.use((req, res) => {

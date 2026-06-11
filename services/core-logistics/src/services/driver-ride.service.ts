@@ -7,6 +7,7 @@ import { PushNotificationService } from './push-notification.service';
 import { LocationHistoryService } from './location-history.service';
 import { FareService } from './fare.service';
 import { RemittanceService } from './remittance.service';
+import { MapsUtil } from '../utils/maps.util';
 
 interface Location {
   latitude: number;
@@ -492,10 +493,22 @@ export class DriverRideService {
       }
 
       const fareService = new FareService();
+
+      // Resolve pickup state from the stored pickup address for city-tier pricing
+      // This ensures completion fare uses the same city tier as the booking fare
+      const pickupState = MapsUtil.extractStateFromAddress(ride.pickup_address ?? '') ?? undefined;
+
+      logger.info('completeTrip: resolving city tier for fare', {
+        rideId,
+        pickupAddress: ride.pickup_address,
+        pickupState,
+      });
+
       const fareResult = await fareService.calculateCompletionFare({
         variantId: (ride.variant as any)?.id ?? ride.variant_id,
         actualDistance: data.actualDistance,
         bookingType: ride.booking_type ?? 'for_me',
+        pickupState,
       });
 
       const finalFare       = fareResult.totalFare;
@@ -701,12 +714,13 @@ export class DriverRideService {
         return { success: false, error: 'Cash payment already confirmed for this ride' };
       }
 
-      // Mark cash as confirmed
+      // Mark cash as confirmed and update payment_status to 'completed'
       const { error: updateError } = await supabase
         .from('rides')
         .update({
           cash_payment_confirmed: true,
           cash_payment_confirmed_at: new Date().toISOString(),
+          payment_status: 'completed',   // cash received — payment is now complete
           updated_at: new Date().toISOString(),
         })
         .eq('id', rideId);
@@ -715,6 +729,17 @@ export class DriverRideService {
         logger.error('Error confirming cash payment:', updateError);
         return { success: false, error: 'Failed to confirm cash payment' };
       }
+
+      // Record cash payment confirmation in ride_status_updates
+      await supabase.from('ride_status_updates').insert({
+        ride_id:          rideId,
+        status:           'cash_payment_confirmed',
+        previous_status:  'completed',
+        updated_by:       driverId,
+        updated_by_type:  'driver',
+        message:          'Driver confirmed cash payment received from customer',
+        metadata:         { payment_method: 'cash', confirmed_by_driver: driverId },
+      });
 
       // Now process remittance — booking_fee is not stored on rides, only service_fee and rounding_fee
       const platformRemittance =

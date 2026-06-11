@@ -173,19 +173,7 @@ export class DeliveryService {
       // Step 7: Trigger courier matching for instant deliveries
       // For scheduled deliveries, matching will be triggered closer to scheduled time
       if (params.deliveryType === 'instant') {
-        // Trigger matching asynchronously without waiting
-        this.triggerCourierMatching(delivery.id, {
-          pickupLatitude: params.pickupLatitude,
-          pickupLongitude: params.pickupLongitude,
-          vehicleTypeId: params.vehicleTypeId,
-          regionId: regionId,
-          maxDistance: 15, // 15km radius
-          maxCouriers: 5,
-        }).catch(error => {
-          logger.error('Error triggering courier matching:', error);
-        });
-
-        // Update status to searching
+        // Update status to searching FIRST so couriers can see it via the available endpoint
         await supabase
           .from('deliveries')
           .update({
@@ -193,6 +181,18 @@ export class DeliveryService {
             searching_at: new Date().toISOString(),
           })
           .eq('id', delivery.id);
+
+        // Trigger matching asynchronously without waiting
+        this.triggerCourierMatching(delivery.id, {
+          pickupLatitude: params.pickupLatitude,
+          pickupLongitude: params.pickupLongitude,
+          vehicleTypeId: params.vehicleTypeId,
+          regionId: regionId,
+          maxDistance: 15, // 15km radius
+          maxCouriers: 10, // Notify up to 10 couriers per batch
+        }).catch(error => {
+          logger.error('Error triggering courier matching:', error);
+        });
       }
 
       logger.info(`Delivery created: ${delivery.id} (${delivery.order_number})`);
@@ -250,28 +250,14 @@ export class DeliveryService {
       if (result.success) {
         logger.info(`Successfully notified ${result.couriersNotified} couriers for delivery ${deliveryId}`);
       } else {
-        logger.warn(`No couriers found for delivery ${deliveryId}`);
-        
-        // Update delivery status to no_couriers_available
-        await supabase
-          .from('deliveries')
-          .update({
-            status: 'no_couriers_available',
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', deliveryId);
+        // No couriers found via matching right now, but delivery stays 'searching'
+        // so couriers can still discover and accept it via GET /courier/available
+        logger.warn(`No couriers found via matching for delivery ${deliveryId} — delivery remains in 'searching' status for manual discovery`);
       }
     } catch (error) {
       logger.error(`Error in triggerCourierMatching:`, error);
-      
-      // Update delivery status to indicate matching failed
-      await supabase
-        .from('deliveries')
-        .update({
-          status: 'matching_failed',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', deliveryId);
+      // Keep delivery in 'searching' status — couriers can still find it via the available endpoint
+      logger.warn(`Courier matching threw an error for delivery ${deliveryId} — delivery remains 'searching'`);
     }
   }
 

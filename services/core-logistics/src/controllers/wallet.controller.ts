@@ -1,9 +1,11 @@
 import { Request, Response } from 'express';
 import axios from 'axios';
 import { PaymentService } from '../services/payment.service';
+import { RemittanceService } from '../services/remittance.service';
 import { ResponseUtil } from '../utils/response.util';
 import { logger } from '../config/logger';
 import { config } from '../config/env';
+import { supabase } from '../config/database';
 
 /**
  * WalletController — Phase 3 migration
@@ -82,10 +84,42 @@ export class WalletController {
         });
       }
 
+      // ✅ Auto-settle outstanding remittance if user is a driver
+      let remittanceSettlement = { settled: false, settledAmount: 0, unblocked: false };
+      
+      try {
+        const { data: driver } = await supabase
+          .from('drivers')
+          .select('id')
+          .eq('user_id', userId)
+          .single();
+
+        if (driver) {
+          remittanceSettlement = await RemittanceService.settleOnWalletTopUp(driver.id);
+          
+          if (remittanceSettlement.settled) {
+            logger.info(`✅ Auto-settled ₦${remittanceSettlement.settledAmount} remittance for driver ${driver.id} after wallet top-up`);
+            
+            if (remittanceSettlement.unblocked) {
+              logger.info(`🔓 Driver ${driver.id} unblocked after remittance settlement`);
+            }
+          }
+        }
+      } catch (remittanceError: any) {
+        // Log error but don't fail the top-up
+        logger.error('Remittance settlement error (non-critical):', remittanceError);
+      }
+
       return ResponseUtil.success(res, {
         message: 'Wallet top-up successful',
         transaction: result.transaction,
         wallet: { balance: result.newBalance, currency_code: currencyCode },
+        remittance: remittanceSettlement.settled ? {
+          settled: true,
+          amount: remittanceSettlement.settledAmount,
+          unblocked: remittanceSettlement.unblocked,
+          message: `₦${remittanceSettlement.settledAmount.toLocaleString()} deducted for outstanding platform remittance`,
+        } : null,
       });
     } catch (error: any) {
       logger.error('Wallet top-up error:', error);
@@ -110,10 +144,42 @@ export class WalletController {
 
       if (!result.success) return ResponseUtil.badRequest(res, result.message || 'Validation failed');
 
+      // ✅ Auto-settle outstanding remittance if user is a driver
+      let remittanceSettlement = { settled: false, settledAmount: 0, unblocked: false };
+      
+      try {
+        const { data: driver } = await supabase
+          .from('drivers')
+          .select('id')
+          .eq('user_id', userId)
+          .single();
+
+        if (driver) {
+          remittanceSettlement = await RemittanceService.settleOnWalletTopUp(driver.id);
+          
+          if (remittanceSettlement.settled) {
+            logger.info(`✅ Auto-settled ₦${remittanceSettlement.settledAmount} remittance for driver ${driver.id} after wallet top-up validation`);
+            
+            if (remittanceSettlement.unblocked) {
+              logger.info(`🔓 Driver ${driver.id} unblocked after remittance settlement`);
+            }
+          }
+        }
+      } catch (remittanceError: any) {
+        // Log error but don't fail the validation
+        logger.error('Remittance settlement error (non-critical):', remittanceError);
+      }
+
       return ResponseUtil.success(res, {
         message: 'Wallet top-up successful',
         transaction: result.transaction,
         wallet: { balance: result.newBalance, currency_code: currencyCode },
+        remittance: remittanceSettlement.settled ? {
+          settled: true,
+          amount: remittanceSettlement.settledAmount,
+          unblocked: remittanceSettlement.unblocked,
+          message: `₦${remittanceSettlement.settledAmount.toLocaleString()} deducted for outstanding platform remittance`,
+        } : null,
       });
     } catch (error: any) {
       logger.error('Validate top-up error:', error);

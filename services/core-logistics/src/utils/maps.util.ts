@@ -269,6 +269,209 @@ export class MapsUtil {
   }
 
   /**
+   * Extract the Nigerian state name from coordinates using Google Maps reverse geocoding.
+   * Parses the address_components for administrative_area_level_1 (state).
+   * Returns null if the location is outside Nigeria or the API is unavailable.
+   *
+   * Examples:
+   *   Lagos Island coords  → "Lagos"
+   *   Abuja coords         → "FCT"
+   *   Port Harcourt coords → "Rivers"
+   */
+  static async getStateFromCoordinates(coordinates: Coordinates): Promise<string | null> {
+    if (!config.googleMapsApiKey) {
+      logger.warn('No Google Maps API key — cannot resolve state from coordinates');
+      return null;
+    }
+
+    try {
+      const url = `${this.GOOGLE_MAPS_BASE_URL}/geocode/json`;
+      const params = {
+        latlng: `${coordinates.latitude},${coordinates.longitude}`,
+        result_type: 'administrative_area_level_1',
+        key: config.googleMapsApiKey,
+      };
+
+      const response = await axios.get(url, { params, timeout: 5000 });
+
+      if (response.data.status !== 'OK' || !response.data.results?.length) {
+        // Fallback: try without result_type filter and parse components
+        const fallbackParams = {
+          latlng: `${coordinates.latitude},${coordinates.longitude}`,
+          key: config.googleMapsApiKey,
+        };
+        const fallbackResponse = await axios.get(url, { params: fallbackParams, timeout: 5000 });
+
+        if (fallbackResponse.data.status !== 'OK' || !fallbackResponse.data.results?.length) {
+          logger.warn('Reverse geocoding returned no results', { coordinates });
+          return null;
+        }
+
+        return this.extractStateFromComponents(fallbackResponse.data.results);
+      }
+
+      return this.extractStateFromComponents(response.data.results);
+    } catch (error) {
+      logger.error('getStateFromCoordinates error:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Parse Google Maps address_components to extract the state (administrative_area_level_1).
+   * Normalises "Federal Capital Territory" → "FCT" to match our Nigerian states list.
+   */
+  private static extractStateFromComponents(results: any[]): string | null {
+    for (const result of results) {
+      const components: any[] = result.address_components ?? [];
+      const stateComponent = components.find((c: any) =>
+        c.types?.includes('administrative_area_level_1')
+      );
+      if (stateComponent) {
+        const raw: string = stateComponent.long_name ?? stateComponent.short_name ?? '';
+        if (/federal capital territory/i.test(raw) || /abuja/i.test(raw)) return 'FCT';
+        return raw.replace(/\s+state$/i, '').trim() || null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Resolve Nigerian state from coordinates AND/OR address string.
+   *
+   * Strategy (in order):
+   *   1. Try Google Maps reverse geocoding (most accurate, skipped if no key or mock mode)
+   *   2. Fall back to parsing the address string for known state/city names
+   *   3. Return null if neither works (fare service will default to 'low' tier)
+   */
+  static async resolveNigerianState(
+    coordinates: Coordinates,
+    addressHint?: string
+  ): Promise<string | null> {
+    // 1. Try Google Maps (skip if mock mode or no key)
+    if (config.googleMapsApiKey && !config.mock.useMockMaps) {
+      try {
+        const stateFromCoords = await this.getStateFromCoordinates(coordinates);
+        if (stateFromCoords) {
+          logger.info('State resolved from coordinates', { state: stateFromCoords });
+          return stateFromCoords;
+        }
+      } catch (err) {
+        logger.warn('Google Maps state resolution failed, trying address fallback', { err });
+      }
+    }
+
+    // 2. Parse address string
+    if (addressHint) {
+      const stateFromAddress = this.extractStateFromAddress(addressHint);
+      if (stateFromAddress) {
+        logger.info('State resolved from address string', { state: stateFromAddress, address: addressHint });
+        return stateFromAddress;
+      }
+    }
+
+    logger.warn('Could not resolve Nigerian state — will default to low tier', { coordinates, addressHint });
+    return null;
+  }
+
+  /**
+   * Parse a free-text address string and return the matching Nigerian state name.
+   * Checks major city names first, then direct state name matching.
+   *
+   * Examples:
+   *   "10 Ogunbadewa Street Ikorodu, Lagos" → "Lagos"
+   *   "Wuse 2, Abuja"                       → "FCT"
+   *   "Trans Amadi, Port Harcourt"          → "Rivers"
+   */
+  static extractStateFromAddress(address: string): string | null {
+    if (!address) return null;
+
+    const lower = address.toLowerCase();
+
+    // City → State mappings (checked before state names to avoid ambiguity)
+    const cityToState: Record<string, string> = {
+      'abuja':           'FCT',
+      'port harcourt':   'Rivers',
+      'ikorodu':         'Lagos',
+      'ikeja':           'Lagos',
+      'victoria island': 'Lagos',
+      'lekki':           'Lagos',
+      'surulere':        'Lagos',
+      'yaba':            'Lagos',
+      'apapa':           'Lagos',
+      'oshodi':          'Lagos',
+      'mushin':          'Lagos',
+      'agege':           'Lagos',
+      'ojota':           'Lagos',
+      'ketu':            'Lagos',
+      'berger':          'Lagos',
+      'ajah':            'Lagos',
+      'sangotedo':       'Lagos',
+      'badagry':         'Lagos',
+      'epe':             'Lagos',
+      'ibadan':          'Oyo',
+      'benin city':      'Edo',
+      'warri':           'Delta',
+      'asaba':           'Delta',
+      'enugu city':      'Enugu',
+      'owerri':          'Imo',
+      'uyo':             'Akwa Ibom',
+      'calabar':         'Cross River',
+      'maiduguri':       'Borno',
+      'jos':             'Plateau',
+      'ilorin':          'Kwara',
+      'abeokuta':        'Ogun',
+      'akure':           'Ondo',
+      'osogbo':          'Osun',
+      'ado-ekiti':       'Ekiti',
+      'ado ekiti':       'Ekiti',
+      'awka':            'Anambra',
+      'onitsha':         'Anambra',
+      'nnewi':           'Anambra',
+      'umuahia':         'Abia',
+      'aba':             'Abia',
+      'abakaliki':       'Ebonyi',
+      'yenagoa':         'Bayelsa',
+      'lokoja':          'Kogi',
+      'lafia':           'Nasarawa',
+      'minna':           'Niger',
+      'birnin kebbi':    'Kebbi',
+      'sokoto city':     'Sokoto',
+      'gusau':           'Zamfara',
+      'dutse':           'Jigawa',
+      'damaturu':        'Yobe',
+      'jalingo':         'Taraba',
+      'yola':            'Adamawa',
+      'gombe city':      'Gombe',
+      'bauchi city':     'Bauchi',
+      'makurdi':         'Benue',
+      'kaduna city':     'Kaduna',
+      'kano city':       'Kano',
+      'katsina city':    'Katsina',
+    };
+
+    for (const [city, state] of Object.entries(cityToState)) {
+      if (lower.includes(city)) return state;
+    }
+
+    // Direct state name matching with word boundaries
+    const nigerianStates = [
+      'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa',
+      'Benue', 'Borno', 'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti',
+      'Enugu', 'FCT', 'Gombe', 'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina',
+      'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo',
+      'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara',
+    ];
+
+    for (const state of nigerianStates) {
+      const regex = new RegExp(`\\b${state.replace(' ', '\\s+')}\\b`, 'i');
+      if (regex.test(address)) return state;
+    }
+
+    return null;
+  }
+
+  /**
    * Validate coordinates
    */
   static validateCoordinates(latitude: number, longitude: number): boolean {
