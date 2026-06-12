@@ -2,6 +2,53 @@ import { supabase } from '../config/database';
 import { logger } from '../utils/logger';
 import axios from 'axios';
 
+// ─── Registration step helpers ────────────────────────────────────────────────
+
+/**
+ * Determine how far along a vendor's registration is.
+ * Step 1: Basic info submitted (business_name, business_type, email, phone)
+ * Step 2: Documents submitted (at least one of nin_number, cac_document_url, logo_url)
+ * Step 3: Submitted for review (verification_status = 'pending')
+ */
+function resolveRegistrationProgress(v: Record<string, unknown>) {
+  const hasBasicInfo = !!(v.business_name && v.business_type && v.email && v.phone);
+  const hasDocuments = !!(v.nin_number || v.cac_document_url || v.logo_url || v.profile_picture_url);
+  const hasAddress   = !!(v.city || v.state || v.address);
+
+  const steps = [
+    {
+      key:         'basic_info',
+      label:       'Business Information',
+      completed:   hasBasicInfo,
+      fields:      { business_name: v.business_name ?? null, business_type: v.business_type ?? null, email: v.email ?? null, phone: v.phone ?? null, gender: v.gender ?? null },
+    },
+    {
+      key:         'address',
+      label:       'Address Details',
+      completed:   hasAddress,
+      fields:      { city: v.city ?? null, state: v.state ?? null, address: v.address ?? null },
+    },
+    {
+      key:         'documents',
+      label:       'Documents & Media',
+      completed:   hasDocuments,
+      fields:      { logo_url: v.logo_url ?? null, profile_picture_url: v.profile_picture_url ?? null, nin_number: v.nin_number ? '***provided***' : null, cac_document_url: v.cac_document_url ?? null, store_images: v.store_images ?? null },
+    },
+  ];
+
+  const completedCount = steps.filter(s => s.completed).length;
+  const progressPercent = Math.round((completedCount / steps.length) * 100);
+
+  const currentStep = !hasBasicInfo ? 'basic_info'
+    : !hasAddress                   ? 'address'
+    : !hasDocuments                 ? 'documents'
+    : 'review';
+
+  const currentStepLabel = steps.find(s => s.key === currentStep)?.label ?? 'Submitted for Review';
+
+  return { steps, completedCount, progressPercent, currentStep, currentStepLabel };
+}
+
 export class VendorAdminService {
   static async getAll(filters: {
     status?: string;
@@ -518,5 +565,182 @@ export class VendorAdminService {
 
     logger.warn('Admin terminated vendor account', { adminId, vendorId, previousStatus: v.verification_status, reason: reason ?? 'No reason provided' });
     return updated;
+  }
+
+  // ─── Incomplete registrations ─────────────────────────────────────────────
+
+  /**
+   * GET /api/admin/vendors/registrations
+   * Returns vendors that have NOT completed registration.
+   * Excludes: approved, terminated.
+   * Includes: pending, rejected, and vendors with incomplete profiles.
+   * Query: status (pending|rejected|incomplete), search, page, limit
+   */
+  static async getIncompleteRegistrations(filters: {
+    status?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  } = {}) {
+    const { status, search, page = 1, limit = 20 } = filters;
+    const offset = (page - 1) * limit;
+
+    // Never show approved or terminated — those are complete or closed
+    let query = supabase
+      .from('vendors')
+      .select('*', { count: 'exact' })
+      .not('verification_status', 'in', '("approved","terminated")')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (status && status !== 'all') {
+      query = query.eq('verification_status', status.toLowerCase());
+    }
+
+    const { data: vendors, count, error } = await query;
+
+    if (error) {
+      logger.warn('getIncompleteRegistrations error', { error: error.message });
+      throw new Error(`Failed to fetch incomplete vendor registrations: ${error.message}`);
+    }
+
+    const rows = vendors ?? [];
+
+    // Enrich with user details
+    const userIds = [...new Set(rows.map(r => (r as Record<string, unknown>).user_id as string).filter(Boolean))];
+    const userMap = new Map<string, Record<string, unknown>>();
+
+    if (userIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, email, phone, avatar_url')
+        .in('id', userIds);
+      for (const u of users ?? []) {
+        userMap.set((u as Record<string, unknown>).id as string, u as Record<string, unknown>);
+      }
+    }
+
+    let formatted = rows.map((vendor, idx) => {
+      const v    = vendor as Record<string, unknown>;
+      const user = userMap.get(v.user_id as string) ?? {} as Record<string, unknown>;
+      const progress = resolveRegistrationProgress(v);
+
+      return {
+        sn: offset + idx + 1,
+        id: v.id,
+        user: {
+          id:        v.user_id,
+          name:      `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || 'Unknown',
+          email:     user.email ?? v.email ?? null,
+          phone:     user.phone ?? v.phone ?? null,
+          avatarUrl: user.avatar_url ?? null,
+        },
+        business_name:       v.business_name       ?? null,
+        business_type:       v.business_type       ?? null,
+        service_type:        v.service_type        ?? null,
+        verification_status: v.verification_status,
+        rejection_reason:    v.rejection_reason    ?? null,
+        progressPercent:     progress.progressPercent,
+        currentStep:         progress.currentStep,
+        currentStepLabel:    progress.currentStepLabel,
+        stepsCompleted:      progress.completedCount,
+        totalSteps:          progress.steps.length,
+        createdAt:           v.created_at,
+        updatedAt:           v.updated_at,
+      };
+    });
+
+    // Search by name or email after enrichment
+    if (search) {
+      const sq = search.toLowerCase();
+      formatted = formatted.filter(r =>
+        r.user.name.toLowerCase().includes(sq) ||
+        (r.user.email as string ?? '').toLowerCase().includes(sq) ||
+        (r.business_name as string ?? '').toLowerCase().includes(sq)
+      );
+    }
+
+    return {
+      vendors: formatted,
+      pagination: {
+        page,
+        limit,
+        total: search ? formatted.length : (count ?? 0),
+        pages: Math.ceil((search ? formatted.length : (count ?? 0)) / limit),
+      },
+    };
+  }
+
+  /**
+   * GET /api/admin/vendors/registrations/:vendorId
+   * Full detail of a single incomplete vendor registration — all steps, fields, progress.
+   * Returns null if vendor doesn't exist.
+   * Returns __completed sentinel if vendor is already approved.
+   */
+  static async getIncompleteRegistrationById(vendorId: string) {
+    const { data: vendor, error } = await supabase
+      .from('vendors')
+      .select('*')
+      .eq('id', vendorId)
+      .single();
+
+    if (error || !vendor) return null;
+
+    const v = vendor as Record<string, unknown>;
+
+    // Approved vendors belong in the main vendors list, not here
+    if (v.verification_status === 'approved') {
+      return { __completed: true } as { __completed: boolean };
+    }
+
+    // Enrich with user details
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email, phone, avatar_url, status, email_verified')
+      .eq('id', v.user_id as string)
+      .single();
+
+    const u = (user ?? {}) as Record<string, unknown>;
+    const progress = resolveRegistrationProgress(v);
+
+    return {
+      id: v.id,
+      user: {
+        id:            v.user_id,
+        name:          `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Unknown',
+        email:         u.email ?? v.email ?? null,
+        phone:         u.phone ?? v.phone ?? null,
+        avatarUrl:     u.avatar_url ?? null,
+        accountStatus: u.status ?? null,
+        emailVerified: u.email_verified ?? null,
+      },
+      verification_status: v.verification_status,
+      rejection_reason:    v.rejection_reason ?? null,
+      approved_by:         v.approved_by      ?? null,
+      approved_at:         v.approved_at      ?? null,
+      // Progress overview
+      progressPercent:  progress.progressPercent,
+      currentStep:      progress.currentStep,
+      currentStepLabel: progress.currentStepLabel,
+      stepsCompleted:   progress.completedCount,
+      totalSteps:       progress.steps.length,
+      // Per-step breakdown with field values
+      steps: progress.steps,
+      // Raw fields for admin detail view
+      business_name:       v.business_name       ?? null,
+      business_type:       v.business_type       ?? null,
+      service_type:        v.service_type        ?? null,
+      gender:              v.gender              ?? null,
+      city:                v.city                ?? null,
+      state:               v.state               ?? null,
+      address:             v.address             ?? null,
+      logo_url:            v.logo_url            ?? null,
+      profile_picture_url: v.profile_picture_url ?? null,
+      nin_number:          v.nin_number          ? '***provided***' : null,
+      cac_document_url:    v.cac_document_url    ?? null,
+      store_images:        v.store_images        ?? null,
+      createdAt: v.created_at,
+      updatedAt: v.updated_at,
+    };
   }
 }

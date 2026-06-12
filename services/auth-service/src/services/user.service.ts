@@ -243,6 +243,91 @@ class UserService {
   }
 
   /**
+   * Delete account (soft delete).
+   *
+   * What happens:
+   *  - users.status         → 'account_deleted'
+   *  - drivers.status       → 'account_deleted'  (if driver record exists)
+   *  - vendors.verification_status → 'account_deleted'  (if vendor record exists)
+   *
+   * What does NOT happen:
+   *  - No rows deleted — all data is preserved for audit
+   *  - Email/phone are NOT cleared — user can re-register with same credentials
+   *    because re-registration creates a brand-new row; the old deleted row stays
+   *
+   * The status 'account_deleted' is deliberately distinct from 'terminated'
+   * (which is admin-initiated) so audit logs can distinguish self-deletion
+   * from admin action.
+   */
+  async deleteAccount(userId: string, reason?: string): Promise<void> {
+    const { data: user, error: fetchError } = await supabase
+      .from('users')
+      .select('id, status, metadata')
+      .eq('id', userId)
+      .single();
+
+    if (fetchError || !user) {
+      throw new NotFoundError('User not found');
+    }
+
+    if (user.status === 'account_deleted') {
+      throw new ValidationError('Account is already deleted');
+    }
+
+    const now = new Date().toISOString();
+
+    // Merge deletion info into the existing metadata JSON
+    const existingMeta = (user.metadata ?? {}) as Record<string, unknown>;
+    const updatedMeta = {
+      ...existingMeta,
+      account_deletion: {
+        deleted_at:    now,
+        reason:        reason?.trim() || null,
+      },
+    };
+
+    // ── 1. Mark the users row as deleted ─────────────────────────────────────
+    const { error: userErr } = await supabase
+      .from('users')
+      .update({ status: 'account_deleted', metadata: updatedMeta, updated_at: now })
+      .eq('id', userId);
+
+    if (userErr) {
+      logger.error('Error marking user as account_deleted:', userErr);
+      throw new Error('Failed to delete account');
+    }
+
+    // ── 2. Disable driver record (non-fatal) ──────────────────────────────────
+    const { error: driverErr } = await supabase
+      .from('drivers')
+      .update({ status: 'account_deleted', updated_at: now })
+      .eq('user_id', userId);
+
+    if (driverErr) {
+      logger.warn('Could not update driver record on account delete (may not exist)', {
+        userId, error: driverErr.message,
+      });
+    }
+
+    // ── 3. Disable vendor record (non-fatal) ──────────────────────────────────
+    const { error: vendorErr } = await supabase
+      .from('vendors')
+      .update({ verification_status: 'account_deleted', is_active: false, updated_at: now })
+      .eq('user_id', userId);
+
+    if (vendorErr) {
+      logger.warn('Could not update vendor record on account delete (may not exist)', {
+        userId, error: vendorErr.message,
+      });
+    }
+
+    logger.info('User self-deleted account — data preserved for audit', {
+      userId,
+      reason: reason?.trim() || 'no reason provided',
+    });
+  }
+
+  /**
    * Format user data for response
    */
   private formatUserData(user: any): any {

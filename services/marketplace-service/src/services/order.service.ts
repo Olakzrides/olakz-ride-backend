@@ -42,7 +42,7 @@ export class OrderService {
     return {
       subtotal,
       delivery_fee:  fare.deliveryFee,
-      service_fee:   fare.serviceFee,
+      service_fee:   fare.serviceFee,   // service_fee + rounding_fee combined
       total_fees:    fare.totalFees,
       total_amount:  subtotal + fare.totalFees,
       distance_km:   fare.distanceKm,
@@ -102,6 +102,7 @@ export class OrderService {
       deliveryLng: deliveryAddress.lng,
     });
 
+    // totalAmount = subtotal + deliveryFee + combined serviceFee (which already includes roundingFee)
     const totalAmount = subtotal + fare.deliveryFee + fare.serviceFee;
 
     // Wallet payment
@@ -129,7 +130,7 @@ export class OrderService {
         subtotal,
         deliveryFee: fare.deliveryFee,
         serviceFee: fare.serviceFee,
-        roundingFee: 0,
+        roundingFee: fare.roundingFee,
         totalAmount,
         deliveryAddress: deliveryAddress as any,
         specialInstructions: specialInstructions || null,
@@ -194,7 +195,7 @@ export class OrderService {
       fare_breakdown: {
         subtotal,
         delivery_fee:  fare.deliveryFee,
-        service_fee:   fare.serviceFee,
+        service_fee:   fare.serviceFee,   // service_fee + rounding_fee combined
         total_fees:    fare.totalFees,
         total_amount:  totalAmount,
         distance_km:   fare.distanceKm,

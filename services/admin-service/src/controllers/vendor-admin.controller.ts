@@ -159,4 +159,60 @@ export class VendorAdminController {
       ResponseUtil.serverError(res, msg);
     }
   };
+
+  /**
+   * GET /api/admin/vendors/registrations
+   * Incomplete vendor registrations — pending, rejected, or profile not fully filled.
+   * Excludes approved and terminated vendors.
+   * Query: status (pending|rejected), search, page, limit
+   */
+  getIncompleteRegistrations = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const page  = Math.max(1, parseInt(req.query.page  as string) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+
+      const result = await VendorAdminService.getIncompleteRegistrations({
+        status: req.query.status as string | undefined,
+        search: req.query.search as string | undefined,
+        page,
+        limit,
+      });
+
+      ResponseUtil.success(res, result, 'Incomplete vendor registrations retrieved');
+    } catch (err: unknown) {
+      logger.error('getIncompleteRegistrations error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, 'Failed to retrieve incomplete vendor registrations', 'VENDOR_REGISTRATIONS_ERROR');
+    }
+  };
+
+  /**
+   * GET /api/admin/vendors/registrations/:vendorId
+   * Full detail of a single incomplete vendor registration — steps, fields, progress.
+   * Returns 400 if vendor is already approved (use GET /vendors/:id instead).
+   */
+  getIncompleteRegistrationById = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const { vendorId } = req.params;
+      const result = await VendorAdminService.getIncompleteRegistrationById(vendorId);
+
+      if (!result) {
+        ResponseUtil.notFound(res, 'Vendor registration');
+        return;
+      }
+
+      if ((result as Record<string, unknown>).__completed) {
+        ResponseUtil.badRequest(
+          res,
+          'This vendor registration is complete. The vendor appears in GET /api/admin/vendors.',
+          'VENDOR_REGISTRATION_ALREADY_COMPLETED'
+        );
+        return;
+      }
+
+      ResponseUtil.success(res, { vendor: result }, 'Vendor registration detail retrieved');
+    } catch (err: unknown) {
+      logger.error('getIncompleteRegistrationById error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, 'Failed to retrieve vendor registration', 'VENDOR_REGISTRATION_FETCH_ERROR');
+    }
+  };
 }
