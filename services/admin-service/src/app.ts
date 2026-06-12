@@ -49,6 +49,8 @@ app.use('/api/admin/delivery', deliveryRoutes);
 app.use('/api/admin/food', foodRoutes);
 
 // Step 4: marketplace-service admin features
+// ⚠️ marketplace/pricing must be mounted BEFORE marketplace (more specific first)
+app.use('/api/admin/marketplace/pricing', marketplacePricingRoutes);
 app.use('/api/admin/marketplace', marketplaceRoutes);
 
 // Step 5: platform-service vendor registration admin features

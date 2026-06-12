@@ -41,10 +41,11 @@ export class OrderService {
 
     return {
       subtotal,
-      delivery_fee: fare.deliveryFee,
-      service_fee: fare.serviceFee,
-      total_amount: subtotal + fare.deliveryFee + fare.serviceFee,
-      distance_km: fare.distanceKm,
+      delivery_fee:  fare.deliveryFee,
+      service_fee:   fare.serviceFee,
+      total_fees:    fare.totalFees,
+      total_amount:  subtotal + fare.totalFees,
+      distance_km:   fare.distanceKm,
       distance_text: fare.distanceText,
       currency_code: fare.currencyCode,
     };
@@ -128,6 +129,7 @@ export class OrderService {
         subtotal,
         deliveryFee: fare.deliveryFee,
         serviceFee: fare.serviceFee,
+        roundingFee: 0,
         totalAmount,
         deliveryAddress: deliveryAddress as any,
         specialInstructions: specialInstructions || null,
@@ -187,8 +189,19 @@ export class OrderService {
       }
     }, PENDING_EXPIRY_MS);
 
-    logger.info('Marketplace order placed', { orderId: order.id, customerId, totalAmount });
-    return { ...order, fare_breakdown: { subtotal, delivery_fee: fare.deliveryFee, service_fee: fare.serviceFee, total_amount: totalAmount, distance_km: fare.distanceKm, distance_text: fare.distanceText, currency_code: fare.currencyCode } };
+    return {
+      ...order,
+      fare_breakdown: {
+        subtotal,
+        delivery_fee:  fare.deliveryFee,
+        service_fee:   fare.serviceFee,
+        total_fees:    fare.totalFees,
+        total_amount:  totalAmount,
+        distance_km:   fare.distanceKm,
+        distance_text: fare.distanceText,
+        currency_code: fare.currencyCode,
+      },
+    };
   }
 
   static async getOrder(orderId: string, requesterId: string, requesterRole: 'customer' | 'vendor') {

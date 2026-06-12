@@ -1,6 +1,5 @@
 import { supabase } from '../config/database';
 import { MapsUtil } from '../utils/maps';
-import config from '../config';
 import logger from '../utils/logger';
 
 export interface FareBreakdown {
@@ -19,25 +18,20 @@ export class FareService {
   /**
    * Get fare config for a vehicle type from DB (admin-configurable)
    */
-  static async getFareConfig(vehicleType: string) {
+  static async getFareConfig(vehicleType: string, cityTier = 'low') {
     const { data, error } = await supabase
       .from('food_fare_config')
       .select('*')
       .eq('vehicle_type', vehicleType)
+      .eq('city_tier', cityTier)
       .eq('is_active', true)
       .maybeSingle();
 
     if (error) throw new Error('Failed to fetch fare config');
 
-    // Fallback to defaults if no DB config
+    // No config found — throw so the caller knows pricing isn't set up yet
     if (!data) {
-      return {
-        price_per_km: config.defaults.pricePerKm,
-        minimum_delivery_fee: config.defaults.minimumDeliveryFee,
-        service_fee: 50,
-        rounding_fee: 0,
-        currency_code: config.defaults.currency,
-      };
+      throw new Error(`Fare config not found for vehicle_type="${vehicleType}" city_tier="${cityTier}". Admin must configure pricing first.`);
     }
     return data;
   }
@@ -51,11 +45,13 @@ export class FareService {
     deliveryLat: number;
     deliveryLng: number;
     vehicleType?: string;
+    cityTier?: string;
   }): Promise<FareBreakdown> {
     const vehicleType = params.vehicleType || 'motorcycle';
+    const cityTier    = params.cityTier    || 'low';
 
     const [fareConfig, routeInfo] = await Promise.all([
-      this.getFareConfig(vehicleType),
+      this.getFareConfig(vehicleType, cityTier),
       MapsUtil.getRouteInfo(
         params.restaurantLat,
         params.restaurantLng,
@@ -64,13 +60,20 @@ export class FareService {
       ),
     ]);
 
-    const pricePerKm = parseFloat(fareConfig.price_per_km);
-    const minimumFee = parseFloat(fareConfig.minimum_delivery_fee);
-    const serviceFee = parseFloat(fareConfig.service_fee);
-    const roundingFee = parseFloat(fareConfig.rounding_fee);
+    const ratePerKm      = parseFloat(fareConfig.estimated_billing_unit);
+    const minimumFee     = parseFloat(fareConfig.min_amount_less_than_3km);
+    const serviceFeeRaw  = parseFloat(fareConfig.service_fee);
+    const roundingFeeRaw = parseFloat(fareConfig.rounding_fee);
 
-    const rawDeliveryFee = routeInfo.distanceKm * pricePerKm;
-    const deliveryFee = Math.max(rawDeliveryFee, minimumFee);
+    const rawDeliveryFee = routeInfo.distanceKm * ratePerKm;
+
+    // > 3km: delivery_fee = distance × estimated_billing_unit
+    // ≤ 3km: delivery_fee = min_amount_less_than_3km (flat)
+    const deliveryFee = routeInfo.distanceKm < 3
+      ? minimumFee
+      : rawDeliveryFee;
+
+    const serviceFee = serviceFeeRaw + roundingFeeRaw;
 
     logger.info('Fare calculated', {
       distanceKm: routeInfo.distanceKm,
@@ -80,14 +83,14 @@ export class FareService {
     });
 
     return {
-      distanceKm: routeInfo.distanceKm,
-      distanceText: routeInfo.distanceText,
+      distanceKm:      routeInfo.distanceKm,
+      distanceText:    routeInfo.distanceText,
       durationMinutes: routeInfo.durationMinutes,
-      durationText: routeInfo.durationText,
-      deliveryFee: Math.round(deliveryFee * 100) / 100,
-      serviceFee: Math.round(serviceFee * 100) / 100,
-      roundingFee: Math.round(roundingFee * 100) / 100,
-      currencyCode: fareConfig.currency_code || config.defaults.currency,
+      durationText:    routeInfo.durationText,
+      deliveryFee:     Math.round(deliveryFee * 100) / 100,
+      serviceFee:      Math.round(serviceFee * 100) / 100,
+      roundingFee:     0,
+      currencyCode:    fareConfig.currency_code ?? 'NGN',
       vehicleType,
     };
   }

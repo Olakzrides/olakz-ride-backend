@@ -3,127 +3,176 @@ import { logger } from '../../../config/logger';
 import { MapsUtil } from '../../../utils/maps.util';
 
 interface FareCalculationParams {
-  vehicleTypeId: string;
-  regionId: string;
-  pickupLatitude: number;
-  pickupLongitude: number;
-  dropoffLatitude: number;
+  vehicleTypeId:    string;
+  regionId:         string;
+  pickupLatitude:   number;
+  pickupLongitude:  number;
+  dropoffLatitude:  number;
   dropoffLongitude: number;
-  deliveryType: 'instant' | 'scheduled';
+  deliveryType:     'instant' | 'scheduled';
 }
 
 export interface FareBreakdown {
-  baseFare: number;
-  distanceFare: number;
-  scheduledSurcharge: number;
-  totalFare: number;
-  minimumFare: number;
-  finalFare: number;
-  distance: number;
+  distanceKm:   number;
   distanceText: string;
+  /** Distance-based delivery charge (uses min_amount_less_than_3km when < 3 km) */
+  deliveryFee:  number;
+  /** service_fee + rounding_fee combined — one line item for the customer */
+  serviceFee:   number;
+  /** deliveryFee + serviceFee */
+  totalAmount:  number;
+  /** Resolved city tier — high | middle | low */
+  cityTier:     string;
   currencyCode: string;
 }
 
-/**
- * DeliveryFareService
- * Calculates delivery fares based on distance, vehicle type, and delivery type
- */
 export class DeliveryFareService {
+
+  // ── City tier resolution ───────────────────────────────────────────────────
   /**
-   * Get fare configuration for a vehicle type and region
+   * Resolve a city tier from a regionId.
+   * Looks up the region name (e.g. "Lagos") then checks city_tier_states.
+   * Falls back to 'low' if the state is not explicitly assigned to high or middle.
    */
-  private static async getFareConfig(vehicleTypeId: string, regionId: string) {
+  private static async resolveCityTier(regionId: string): Promise<'high' | 'middle' | 'low'> {
+    // 1. Get region name from regions table
+    const { data: region } = await supabase
+      .from('regions')
+      .select('name')
+      .eq('id', regionId)
+      .maybeSingle();
+
+    if (!region?.name) {
+      logger.warn('Region not found for city tier resolution, defaulting to low', { regionId });
+      return 'low';
+    }
+
+    const regionName = region.name; // e.g. "Lagos"
+
+    // 2. Look up in city_tier_states (shared with ride + marketplace pricing)
+    const { data: tierRow } = await supabase
+      .from('city_tier_states')
+      .select('city_tier')
+      .ilike('state_name', regionName) // case-insensitive match
+      .maybeSingle();
+
+    const tier = (tierRow?.city_tier ?? 'low') as 'high' | 'middle' | 'low';
+
+    logger.info('Resolved city tier for delivery', { regionId, regionName, cityTier: tier });
+    return tier;
+  }
+
+  // ── Config lookup ─────────────────────────────────────────────────────────
+  /**
+   * Fetch the fare config for a vehicle + region, using city tier to pick
+   * the right pricing row from the admin-configured columns.
+   * Falls back through: exact vehicle+region → vehicle+region with any city_tier.
+   */
+  private static async getFareConfig(vehicleTypeId: string, regionId: string, cityTier: string) {
+    // Try exact match: vehicle + region + tier
     const { data, error } = await supabase
       .from('delivery_fare_config')
       .select('*')
       .eq('vehicle_type_id', vehicleTypeId)
       .eq('region_id', regionId)
+      .eq('city_tier', cityTier)
       .eq('is_active', true)
       .maybeSingle();
 
-    if (error) {
-      logger.error(`Error fetching fare config:`, error);
-      throw new Error('Failed to fetch fare configuration');
-    }
+    if (error) throw new Error('Failed to fetch fare configuration');
+    if (data) return data;
 
-    if (!data) {
-      logger.error(`No fare config found for vehicle ${vehicleTypeId} in region ${regionId}`);
-      throw new Error('Fare configuration not found for this vehicle type and region');
-    }
+    // Fallback: same vehicle + region but any tier (e.g. only 'low' row exists)
+    const { data: fallback } = await supabase
+      .from('delivery_fare_config')
+      .select('*')
+      .eq('vehicle_type_id', vehicleTypeId)
+      .eq('region_id', regionId)
+      .eq('is_active', true)
+      .order('city_tier', { ascending: false }) // high > middle > low
+      .limit(1)
+      .maybeSingle();
 
-    return data;
+    if (fallback) return fallback;
+
+    throw new Error('Fare configuration not found for this vehicle type and region');
   }
 
-  /**
-   * Calculate delivery fare
-   */
+  // ── Fare calculation ──────────────────────────────────────────────────────
+
   public static async calculateFare(params: FareCalculationParams): Promise<FareBreakdown> {
-    try {
-      // Get fare configuration
-      const fareConfig = await this.getFareConfig(params.vehicleTypeId, params.regionId);
+    // Resolve city tier from the region name → city_tier_states lookup
+    const cityTier = await this.resolveCityTier(params.regionId);
 
-      // Calculate distance using Maps utility
-      const routeInfo = await MapsUtil.getDirections(
-        {
-          latitude: params.pickupLatitude,
-          longitude: params.pickupLongitude,
-        },
-        {
-          latitude: params.dropoffLatitude,
-          longitude: params.dropoffLongitude,
-        }
-      );
+    const [fareConfig, routeInfo] = await Promise.all([
+      this.getFareConfig(params.vehicleTypeId, params.regionId, cityTier),
+      MapsUtil.getDirections(
+        { latitude: params.pickupLatitude,  longitude: params.pickupLongitude },
+        { latitude: params.dropoffLatitude, longitude: params.dropoffLongitude }
+      ),
+    ]);
 
-      const distanceKm = routeInfo.distance;
+    const distanceKm = routeInfo.distance;
 
-      // Calculate fare components
-      const baseFare = parseFloat(fareConfig.base_fare);
-      const pricePerKm = parseFloat(fareConfig.price_per_km);
-      const minimumFare = parseFloat(fareConfig.minimum_fare);
-      const scheduledSurcharge =
-        params.deliveryType === 'scheduled'
-          ? parseFloat(fareConfig.scheduled_delivery_surcharge || '0')
-          : 0;
+    // Strictly use admin-configured values — no hardcoded fallbacks.
+    // If admin hasn't set a value, it will be 0 (from the seeded row).
+    const baseRate = parseFloat(fareConfig.estimated_billing_unit ?? 0);
+    const highRate = parseFloat(fareConfig.high_traffic_estimated_billing_unit ?? 0);
 
-      // Calculate distance fare
-      const distanceFare = distanceKm * pricePerKm;
+    const ratePerKm = cityTier === 'high'
+      ? (highRate > 0 ? highRate : baseRate)
+      : cityTier === 'middle'
+        ? (baseRate + (highRate - baseRate) * 0.5)
+        : baseRate;
 
-      // Calculate total before minimum fare check
-      const totalFare = baseFare + distanceFare + scheduledSurcharge;
+    const minAmount3km   = parseFloat(fareConfig.min_amount_less_than_3km ?? 0);
+    const serviceFeeRaw  = parseFloat(fareConfig.service_fee  ?? 0);
+    const roundingFeeRaw = parseFloat(fareConfig.rounding_fee ?? 0);
 
-      // Apply minimum fare
-      const finalFare = Math.max(totalFare, minimumFare);
+    // > 3km: deliveryFee = distance × ratePerKm
+    // ≤ 3km: deliveryFee = min_amount_less_than_3km (flat — no per-km calc)
+    const rawDeliveryFee = distanceKm * ratePerKm;
+    const deliveryFee    = distanceKm < 3
+      ? minAmount3km
+      : rawDeliveryFee;
 
-      logger.info(`Fare calculated: ${finalFare} ${fareConfig.currency_code} for ${distanceKm}km`);
+    // service_fee + rounding_fee → one customer-facing line item
+    const serviceFee  = serviceFeeRaw + roundingFeeRaw;
+    const totalAmount = deliveryFee + serviceFee;
 
-      return {
-        baseFare,
-        distanceFare,
-        scheduledSurcharge,
-        totalFare,
-        minimumFare,
-        finalFare,
-        distance: distanceKm,
-        distanceText: routeInfo.distanceText,
-        currencyCode: fareConfig.currency_code,
-      };
-    } catch (error) {
-      logger.error(`Error calculating fare:`, error);
-      throw error;
-    }
+    logger.info('Delivery fare calculated', {
+      vehicleTypeId: params.vehicleTypeId,
+      regionId:      params.regionId,
+      cityTier,
+      distanceKm,
+      ratePerKm,
+      deliveryFee,
+      serviceFee,
+      totalAmount,
+      deliveryType: params.deliveryType,
+    });
+
+    return {
+      distanceKm:   Math.round(distanceKm * 100) / 100,
+      distanceText: routeInfo.distanceText,
+      deliveryFee:  Math.round(deliveryFee),
+      serviceFee:   Math.round(serviceFee),
+      totalAmount:  Math.round(totalAmount),
+      cityTier,
+      currencyCode: fareConfig.currency_code ?? 'NGN',
+    };
   }
 
-  /**
-   * Get fare estimate (without creating delivery)
-   */
+  // ── Estimate (no delivery created) ───────────────────────────────────────
+
   public static async estimateFare(
-    vehicleTypeId: string,
-    regionId: string,
-    pickupLatitude: number,
-    pickupLongitude: number,
-    dropoffLatitude: number,
+    vehicleTypeId:    string,
+    regionId:         string,
+    pickupLatitude:   number,
+    pickupLongitude:  number,
+    dropoffLatitude:  number,
     dropoffLongitude: number,
-    deliveryType: 'instant' | 'scheduled' = 'instant'
+    deliveryType:     'instant' | 'scheduled' = 'instant'
   ): Promise<FareBreakdown> {
     return this.calculateFare({
       vehicleTypeId,
@@ -136,103 +185,16 @@ export class DeliveryFareService {
     });
   }
 
-  /**
-   * Get all fare configurations for a region
-   */
+  // ── Config helpers ────────────────────────────────────────────────────────
+
   public static async getFareConfigsByRegion(regionId: string) {
     const { data, error } = await supabase
       .from('delivery_fare_config')
-      .select(`
-        *,
-        vehicle_type:vehicle_types(id, name, display_name, icon_url)
-      `)
+      .select(`*, vehicle_type:vehicle_types(id, name, display_name, icon_url)`)
       .eq('region_id', regionId)
       .eq('is_active', true);
 
-    if (error) {
-      logger.error(`Error fetching fare configs for region:`, error);
-      throw new Error('Failed to fetch fare configurations');
-    }
-
-    return data || [];
-  }
-
-  /**
-   * Update fare configuration (admin only)
-   */
-  public static async updateFareConfig(
-    vehicleTypeId: string,
-    regionId: string,
-    updates: {
-      baseFare?: number;
-      pricePerKm?: number;
-      minimumFare?: number;
-      scheduledDeliverySurcharge?: number;
-      peakHourMultiplier?: number;
-    }
-  ) {
-    const updateData: any = {
-      updated_at: new Date().toISOString(),
-    };
-
-    if (updates.baseFare !== undefined) updateData.base_fare = updates.baseFare;
-    if (updates.pricePerKm !== undefined) updateData.price_per_km = updates.pricePerKm;
-    if (updates.minimumFare !== undefined) updateData.minimum_fare = updates.minimumFare;
-    if (updates.scheduledDeliverySurcharge !== undefined)
-      updateData.scheduled_delivery_surcharge = updates.scheduledDeliverySurcharge;
-    if (updates.peakHourMultiplier !== undefined)
-      updateData.peak_hour_multiplier = updates.peakHourMultiplier;
-
-    const { data, error } = await supabase
-      .from('delivery_fare_config')
-      .update(updateData)
-      .eq('vehicle_type_id', vehicleTypeId)
-      .eq('region_id', regionId)
-      .select()
-      .single();
-
-    if (error) {
-      logger.error(`Error updating fare config:`, error);
-      throw new Error('Failed to update fare configuration');
-    }
-
-    logger.info(`Fare config updated for vehicle ${vehicleTypeId} in region ${regionId}`);
-    return data;
-  }
-
-  /**
-   * Create new fare configuration (admin only)
-   */
-  public static async createFareConfig(config: {
-    vehicleTypeId: string;
-    regionId: string;
-    baseFare: number;
-    pricePerKm: number;
-    minimumFare: number;
-    scheduledDeliverySurcharge?: number;
-    currencyCode?: string;
-  }) {
-    const { data, error } = await supabase
-      .from('delivery_fare_config')
-      .insert({
-        vehicle_type_id: config.vehicleTypeId,
-        region_id: config.regionId,
-        base_fare: config.baseFare,
-        price_per_km: config.pricePerKm,
-        minimum_fare: config.minimumFare,
-        scheduled_delivery_surcharge: config.scheduledDeliverySurcharge || 0,
-        currency_code: config.currencyCode || 'NGN',
-        is_active: true,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      logger.error(`Error creating fare config:`, error);
-      throw new Error('Failed to create fare configuration');
-    }
-
-    logger.info(`Fare config created for vehicle ${config.vehicleTypeId} in region ${config.regionId}`);
-    return data;
+    if (error) throw new Error('Failed to fetch fare configurations');
+    return data ?? [];
   }
 }
