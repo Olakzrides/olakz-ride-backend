@@ -8,6 +8,10 @@ const ctrl = new VendorAdminController();
 
 router.use(adminAuthMiddleware);
 
+// ─── Registration progress (must come before /:id routes) ────────────────────
+router.get('/registrations', auditMiddleware('vendor_get_incomplete_registrations'), ctrl.getIncompleteRegistrations);
+router.get('/registrations/:vendorId', auditMiddleware('vendor_get_incomplete_registration_by_id'), ctrl.getIncompleteRegistrationById);
+
 // ─── Existing: listing and approval ──────────────────────────────────────────
 router.get('/', auditMiddleware('vendor_get_all'), ctrl.getAll);
 router.put('/:id/approve', auditMiddleware('vendor_approve'), ctrl.approve);
