@@ -1,4 +1,4 @@
-import { prisma } from '../config/database';
+import { prisma, supabase } from '../config/database';
 import { WalletService } from './wallet.service';
 import { OrderService } from './order.service';
 import { MarketplaceMatchingService } from './marketplace-matching.service';
@@ -25,14 +25,64 @@ export class VendorOrderService {
       prisma.marketplaceOrder.count({ where: { storeId, ...(params.status && { status: params.status }) } }),
     ]);
 
-    return { orders, total, page: params.page || 1, limit, totalPages: Math.ceil(total / limit) };
+    // Fetch customer names from Supabase users table
+    const customerIds = [...new Set(orders.map((o) => o.customerId))];
+    let customerMap: Record<string, { firstName: string | null; lastName: string | null; phone: string | null }> = {};
+
+    if (customerIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, phone')
+        .in('id', customerIds);
+
+      if (users) {
+        for (const u of users) {
+          customerMap[u.id] = { firstName: u.first_name, lastName: u.last_name, phone: u.phone };
+        }
+      }
+    }
+
+    const ordersWithCustomer = orders.map((o) => ({
+      ...o,
+      customer: customerMap[o.customerId]
+        ? {
+            firstName: customerMap[o.customerId].firstName,
+            lastName: customerMap[o.customerId].lastName,
+            fullName: [customerMap[o.customerId].firstName, customerMap[o.customerId].lastName].filter(Boolean).join(' ') || null,
+            phone: customerMap[o.customerId].phone,
+          }
+        : null,
+    }));
+
+    return { orders: ordersWithCustomer, total, page: params.page || 1, limit, totalPages: Math.ceil(total / limit) };
   }
 
   static async getOrder(orderId: string, storeId: string) {
-    return prisma.marketplaceOrder.findFirst({
+    const order = await prisma.marketplaceOrder.findFirst({
       where: { id: orderId, storeId },
       include: { orderItems: true, statusHistory: { orderBy: { createdAt: 'asc' } } },
     });
+
+    if (!order) return null;
+
+    const { data: users } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, phone')
+      .eq('id', order.customerId)
+      .limit(1);
+
+    const user = users?.[0];
+    return {
+      ...order,
+      customer: user
+        ? {
+            firstName: user.first_name,
+            lastName: user.last_name,
+            fullName: [user.first_name, user.last_name].filter(Boolean).join(' ') || null,
+            phone: user.phone,
+          }
+        : null,
+    };
   }
 
   static async acceptOrder(orderId: string, storeId: string, vendorId: string) {
