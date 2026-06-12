@@ -167,6 +167,7 @@ model MarketplaceOrder {
   subtotal             Decimal  @db.Decimal(10, 2)
   deliveryFee          Decimal  @default(0.00) @map("delivery_fee") @db.Decimal(10, 2)
   serviceFee           Decimal  @default(0.00) @map("service_fee") @db.Decimal(10, 2)
+  roundingFee          Decimal  @default(0.00) @map("rounding_fee") @db.Decimal(10, 2)
   totalAmount          Decimal  @map("total_amount") @db.Decimal(10, 2)
   deliveryAddress      Json     @map("delivery_address")
   specialInstructions  String?  @map("special_instructions")

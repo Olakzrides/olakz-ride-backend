@@ -128,7 +128,7 @@ export class DeliveriesController {
           packagePhotoUrl: result.delivery.package_photo_url,
           createdAt: result.delivery.created_at,
         },
-        fareBreakdown: result.fareBreakdown,
+        fareBreakdown: result.fare_breakdown,
         message: deliveryType === 'scheduled' 
           ? 'Delivery scheduled successfully' 
           : 'Delivery order created successfully. Searching for courier...',
@@ -1476,6 +1476,7 @@ export class DeliveriesController {
       const parsedDropoffLocation = typeof dropoffLocation === 'string' ? JSON.parse(dropoffLocation) : dropoffLocation;
 
       const { DeliveryFareService } = await import('../services/delivery-fare.service');
+
       const fareBreakdown = await DeliveryFareService.estimateFare(
         vehicleTypeId,
         regionId || '00000000-0000-0000-0000-000000000001', // Default Lagos
@@ -1487,7 +1488,17 @@ export class DeliveriesController {
       );
 
       return ResponseUtil.success(res, {
-        fareBreakdown,
+        fare_breakdown: {
+          subtotal:      0,
+          delivery_fee:  fareBreakdown.deliveryFee,
+          service_fee:   fareBreakdown.serviceFee,
+          total_fees:    fareBreakdown.deliveryFee + fareBreakdown.serviceFee,
+          total_amount:  fareBreakdown.totalAmount,
+          distance_km:   fareBreakdown.distanceKm,
+          distance_text: fareBreakdown.distanceText,
+          city_tier:     fareBreakdown.cityTier,
+          currency_code: fareBreakdown.currencyCode,
+        },
         message: 'Fare estimated successfully',
       });
     } catch (error: any) {
