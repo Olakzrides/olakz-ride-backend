@@ -1,6 +1,7 @@
 import { prisma } from '../config/database';
 import { supabase } from '../config/database';
 import { OrderService } from './order.service';
+import { WalletService } from './wallet.service';
 import { emitToCustomer, emitToVendor } from './socket.service';
 import logger from '../utils/logger';
 
@@ -70,17 +71,63 @@ export class RiderDeliveryService {
 
     await prisma.marketplaceOrder.update({
       where: { id: orderId },
-      data: { status: 'delivered', deliveredAt: new Date() },
+      data: { status: 'delivered', deliveredAt: new Date(), paymentStatus: 'settled' },
     });
 
     await OrderService.recordStatusChange(orderId, 'delivered', 'arrived', driverId, 'rider');
 
-    // Record rider earnings
-    const deliveryFee = parseFloat(order.deliveryFee.toString());
+    const subtotal     = parseFloat(order.subtotal.toString());
+    const deliveryFee  = parseFloat(order.deliveryFee.toString());
+
+    // ── Rider user_id lookup (driverId is drivers.id, not users.id) ──
+    const { data: driverRow } = await supabase
+      .from('drivers')
+      .select('user_id')
+      .eq('id', driverId)
+      .single();
+
+    const riderUserId = driverRow?.user_id ?? null;
+
+    // ── Credit vendor (subtotal) ──
+    if (order.store?.ownerId) {
+      try {
+        await WalletService.credit({
+          userId: order.store.ownerId,
+          amount: subtotal,
+          reference: `mkt_vendor_${orderId}_${Date.now()}`,
+          description: `Marketplace order earnings — order ${orderId}`,
+        });
+        logger.info('Vendor credited for marketplace order', { orderId, vendorUserId: order.store.ownerId, amount: subtotal });
+      } catch (err: any) {
+        logger.error('Failed to credit vendor wallet (non-fatal)', { orderId, error: err.message });
+      }
+    }
+
+    // ── Credit rider (delivery fee) ──
+    if (riderUserId && deliveryFee > 0) {
+      try {
+        await WalletService.credit({
+          userId: riderUserId,
+          amount: deliveryFee,
+          reference: `mkt_rider_${orderId}_${Date.now()}`,
+          description: `Marketplace delivery fee — order ${orderId}`,
+        });
+        logger.info('Rider credited for marketplace delivery', { orderId, riderUserId, amount: deliveryFee });
+      } catch (err: any) {
+        logger.error('Failed to credit rider wallet (non-fatal)', { orderId, error: err.message });
+      }
+    }
+
+    // ── Record rider earnings (idempotent) ──
     const existing = await prisma.marketplaceRiderEarning.findFirst({ where: { orderId } });
     if (!existing) {
       await prisma.marketplaceRiderEarning.create({
-        data: { riderId: driverId, orderId, deliveryFee, totalEarned: deliveryFee, status: 'pending' },
+        data: { riderId: driverId, orderId, deliveryFee, totalEarned: deliveryFee, status: 'paid' },
+      });
+    } else {
+      await prisma.marketplaceRiderEarning.update({
+        where: { id: existing.id },
+        data: { status: 'paid' },
       });
     }
 
@@ -94,7 +141,7 @@ export class RiderDeliveryService {
       emitToVendor(order.store.ownerId, 'marketplace:order:delivered', { order_id: orderId });
     }
 
-    logger.info('Marketplace order delivered', { orderId, driverId });
+    logger.info('Marketplace order delivered and payouts processed', { orderId, driverId, subtotal, deliveryFee });
   }
 
   static async updateLocation(driverId: string, orderId: string, lat: number, lng: number, heading?: number, speed?: number): Promise<void> {
