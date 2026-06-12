@@ -58,24 +58,73 @@ export class AdminDriverService {
       .select(`
         *,
         vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(id, name, display_name),
-        documents:driver_documents(id, document_type, document_url, file_name, status, created_at, file_size, mime_type, verified_by, verified_at, notes),
-        vehicles:driver_vehicles(id, plate_number, manufacturer, model, year, color, is_active)
+        documents:driver_documents(id, document_type, document_url, file_path, file_name, status, created_at, file_size, mime_type, verified_by, verified_at, notes),
+        vehicles:driver_vehicles(id, plate_number, manufacturer, model, year, color, is_active, seating_capacity)
       `)
       .eq('id', driverId)
       .single();
 
     if (error || !driver) return null;
 
+    const row = driver as Record<string, unknown>;
+
+    // Fetch the most recent completed session for this driver's user_id
     const { data: session } = await supabase
       .from('driver_registration_sessions')
       .select('id, personal_info_data, vehicle_details_data, submitted_at, vehicle_type, service_types')
-      .eq('user_id', (driver as Record<string, unknown>).user_id)
+      .eq('user_id', row.user_id as string)
       .eq('status', 'completed')
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
 
-    return { ...driver, session: session || null };
+    // ── Flatten personal_info_data so frontend doesn't dig into nested JSON ──
+    const pi   = (session?.personal_info_data   ?? {}) as Record<string, unknown>;
+    const addr = (pi.address ?? {})                    as Record<string, unknown>;
+    const vd   = (session?.vehicle_details_data ?? {}) as Record<string, unknown>;
+
+    const personalInfo = {
+      phone:               pi.phone               ?? null,
+      gender:              pi.gender              ?? null,
+      date_of_birth:       pi.date_of_birth       ?? null,
+      nationality:         pi.nationality         ?? null,
+      years_of_experience: pi.years_of_experience ?? null,
+      address: {
+        address_line: addr.street       ?? addr.address_line ?? null,
+        city:         addr.city         ?? null,
+        state:        addr.state        ?? null,
+        country:      addr.country      ?? null,
+        apartment:    addr.apartment    ?? null,
+        postal_code:  addr.postal_code  ?? null,
+        landmark:     addr.landmark     ?? null,
+      },
+    };
+
+    // ── Vehicle details from session (more complete than driver_vehicles row) ─
+    const vehicleDetails = session ? {
+      manufacturer:     vd.manufacturer     ?? null,
+      model:            vd.model            ?? null,
+      year:             vd.year             ?? null,
+      color:            vd.color            ?? null,
+      plate_number:     vd.plate_number     ?? null,
+      seating_capacity: vd.seating_capacity ?? null,
+      vin:              vd.vin              ?? null,
+    } : null;
+
+    // ── Also enrich vehicles array with session plate_number if missing ───────
+    const vehicles = ((row.vehicles ?? []) as Array<Record<string, unknown>>).map(v => ({
+      ...v,
+      plate_number:     v.plate_number     ?? vd.plate_number     ?? null,
+      seating_capacity: v.seating_capacity ?? vd.seating_capacity ?? null,
+    }));
+
+    return {
+      ...row,
+      vehicles,
+      personal_info:   personalInfo,
+      vehicle_details: vehicleDetails,
+      session:         session || null,
+    };
   }
 
   async reviewDriverApplication(reviewData: AdminDriverReview): Promise<boolean> {
@@ -301,40 +350,71 @@ export class AdminDriverService {
     const user = userMap.get(row.user_id as string) ?? {} as Record<string, unknown>;
     const walletBalance = await this.getWalletBalance(row.user_id as string);
 
+    // Pull personal_info_data from the most recent completed registration session
+    const { data: session } = await supabase
+      .from('driver_registration_sessions')
+      .select('personal_info_data, vehicle_details_data, vehicle_type, service_types')
+      .eq('user_id', row.user_id as string)
+      .eq('status', 'completed')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    const pi   = (session?.personal_info_data   ?? {}) as Record<string, unknown>;
+    const addr = (pi.address ?? {}) as Record<string, unknown>;
+    const vd   = (session?.vehicle_details_data ?? {}) as Record<string, unknown>;
+
     return {
       id: row.id,
       user_id: row.user_id,
       first_name: user.first_name ?? null,
-      last_name: user.last_name ?? null,
-      email: user.email ?? null,
-      phone: user.phone ?? null,
+      last_name:  user.last_name  ?? null,
+      email:      user.email      ?? null,
+      phone:      pi.phone        ?? user.phone ?? null,
       avatar_url: user.avatar_url ?? null,
-      account_status: user.status ?? null,
-      email_verified: user.email_verified ?? null,
-      license_number: row.license_number,
-      identification_type: row.identification_type,
+      account_status:  user.status         ?? null,
+      email_verified:  user.email_verified ?? null,
+      // ── Personal Info (from registration session) ─────────────────────────
+      gender:           pi.gender        ?? null,
+      date_of_birth:    pi.date_of_birth ?? null,
+      nationality:      pi.nationality   ?? null,
+      years_of_experience: pi.years_of_experience ?? null,
+      address: {
+        address_line: addr.street      ?? addr.address_line ?? null,
+        city:         addr.city        ?? null,
+        state:        addr.state       ?? null,
+        country:      addr.country     ?? null,
+        apartment:    addr.apartment   ?? null,
+        postal_code:  addr.postal_code ?? null,
+        landmark:     addr.landmark    ?? null,
+      },
+      // ── Driver record fields ───────────────────────────────────────────────
+      license_number:        row.license_number,
+      identification_type:   row.identification_type,
       identification_number: row.identification_number,
-      driver_status: row.status,
-      rating: row.rating,
-      total_rides: row.total_rides,
+      driver_status:  row.status,
+      rating:         row.rating,
+      total_rides:    row.total_rides,
       total_earnings: row.total_earnings,
-      approved_by: row.approved_by,
-      approved_at: row.approved_at,
+      approved_by:     row.approved_by,
+      approved_at:     row.approved_at,
       rejection_reason: row.rejection_reason,
-      vehicle_type: row.vehicle_type,
-      vehicles: row.vehicles,
-      documents: row.documents,
+      vehicle_type:  row.vehicle_type,
+      vehicles:      row.vehicles,
+      documents:     row.documents,
       wallet_balance: walletBalance,
+      // ── Vehicle details (from registration session) ───────────────────────
+      vehicle_details: session ? {
+        manufacturer:     vd.manufacturer     ?? null,
+        model:            vd.model            ?? null,
+        year:             vd.year             ?? null,
+        color:            vd.color            ?? null,
+        seating_capacity: vd.seating_capacity ?? null,
+        vin:              vd.vin              ?? null,
+      } : null,
+      service_types: session?.service_types ?? row.service_types ?? [],
       created_at: row.created_at,
       updated_at: row.updated_at,
-      // Profile fields not yet in DB
-      gender: null,
-      date_of_birth: null,
-      nationality: null,
-      address_line: null,
-      city: null,
-      state: null,
-      country: null,
     };
   }
 
@@ -505,13 +585,257 @@ export class AdminDriverService {
       .eq('user_id', userId)
       .eq('status', 'completed');
 
+    // Credit types — must match payment-service WalletService.getBalance exactly
+    const CREDIT_TYPES = new Set(['credit', 'topup', 'refund', 'tip_received', 'earning', 'tip_payment']);
+    // Debit types
+    const DEBIT_TYPES  = new Set(['debit', 'hold', 'withdrawal', 'payment']);
+
     let balance = 0;
     for (const tx of txns ?? []) {
-      const r = tx as Record<string, unknown>;
-      const amt = Number(r.amount ?? 0);
-      if (r.transaction_type === 'credit' || r.transaction_type === 'topup') balance += amt;
-      else if (r.transaction_type === 'debit' || r.transaction_type === 'payment') balance -= amt;
+      const r   = tx as Record<string, unknown>;
+      const amt = parseFloat(String(r.amount ?? 0));
+      const type = String(r.transaction_type ?? '');
+      if (CREDIT_TYPES.has(type))      balance += amt;
+      else if (DEBIT_TYPES.has(type))  balance -= amt;
     }
     return Math.max(0, balance);
+  }
+
+  /**
+   * GET /api/admin/drivers/:driverId/view-wallet-balance
+   * Returns only the wallet balance for a specific driver.
+   */
+  async getDriverWalletBalance(driverId: string) {
+    const { data: driver, error: driverError } = await supabase
+      .from('drivers')
+      .select('id, user_id, license_number, status, rating, total_rides, pending_remittance_amount, remittance_blocked')
+      .eq('id', driverId)
+      .single();
+
+    if (driverError || !driver) return null;
+
+    const row = driver as Record<string, unknown>;
+    const userId = row.user_id as string;
+
+    const userMap = await this.fetchUsers([userId]);
+    const user = userMap.get(userId) ?? {} as Record<string, unknown>;
+    const walletBalance = await this.getWalletBalance(userId);
+
+    return {
+      driver_id: row.id,
+      user_id: userId,
+      first_name: user.first_name ?? null,
+      last_name: user.last_name ?? null,
+      email: user.email ?? null,
+      phone: user.phone ?? null,
+      license_number: row.license_number,
+      driver_status: row.status,
+      rating: row.rating,
+      total_rides: row.total_rides,
+      wallet_balance: walletBalance,
+      currency_code: 'NGN',
+      formatted_balance: `₦${walletBalance.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      // Remittance info
+      pending_remittance_amount: Number(row.pending_remittance_amount ?? 0),
+      remittance_blocked: row.remittance_blocked ?? false,
+    };
+  }
+
+  /**
+   * GET /api/admin/drivers/registrations
+   * Returns driver registration sessions that are NOT yet completed.
+   * Only shows: initiated | in_progress | expired | cancelled
+   * Completed sessions (drivers who finished registration) are excluded.
+   * Useful for admin to monitor who started but hasn't finished.
+   */
+  async getRegistrationProgress(filters: {
+    status?: string;  // initiated | in_progress | expired | cancelled (NOT completed)
+    search?: string;  // user name or email
+    page?: number;
+    limit?: number;
+  } = {}) {
+    const { status, search, page = 1, limit = 20 } = filters;
+    const offset = (page - 1) * limit;
+
+    // Statuses visible to admin — completed is explicitly excluded
+    const INCOMPLETE_STATUSES = ['initiated', 'in_progress', 'expired', 'cancelled'];
+
+    let query = supabase
+      .from('driver_registration_sessions')
+      .select(
+        `id, user_id, vehicle_type, service_types, status, progress_percentage,
+         current_step, expires_at, created_at, updated_at,
+         personal_info_completed_at, vehicle_details_completed_at,
+         documents_completed_at, submitted_at`,
+        { count: 'exact' }
+      )
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    // If a specific non-completed status is requested, filter to that one only
+    if (status && status !== 'all') {
+      const requested = status.toLowerCase();
+      // Never expose completed sessions through this endpoint
+      if (requested === 'completed') {
+        // Return empty — completed registrations are handled in the main drivers list
+        return {
+          sessions: [],
+          pagination: { page, limit, total: 0, pages: 0 },
+          note: 'Completed registrations are not shown here. Use GET /drivers to view fully registered drivers.',
+        };
+      }
+      query = query.eq('status', requested);
+    } else {
+      // Default: only incomplete statuses
+      query = query.in('status', INCOMPLETE_STATUSES);
+    }
+
+    const { data: sessions, count, error } = await query;
+
+    if (error) {
+      logger.warn('getRegistrationProgress error', { error: error.message });
+      throw new Error(`Failed to fetch registration sessions: ${error.message}`);
+    }
+
+    const rows = sessions ?? [];
+
+    // Enrich with user details
+    const userIds = [...new Set(rows.map(r => r.user_id).filter(Boolean))];
+    const userMap = await this.fetchUsers(userIds);
+
+    // Step labels for frontend display
+    const stepLabels: Record<string, string> = {
+      personal_info:   'Personal Info',
+      vehicle_details: 'Vehicle Details',
+      documents:       'Documents Upload',
+      review:          'Under Review',
+      completed:       'Completed',
+    };
+
+    const formatted = rows.map((s, idx) => {
+      const user = userMap.get(s.user_id) ?? {} as Record<string, unknown>;
+
+      // Build step completion timeline
+      const steps = [
+        { key: 'personal_info',   label: 'Personal Info',     completedAt: s.personal_info_completed_at ?? null },
+        { key: 'vehicle_details', label: 'Vehicle Details',   completedAt: s.vehicle_details_completed_at ?? null },
+        { key: 'documents',       label: 'Documents Upload',  completedAt: s.documents_completed_at ?? null },
+        { key: 'review',          label: 'Submitted for Review', completedAt: s.submitted_at ?? null },
+      ];
+
+      return {
+        sn: offset + idx + 1,
+        id: s.id,
+        user: {
+          id:        s.user_id,
+          name:      `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || 'Unknown',
+          email:     user.email ?? null,
+          phone:     user.phone ?? null,
+          avatarUrl: user.avatar_url ?? null,
+        },
+        vehicleType:  s.vehicle_type,
+        serviceTypes: Array.isArray(s.service_types) ? s.service_types : [],
+        status:       s.status,
+        progressPercentage: s.progress_percentage,
+        currentStep:  s.current_step,
+        currentStepLabel: stepLabels[s.current_step] ?? s.current_step,
+        steps,
+        submittedAt: s.submitted_at ?? null,
+        expiresAt:   s.expires_at,
+        createdAt:   s.created_at,
+        updatedAt:   s.updated_at,
+        isExpired:   new Date(s.expires_at) < new Date() && s.status !== 'completed',
+      };
+    });
+
+    // Filter by search after enrichment (name/email search)
+    let result = formatted;
+    if (search) {
+      const sq = search.toLowerCase();
+      result = formatted.filter(
+        r =>
+          r.user.name.toLowerCase().includes(sq) ||
+          (r.user.email as string ?? '').toLowerCase().includes(sq)
+      );
+    }
+
+    return {
+      sessions: result,
+      pagination: {
+        page,
+        limit,
+        total: search ? result.length : (count ?? 0),
+        pages: Math.ceil((search ? result.length : (count ?? 0)) / limit),
+      },
+    };
+  }
+
+  /**
+   * GET /api/admin/drivers/registrations/:sessionId
+   * Full detail of a single incomplete registration session including step data.
+   * Returns null if the session is completed (admin should use /drivers/:id instead).
+   */
+  async getRegistrationSessionById(sessionId: string) {
+    const { data: session, error } = await supabase
+      .from('driver_registration_sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .single();
+
+    if (error || !session) return null;
+
+    // Completed sessions are not surfaced here — they belong in the drivers list
+    if (session.status === 'completed') {
+      return { __completed: true } as { __completed: boolean };
+    }
+
+    const userMap = await this.fetchUsers([session.user_id]);
+    const user = userMap.get(session.user_id) ?? {} as Record<string, unknown>;
+
+    // Fetch associated documents
+    const { data: documents } = await supabase
+      .from('driver_documents')
+      .select('id, document_type, document_url, file_name, status, created_at')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true });
+
+    return {
+      id:           session.id,
+      user: {
+        id:    session.user_id,
+        name:  `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || 'Unknown',
+        email: user.email ?? null,
+        phone: user.phone ?? null,
+      },
+      vehicleType:  session.vehicle_type,
+      serviceTypes: session.service_types ?? [],
+      status:       session.status,
+      progressPercentage: session.progress_percentage,
+      currentStep:  session.current_step,
+      steps: {
+        personalInfo: {
+          completed:   !!session.personal_info_completed_at,
+          completedAt: session.personal_info_completed_at ?? null,
+          data:        session.personal_info_data ?? null,
+        },
+        vehicleDetails: {
+          completed:   !!session.vehicle_details_completed_at,
+          completedAt: session.vehicle_details_completed_at ?? null,
+          data:        session.vehicle_details_data ?? null,
+        },
+        documents: {
+          completed:   !!session.documents_completed_at,
+          completedAt: session.documents_completed_at ?? null,
+          files:       documents ?? [],
+        },
+        submitted:     !!session.submitted_at,
+        submittedAt:   session.submitted_at ?? null,
+      },
+      expiresAt:  session.expires_at,
+      createdAt:  session.created_at,
+      updatedAt:  session.updated_at,
+      isExpired:  new Date(session.expires_at) < new Date() && session.status !== 'completed',
+      metadata:   session.metadata ?? {},
+    };
   }
 }

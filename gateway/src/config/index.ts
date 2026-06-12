@@ -99,6 +99,7 @@ const config: Config = {
     allowedOrigins: process.env.ALLOWED_ORIGINS?.split(',') || [
       'http://localhost:3000',
       'http://localhost:19006',
+        'http://localhost:6001',  // ← add this
     ],
   },
 

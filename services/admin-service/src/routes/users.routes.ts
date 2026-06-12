@@ -14,6 +14,7 @@ router.get('/stats', auditMiddleware('get_platform_stats'), ctrl.getPlatformStat
 // User management
 router.get('/', auditMiddleware('get_users'), ctrl.getUsers);
 router.get('/:userId', auditMiddleware('get_user_by_id'), ctrl.getUserById);
+router.get('/:userId/view-wallet-balance', auditMiddleware('get_user_wallet_balance'), ctrl.getUserWalletBalance);
 router.get('/:userId/view-order-history', auditMiddleware('get_user_orders'), ctrl.getUserOrders);
 router.put('/:userId/roles', auditMiddleware('update_user_roles'), ctrl.updateRoles);
 router.patch('/:userId/status', auditMiddleware('set_user_status'), ctrl.setUserStatus);

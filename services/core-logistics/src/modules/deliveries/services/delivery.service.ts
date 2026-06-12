@@ -67,13 +67,13 @@ export class DeliveryService {
 
       // Step 2: Calculate fare
       const fareBreakdown = await DeliveryFareService.calculateFare({
-        vehicleTypeId: params.vehicleTypeId,
-        regionId: regionId,
-        pickupLatitude: params.pickupLatitude,
-        pickupLongitude: params.pickupLongitude,
-        dropoffLatitude: params.dropoffLatitude,
+        vehicleTypeId:    params.vehicleTypeId,
+        regionId:         regionId,
+        pickupLatitude:   params.pickupLatitude,
+        pickupLongitude:  params.pickupLongitude,
+        dropoffLatitude:  params.dropoffLatitude,
         dropoffLongitude: params.dropoffLongitude,
-        deliveryType: params.deliveryType,
+        deliveryType:     params.deliveryType,
       });
 
       // Step 3: Create delivery record
@@ -96,9 +96,9 @@ export class DeliveryService {
           scheduled_pickup_at: params.scheduledPickupAt,
           pickup_code: pickupCode,
           delivery_code: deliveryCode,
-          estimated_fare: fareBreakdown.finalFare,
+          estimated_fare: fareBreakdown.totalAmount,
           currency_code: fareBreakdown.currencyCode,
-          distance_km: fareBreakdown.distance,
+          distance_km: fareBreakdown.distanceKm,
           payment_method: params.paymentMethod,
           payment_status: 'pending',
           region_id: regionId,
@@ -119,7 +119,7 @@ export class DeliveryService {
         deliveryId: delivery.id,
         customerId: params.customerId,
         customerEmail: params.customerEmail,
-        amount: fareBreakdown.finalFare,
+        amount: fareBreakdown.totalAmount,
         currencyCode: fareBreakdown.currencyCode,
         paymentMethod: params.paymentMethod,
         cardId: params.cardId,
@@ -130,7 +130,17 @@ export class DeliveryService {
       if (paymentResult.requiresAuthorization) {
         return {
           delivery,
-          fareBreakdown,
+          fare_breakdown: {
+            subtotal:      0,
+            delivery_fee:  fareBreakdown.deliveryFee,
+            service_fee:   fareBreakdown.serviceFee,
+            total_fees:    fareBreakdown.serviceFee + fareBreakdown.deliveryFee,
+            total_amount:  fareBreakdown.totalAmount,
+            distance_km:   fareBreakdown.distanceKm,
+            distance_text: fareBreakdown.distanceText,
+            city_tier:     fareBreakdown.cityTier,
+            currency_code: fareBreakdown.currencyCode,
+          },
           paymentResult: {
             requiresAuthorization: true,
             authorization: paymentResult.authorization,
@@ -163,7 +173,7 @@ export class DeliveryService {
         orderNumber: delivery.order_number,
         pickupAddress: params.pickupAddress,
         dropoffAddress: params.dropoffAddress,
-        fare: fareBreakdown.finalFare,
+        fare: fareBreakdown.totalAmount,
         currencyCode: fareBreakdown.currencyCode,
         pickupCode,
         deliveryCode,
@@ -173,19 +183,7 @@ export class DeliveryService {
       // Step 7: Trigger courier matching for instant deliveries
       // For scheduled deliveries, matching will be triggered closer to scheduled time
       if (params.deliveryType === 'instant') {
-        // Trigger matching asynchronously without waiting
-        this.triggerCourierMatching(delivery.id, {
-          pickupLatitude: params.pickupLatitude,
-          pickupLongitude: params.pickupLongitude,
-          vehicleTypeId: params.vehicleTypeId,
-          regionId: regionId,
-          maxDistance: 15, // 15km radius
-          maxCouriers: 5,
-        }).catch(error => {
-          logger.error('Error triggering courier matching:', error);
-        });
-
-        // Update status to searching
+        // Update status to searching FIRST so couriers can see it via the available endpoint
         await supabase
           .from('deliveries')
           .update({
@@ -193,13 +191,35 @@ export class DeliveryService {
             searching_at: new Date().toISOString(),
           })
           .eq('id', delivery.id);
+
+        // Trigger matching asynchronously without waiting
+        this.triggerCourierMatching(delivery.id, {
+          pickupLatitude: params.pickupLatitude,
+          pickupLongitude: params.pickupLongitude,
+          vehicleTypeId: params.vehicleTypeId,
+          regionId: regionId,
+          maxDistance: 15, // 15km radius
+          maxCouriers: 10, // Notify up to 10 couriers per batch
+        }).catch(error => {
+          logger.error('Error triggering courier matching:', error);
+        });
       }
 
       logger.info(`Delivery created: ${delivery.id} (${delivery.order_number})`);
 
       return {
         delivery,
-        fareBreakdown,
+        fare_breakdown: {
+          subtotal:      0,
+          delivery_fee:  fareBreakdown.deliveryFee,
+          service_fee:   fareBreakdown.serviceFee,
+          total_fees:    fareBreakdown.serviceFee + fareBreakdown.deliveryFee,
+          total_amount:  fareBreakdown.totalAmount,
+          distance_km:   fareBreakdown.distanceKm,
+          distance_text: fareBreakdown.distanceText,
+          city_tier:     fareBreakdown.cityTier,
+          currency_code: fareBreakdown.currencyCode,
+        },
         paymentResult: {
           success: true,
           message: 'Payment processed successfully',
@@ -250,28 +270,14 @@ export class DeliveryService {
       if (result.success) {
         logger.info(`Successfully notified ${result.couriersNotified} couriers for delivery ${deliveryId}`);
       } else {
-        logger.warn(`No couriers found for delivery ${deliveryId}`);
-        
-        // Update delivery status to no_couriers_available
-        await supabase
-          .from('deliveries')
-          .update({
-            status: 'no_couriers_available',
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', deliveryId);
+        // No couriers found via matching right now, but delivery stays 'searching'
+        // so couriers can still discover and accept it via GET /courier/available
+        logger.warn(`No couriers found via matching for delivery ${deliveryId} — delivery remains in 'searching' status for manual discovery`);
       }
     } catch (error) {
       logger.error(`Error in triggerCourierMatching:`, error);
-      
-      // Update delivery status to indicate matching failed
-      await supabase
-        .from('deliveries')
-        .update({
-          status: 'matching_failed',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', deliveryId);
+      // Keep delivery in 'searching' status — couriers can still find it via the available endpoint
+      logger.warn(`Courier matching threw an error for delivery ${deliveryId} — delivery remains 'searching'`);
     }
   }
 

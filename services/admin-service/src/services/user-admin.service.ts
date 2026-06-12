@@ -51,15 +51,16 @@ export class UserAdminService {
       .eq('user_id', userId)
       .eq('status', 'completed');
 
+    const CREDIT_TYPES = new Set(['credit', 'topup', 'refund', 'tip_received', 'earning', 'tip_payment']);
+    const DEBIT_TYPES  = new Set(['debit', 'hold', 'withdrawal', 'payment']);
+
     let walletBalance = 0;
     for (const tx of txns ?? []) {
-      const row = tx as Record<string, unknown>;
-      const amt = Number(row.amount ?? 0);
-      if (row.transaction_type === 'credit' || row.transaction_type === 'topup') {
-        walletBalance += amt;
-      } else if (row.transaction_type === 'debit' || row.transaction_type === 'payment') {
-        walletBalance -= amt;
-      }
+      const row  = tx as Record<string, unknown>;
+      const amt  = parseFloat(String(row.amount ?? 0));
+      const type = String(row.transaction_type ?? '');
+      if (CREDIT_TYPES.has(type))     walletBalance += amt;
+      else if (DEBIT_TYPES.has(type)) walletBalance -= amt;
     }
 
     // ── 3. Build response (no orders — use GET /:userId/orders for that) ──────
@@ -91,6 +92,53 @@ export class UserAdminService {
 
       // Wallet
       wallet_balance: Math.max(0, walletBalance),
+    };
+  }
+
+  /**
+   * GET /api/admin/users/:userId/view-wallet-balance
+   * Returns only the wallet balance for a specific user.
+   */
+  static async getUserWalletBalance(userId: string) {
+    // ── 1. Check if user exists ───────────────────────────────────────────────
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id, email, first_name, last_name, roles, active_role')
+      .eq('id', userId)
+      .single();
+
+    if (userError || !user) return null;
+
+    // ── 2. Calculate wallet balance ───────────────────────────────────────────
+    const { data: txns } = await supabase
+      .from('wallet_transactions')
+      .select('transaction_type, amount, status')
+      .eq('user_id', userId)
+      .eq('status', 'completed');
+
+    const CREDIT_TYPES = new Set(['credit', 'topup', 'refund', 'tip_received', 'earning', 'tip_payment']);
+    const DEBIT_TYPES  = new Set(['debit', 'hold', 'withdrawal', 'payment']);
+
+    let walletBalance = 0;
+    for (const tx of txns ?? []) {
+      const row  = tx as Record<string, unknown>;
+      const amt  = parseFloat(String(row.amount ?? 0));
+      const type = String(row.transaction_type ?? '');
+      if (CREDIT_TYPES.has(type))     walletBalance += amt;
+      else if (DEBIT_TYPES.has(type)) walletBalance -= amt;
+    }
+
+    // ── 3. Return wallet balance only ─────────────────────────────────────────
+    return {
+      user_id: user.id,
+      email: user.email,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      roles: user.roles,
+      active_role: user.active_role,
+      wallet_balance: Math.max(0, walletBalance),
+      currency_code: 'NGN',
+      formatted_balance: `₦${Math.max(0, walletBalance).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     };
   }
 
@@ -157,7 +205,7 @@ export class UserAdminService {
     }
     if (!serviceKey || serviceKey === 'olakz_delivery') {
       fetchers.push(buildFetcher(
-        supabase.from('deliveries').select('id, status, created_at').eq('sender_id', userId).order('created_at', { ascending: false }),
+        supabase.from('deliveries').select('id, status, created_at').eq('customer_id', userId).order('created_at', { ascending: false }),
         'Olakz Delivery'
       ));
     }
@@ -335,21 +383,34 @@ export class UserAdminService {
       { count: activeUsers },
       { count: totalDrivers },
       { count: approvedDrivers },
+      { count: pendingDrivers },
       { count: totalVendors },
       { count: approvedVendors },
+      { count: pendingVendors },
+      { count: totalFleetOwners },
     ] = await Promise.all([
       supabase.from('users').select('*', { count: 'exact', head: true }),
       supabase.from('users').select('*', { count: 'exact', head: true }).eq('status', 'active'),
       supabase.from('drivers').select('*', { count: 'exact', head: true }),
       supabase.from('drivers').select('*', { count: 'exact', head: true }).eq('status', 'approved'),
+      supabase.from('drivers').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('vendors').select('*', { count: 'exact', head: true }),
       supabase.from('vendors').select('*', { count: 'exact', head: true }).eq('verification_status', 'approved'),
+      supabase.from('vendors').select('*', { count: 'exact', head: true }).eq('verification_status', 'pending'),
+      supabase.from('users').select('*', { count: 'exact', head: true }).contains('roles', ['fleet_owner']),
     ]);
 
     return {
-      users: { total: totalUsers || 0, active: activeUsers || 0 },
-      drivers: { total: totalDrivers || 0, approved: approvedDrivers || 0 },
-      vendors: { total: totalVendors || 0, approved: approvedVendors || 0 },
+      users:    { total: totalUsers    || 0, active: activeUsers || 0 },
+      drivers:  { total: totalDrivers  || 0, approved: approvedDrivers || 0, pending: pendingDrivers  || 0 },
+      vendors:  { total: totalVendors  || 0, approved: approvedVendors  || 0, pending: pendingVendors  || 0 },
+      fleetOwners: { total: totalFleetOwners || 0 },
+      // Consolidated pending approvals count — the key number for the admin dashboard badge
+      pendingApprovals: {
+        drivers:     pendingDrivers  || 0,
+        vendors:     pendingVendors  || 0,
+        total:       (pendingDrivers || 0) + (pendingVendors || 0),
+      },
     };
   }
 }

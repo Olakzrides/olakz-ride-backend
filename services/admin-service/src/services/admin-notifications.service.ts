@@ -310,19 +310,19 @@ async function fetchMarketplaceOrders(limit: number): Promise<AdminNotification[
 async function fetchDeliveries(limit: number): Promise<AdminNotification[]> {
   const { data, error } = await supabase
     .from('deliveries')
-    .select('id, sender_id, status, created_at')
+    .select('id, customer_id, status, created_at')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) { logger.warn('fetchDeliveries', { error: error.message }); return []; }
   if (!data?.length) return [];
 
   const userMap = await getUserMap(
-    data.map((d) => ((d as Record<string, unknown>).sender_id ?? (d as Record<string, unknown>).customer_id) as string).filter(Boolean)
+    data.map((d) => (d as Record<string, unknown>).customer_id as string).filter(Boolean)
   );
 
   return data.map((d) => {
     const r = d as Record<string, unknown>;
-    const userId = (r.sender_id ?? r.customer_id) as string;
+    const userId = r.customer_id as string;
     const user = userMap.get(userId) ?? {} as Record<string, unknown>;
     const name = fullName(user) || 'Unknown User';
     return {
