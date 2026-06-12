@@ -17,5 +17,6 @@ router.put('/profile', validateRequest(updateProfileValidator), userController.u
 router.put('/role/:userId', validateRequest(updateRoleValidator), userController.updateRole); // Admin only
 router.put('/switch-role', userController.switchActiveRole); // Switch between assigned roles
 router.patch('/password', validateRequest(changePasswordValidator), userController.changePassword);
+router.delete('/delete-account', userController.deleteAccount); // Soft-delete own account
 
 export default router;

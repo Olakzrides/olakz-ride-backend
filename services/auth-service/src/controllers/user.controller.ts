@@ -89,6 +89,24 @@ class UserController {
       next(error);
     }
   }
+
+  /**
+   * DELETE /api/users/account
+   * Soft-delete the authenticated user's own account.
+   * No rows are removed — status is set to 'account_deleted' on users,
+   * drivers, and vendors tables. Email/phone remain so the user can
+   * re-register later with the same credentials.
+   */
+  async deleteAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as AuthRequest;
+      const { reason } = req.body; // optional — string or undefined
+      await userService.deleteAccount(authReq.user!.userId, reason);
+      ResponseUtil.success(res, null, 'Account deleted successfully.');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new UserController();
