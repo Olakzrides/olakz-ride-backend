@@ -144,7 +144,7 @@ export class OrderService {
       include: { orderItems: true },
     });
 
-    await this.recordStatusChange(order.id, 'pending', null, customerId, 'customer');
+    await OrderService.recordStatusChange(order.id, 'pending', null, customerId, 'customer');
 
     // Clear customer cart for this store
     const cart = await prisma.marketplaceCart.findFirst({ where: { userId: customerId, storeId } });
@@ -172,7 +172,7 @@ export class OrderService {
             cancelledAt: new Date(),
           },
         });
-        await this.recordStatusChange(order.id, 'cancelled', 'pending', 'system', 'system', 'Order expired — vendor did not respond in time');
+        await OrderService.recordStatusChange(order.id, 'cancelled', 'pending', 'system', 'system', 'Order expired — vendor did not respond in time');
 
         if (current.paymentStatus === 'paid' && current.paymentMethod === 'wallet') {
           await WalletService.credit({
@@ -252,7 +252,7 @@ export class OrderService {
       where: { id: orderId },
       data: { status: 'cancelled', cancellationReason: reason, cancelledBy: 'customer', cancelledAt: new Date() },
     });
-    await this.recordStatusChange(orderId, 'cancelled', order.status, customerId, 'customer', reason);
+    await OrderService.recordStatusChange(orderId, 'cancelled', order.status, customerId, 'customer', reason);
 
     if (order.paymentStatus === 'paid' && order.paymentMethod === 'wallet') {
       await WalletService.credit({
