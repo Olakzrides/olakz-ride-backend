@@ -169,7 +169,13 @@ export class VendorController {
       const { status, estimated_preparation_time } = req.body;
       if (!status) return ResponseUtil.badRequest(res, 'status is required');
 
-      await VendorOrderService.updateStatus(req.params.id, restaurant.id, vendorId, status, estimated_preparation_time);
+      const result = await VendorOrderService.updateStatus(req.params.id, restaurant.id, vendorId, status, estimated_preparation_time);
+
+      // When marking ready_for_pickup, return the pickup_code so vendor can display it
+      if (status === 'ready_for_pickup' && result.pickup_code) {
+        return ResponseUtil.success(res, { pickup_code: result.pickup_code }, `Order status updated to ${status}`);
+      }
+
       return ResponseUtil.success(res, null, `Order status updated to ${status}`);
     } catch (err: any) {
       if (err.message === 'Order not found') return ResponseUtil.notFound(res, err.message);

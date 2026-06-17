@@ -20,12 +20,17 @@ async function recoverStuckPendingOrders(): Promise<void> {
   try {
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
 
+    // Also look for cancelled orders that were never refunded (payment_status still 'paid')
     const stuckOrders = await prisma.marketplaceOrder.findMany({
       where: {
-        status: 'pending',
-        createdAt: { lt: tenMinutesAgo },
+        OR: [
+          // Orders still pending after 10 minutes (setTimeout never fired)
+          { status: 'pending', createdAt: { lt: tenMinutesAgo } },
+          // Orders already cancelled by system but refund never processed
+          { status: 'cancelled', cancelledBy: 'system', paymentStatus: 'paid', paymentMethod: 'wallet' },
+        ],
       },
-      select: { id: true, customerId: true, totalAmount: true, paymentStatus: true, paymentMethod: true },
+      select: { id: true, customerId: true, totalAmount: true, paymentStatus: true, paymentMethod: true, status: true },
     });
 
     if (stuckOrders.length === 0) return;
@@ -34,16 +39,21 @@ async function recoverStuckPendingOrders(): Promise<void> {
 
     for (const order of stuckOrders) {
       try {
-        await prisma.marketplaceOrder.update({
-          where: { id: order.id },
-          data: {
-            status: 'cancelled',
-            cancellationReason: 'Order expired — vendor did not respond in time',
-            cancelledBy: 'system',
-            cancelledAt: new Date(),
-          },
-        });
+        // If still pending — cancel it first
+        if (order.status === 'pending') {
+          await prisma.marketplaceOrder.update({
+            where: { id: order.id },
+            data: {
+              status: 'cancelled',
+              cancellationReason: 'Order expired — vendor did not respond in time',
+              cancelledBy: 'system',
+              cancelledAt: new Date(),
+            },
+          });
+          logger.info('Recovery: cancelled stuck pending order', { orderId: order.id });
+        }
 
+        // Refund if payment was collected but not yet refunded
         if (order.paymentStatus === 'paid' && order.paymentMethod === 'wallet') {
           await WalletService.credit({
             userId: order.customerId,

@@ -47,7 +47,8 @@ export class VendorPickupService {
         order_id: orderId,
         pickup_id: data.id,
         restaurant_id: restaurantId,
-        pickup_code: pickupCode,
+        // pickup_code intentionally NOT sent to rider — vendor holds the code
+        // and reads it aloud when rider arrives to collect
         special_instructions: specialInstructions,
       });
     }
@@ -135,7 +136,7 @@ export class VendorPickupService {
       socketSvc.emitToCourier(order.courier_id, 'food:delivery:ready_for_pickup', {
         order_id: pickup.order_id,
         pickup_id: pickupId,
-        pickup_code: pickup.pickup_code,
+        // pickup_code intentionally NOT sent to rider — vendor holds the code
         special_instructions: specialInstructions,
       });
     }

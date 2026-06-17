@@ -58,7 +58,8 @@ export class VendorOrderService {
       .select(`
         *,
         order_items:food_order_items (*),
-        status_history:food_order_status_history (status, previous_status, changed_by_role, notes, created_at)
+        status_history:food_order_status_history (status, previous_status, changed_by_role, notes, created_at),
+        pickup:food_vendor_pickups (id, pickup_code, status, special_instructions, created_at)
       `)
       .eq('id', orderId)
       .eq('restaurant_id', restaurantId)
@@ -240,12 +241,16 @@ export class VendorOrderService {
     // When ready_for_pickup — auto-create vendor pickup record
     if (newStatus === 'ready_for_pickup' && fullOrder) {
       const { VendorPickupService } = await import('./vendor-pickup.service');
-      VendorPickupService.createPickup(orderId, vendorId, restaurantId).catch((err) =>
-        logger.error('Failed to create vendor pickup', { orderId, err })
-      );
+      const pickup = await VendorPickupService.createPickup(orderId, vendorId, restaurantId).catch((err) => {
+        logger.error('Failed to create vendor pickup', { orderId, err });
+        return null;
+      });
 
       // Push notify customer
       await FoodNotificationService.notifyCustomerOrderReady(fullOrder.customer_id, orderId);
+
+      logger.info('Order status updated by vendor', { orderId, from: order.status, to: newStatus });
+      return { success: true, pickup_code: pickup?.pickup_code || null };
     }
 
     logger.info('Order status updated by vendor', { orderId, from: order.status, to: newStatus });
