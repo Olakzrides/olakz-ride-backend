@@ -1,27 +1,33 @@
 /**
  * Unit Tests for DeliveryFareService
- * Tests fare calculation logic with the new city-tiered pricing schema.
+ * Tests fare calculation logic with the city-tiered pricing schema.
  *
- * FareBreakdown shape (new):
+ * FareBreakdown shape:
  *   distanceKm, distanceText, deliveryFee, serviceFee (= service + rounding),
- *   totalAmount, currencyCode
+ *   totalAmount, cityTier, currencyCode
  */
 
 import { DeliveryFareService } from '../services/delivery-fare.service';
 
 // ── Mock DB ───────────────────────────────────────────────────────────────────
-// Returns a config that matches the new delivery_fare_config columns
 jest.mock('../../../config/database', () => ({
   supabase: {
     from: jest.fn(() => ({
-      select: jest.fn().mockReturnThis(),
-      eq:     jest.fn().mockReturnThis(),
-      limit:  jest.fn().mockReturnThis(),
+      select:      jest.fn().mockReturnThis(),
+      eq:          jest.fn().mockReturnThis(),
+      ilike:       jest.fn().mockReturnThis(),
+      order:       jest.fn().mockReturnThis(),
+      limit:       jest.fn().mockReturnThis(),
       maybeSingle: jest.fn(() =>
         Promise.resolve({
           data: {
-            vehicle_type:                        'motorcycle',
+            // regions table mock (for resolveCityTier)
+            name:                                'Lagos',
+            // city_tier_states mock
             city_tier:                           'low',
+            // delivery_fare_config mock
+            vehicle_type_id:                     'vt-motorcycle',
+            region_id:                           'region-lagos',
             estimated_billing_unit:              '100',
             high_traffic_estimated_billing_unit: '130',
             min_amount_less_than_3km:            '300',
@@ -64,8 +70,9 @@ jest.mock('../../../config/logger', () => ({
 
 describe('DeliveryFareService', () => {
   const baseParams = {
-    vehicleType:      'motorcycle',
-    cityTier:         'low' as const,
+    vehicleTypeId:    'vt-motorcycle',
+    regionId:         'region-lagos',
+    deliveryType:     'instant' as const,
     pickupLatitude:    6.5244,
     pickupLongitude:   3.3792,
     dropoffLatitude:   6.4281,
@@ -103,12 +110,10 @@ describe('DeliveryFareService', () => {
   });
 
   describe('calculateFare — short distance (< 3 km)', () => {
-    it('uses min_amount_less_than_3km (300) when raw fee is lower', async () => {
+    it('uses min_amount_less_than_3km (300) when distance is under 3 km', async () => {
       const shortParams = {
         ...baseParams,
-        pickupLatitude:  6.5244,
-        pickupLongitude: 3.3792,
-        dropoffLatitude: 6.5250,  // ~0.07 km apart
+        dropoffLatitude:  6.5250, // ~0.07 km from pickup
         dropoffLongitude: 3.3793,
       };
       const result = await DeliveryFareService.calculateFare(shortParams);
@@ -124,6 +129,7 @@ describe('DeliveryFareService', () => {
       expect(result).toHaveProperty('deliveryFee');
       expect(result).toHaveProperty('serviceFee');
       expect(result).toHaveProperty('totalAmount');
+      expect(result).toHaveProperty('cityTier');
       expect(result).toHaveProperty('currencyCode');
     });
 
@@ -145,20 +151,22 @@ describe('DeliveryFareService', () => {
   });
 
   describe('estimateFare', () => {
-    it('returns fare estimate with new signature', async () => {
+    it('returns fare estimate with positional signature', async () => {
       const result = await DeliveryFareService.estimateFare(
-        'motorcycle',
+        'vt-motorcycle',
+        'region-lagos',
         6.5244, 3.3792,
         6.4281, 3.4219,
-        'low'
+        'instant'
       );
       expect(result).toBeDefined();
       expect(result.totalAmount).toBeGreaterThan(0);
     });
 
-    it('defaults city tier to low', async () => {
+    it('defaults deliveryType to instant', async () => {
       const result = await DeliveryFareService.estimateFare(
-        'motorcycle',
+        'vt-motorcycle',
+        'region-lagos',
         6.5244, 3.3792,
         6.4281, 3.4219
       );
