@@ -179,7 +179,8 @@ export class VendorOrderService {
   }
 
   /**
-   * Update order status (preparing, ready_for_pickup)
+   * Mark order as ready_for_pickup
+   * Direct transition: accepted → ready_for_pickup (no preparing step)
    */
   static async updateStatus(
     orderId: string,
@@ -188,11 +189,10 @@ export class VendorOrderService {
     newStatus: string,
     estimatedPrepTime?: number
   ) {
-    const allowedTransitions: Record<string, string[]> = {
-      accepted: ['preparing'],
-      preparing: ['ready_for_pickup'],
-      arrived_vendor: ['ready_for_pickup'], // courier may arrive before food is ready
-    };
+    // Only allow marking as ready_for_pickup
+    if (newStatus !== 'ready_for_pickup') {
+      throw new Error(`Invalid status. Only "ready_for_pickup" is allowed via this endpoint`);
+    }
 
     const { data: order, error } = await supabase
       .from('food_orders')
@@ -203,22 +203,21 @@ export class VendorOrderService {
 
     if (error || !order) throw new Error('Order not found');
 
-    const allowed = allowedTransitions[order.status] || [];
-    if (!allowed.includes(newStatus)) {
-      throw new Error(`Cannot transition from ${order.status} to ${newStatus}`);
+    // Allow transition from accepted, preparing, or arrived_vendor → ready_for_pickup
+    const allowedFromStatuses = ['accepted', 'preparing', 'arrived_vendor'];
+    if (!allowedFromStatuses.includes(order.status)) {
+      throw new Error(`Cannot mark ready — order is currently: ${order.status}`);
     }
 
     const updateData: any = {
-      status: newStatus,
+      status: 'ready_for_pickup',
+      ready_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-
-    if (newStatus === 'preparing') updateData.preparing_at = new Date().toISOString();
-    if (newStatus === 'ready_for_pickup') updateData.ready_at = new Date().toISOString();
     if (estimatedPrepTime) updateData.estimated_prep_time_minutes = estimatedPrepTime;
 
     await supabase.from('food_orders').update(updateData).eq('id', orderId);
-    await OrderService.recordStatusChange(orderId, newStatus, order.status, vendorId, 'vendor');
+    await OrderService.recordStatusChange(orderId, 'ready_for_pickup', order.status, vendorId, 'vendor');
 
     // Emit socket event to customer
     const socketSvc = getFoodSocketService();
@@ -233,28 +232,23 @@ export class VendorOrderService {
     if (socketSvc && fullOrder) {
       socketSvc.emitToCustomer(fullOrder.customer_id, 'food:order:status_update', {
         order_id: orderId,
-        status: newStatus,
-        estimated_prep_time_minutes: estimatedPrepTime,
+        status: 'ready_for_pickup',
       });
     }
 
-    // When ready_for_pickup — auto-create vendor pickup record
-    if (newStatus === 'ready_for_pickup' && fullOrder) {
-      const { VendorPickupService } = await import('./vendor-pickup.service');
-      const pickup = await VendorPickupService.createPickup(orderId, vendorId, restaurantId).catch((err) => {
-        logger.error('Failed to create vendor pickup', { orderId, err });
-        return null;
-      });
+    // Auto-create vendor pickup record and get the pickup_code
+    const { VendorPickupService } = await import('./vendor-pickup.service');
+    const pickup = await VendorPickupService.createPickup(orderId, vendorId, restaurantId).catch((err) => {
+      logger.error('Failed to create vendor pickup', { orderId, err });
+      return null;
+    });
 
-      // Push notify customer
+    if (fullOrder) {
       await FoodNotificationService.notifyCustomerOrderReady(fullOrder.customer_id, orderId);
-
-      logger.info('Order status updated by vendor', { orderId, from: order.status, to: newStatus });
-      return { success: true, pickup_code: pickup?.pickup_code || null };
     }
 
-    logger.info('Order status updated by vendor', { orderId, from: order.status, to: newStatus });
-    return { success: true };
+    logger.info('Order marked ready_for_pickup by vendor', { orderId, from: order.status, pickup_code: pickup?.pickup_code });
+    return { success: true, pickup_code: pickup?.pickup_code || null };
   }
 
   /**

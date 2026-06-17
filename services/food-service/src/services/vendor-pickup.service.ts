@@ -8,10 +8,10 @@ export class VendorPickupService {
    * Called automatically when vendor marks order as ready_for_pickup
    */
   static async createPickup(orderId: string, vendorId: string, restaurantId: string, specialInstructions?: string): Promise<any> {
-    // Check if pickup already exists
+    // Check if pickup already exists — return full record so pickup_code is always available
     const { data: existing } = await supabase
       .from('food_vendor_pickups')
-      .select('id')
+      .select('*')
       .eq('order_id', orderId)
       .maybeSingle();
 
