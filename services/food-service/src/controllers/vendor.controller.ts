@@ -166,20 +166,17 @@ export class VendorController {
       const restaurant = await VendorController.getVendorRestaurant(req, res);
       if (!restaurant) return res as any;
 
-      const { status, estimated_preparation_time } = req.body;
-      if (!status) return ResponseUtil.badRequest(res, 'status is required');
+      const { estimated_preparation_time } = req.body;
 
-      const result = await VendorOrderService.updateStatus(req.params.id, restaurant.id, vendorId, status, estimated_preparation_time);
+      const result = await VendorOrderService.updateStatus(
+        req.params.id, restaurant.id, vendorId, 'ready_for_pickup', estimated_preparation_time
+      );
 
-      // When marking ready_for_pickup, return the pickup_code so vendor can display it
-      if (status === 'ready_for_pickup' && result.pickup_code) {
-        return ResponseUtil.success(res, { pickup_code: result.pickup_code }, `Order status updated to ${status}`);
-      }
-
-      return ResponseUtil.success(res, null, `Order status updated to ${status}`);
+      return ResponseUtil.success(res, { pickup_code: result.pickup_code }, 'Order marked as ready for pickup');
     } catch (err: any) {
       if (err.message === 'Order not found') return ResponseUtil.notFound(res, err.message);
-      if (err.message?.includes('Cannot transition')) return ResponseUtil.badRequest(res, err.message);
+      if (err.message?.includes('Cannot mark ready')) return ResponseUtil.badRequest(res, err.message);
+      if (err.message?.includes('Invalid status')) return ResponseUtil.badRequest(res, err.message);
       return ResponseUtil.serverError(res, err.message);
     }
   };
