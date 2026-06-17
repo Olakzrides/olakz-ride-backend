@@ -7,7 +7,7 @@ export class VendorPickupService {
    * Create a pickup request when order is ready_for_pickup
    * Called automatically when vendor marks order as ready_for_pickup
    */
-  static async createPickup(orderId: string, vendorId: string, restaurantId: string, specialInstructions?: string): Promise<any> {
+  static async createPickup(orderId: string, vendorId: string, restaurantId: string, specialInstructions?: string, preGeneratedCode?: string): Promise<any> {
     // Check if pickup already exists — return full record so pickup_code is always available
     const { data: existing } = await supabase
       .from('food_vendor_pickups')
@@ -17,7 +17,7 @@ export class VendorPickupService {
 
     if (existing) return existing;
 
-    const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const pickupCode = preGeneratedCode || Math.floor(100000 + Math.random() * 900000).toString();
 
     const { data, error } = await supabase
       .from('food_vendor_pickups')
