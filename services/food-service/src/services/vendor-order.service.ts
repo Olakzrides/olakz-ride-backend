@@ -238,8 +238,13 @@ export class VendorOrderService {
 
     // Auto-create vendor pickup record and get the pickup_code
     const { VendorPickupService } = await import('./vendor-pickup.service');
-    const pickup = await VendorPickupService.createPickup(orderId, vendorId, restaurantId).catch((err) => {
-      logger.error('Failed to create vendor pickup', { orderId, err });
+    const pickup = await VendorPickupService.createPickup(orderId, vendorId, restaurantId).catch((err: any) => {
+      logger.error('Failed to create vendor pickup — pickup_code will be null', {
+        orderId,
+        vendorId,
+        restaurantId,
+        error: err?.message || String(err),
+      });
       return null;
     });
 

@@ -32,7 +32,7 @@ export class VendorPickupService {
       .select()
       .single();
 
-    if (error) throw new Error('Failed to create pickup request');
+    if (error) throw new Error(`Failed to create pickup request: ${error.message}`);
 
     // Get order courier_id and notify them
     const { data: order } = await supabase
