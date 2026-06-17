@@ -216,6 +216,10 @@ export class VendorOrderService {
     };
     if (estimatedPrepTime) updateData.estimated_prep_time_minutes = estimatedPrepTime;
 
+    // Generate pickup code now so we can write it to food_orders immediately
+    const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
+    updateData.pickup_code = pickupCode;
+
     await supabase.from('food_orders').update(updateData).eq('id', orderId);
     await OrderService.recordStatusChange(orderId, 'ready_for_pickup', order.status, vendorId, 'vendor');
 
@@ -238,7 +242,7 @@ export class VendorOrderService {
 
     // Auto-create vendor pickup record and get the pickup_code
     const { VendorPickupService } = await import('./vendor-pickup.service');
-    const pickup = await VendorPickupService.createPickup(orderId, vendorId, restaurantId).catch((err: any) => {
+    const pickup = await VendorPickupService.createPickup(orderId, vendorId, restaurantId, undefined, pickupCode).catch((err: any) => {
       logger.error('Failed to create vendor pickup — pickup_code will be null', {
         orderId,
         vendorId,
@@ -252,8 +256,8 @@ export class VendorOrderService {
       await FoodNotificationService.notifyCustomerOrderReady(fullOrder.customer_id, orderId);
     }
 
-    logger.info('Order marked ready_for_pickup by vendor', { orderId, from: order.status, pickup_code: pickup?.pickup_code });
-    return { success: true, pickup_code: pickup?.pickup_code || null };
+    logger.info('Order marked ready_for_pickup by vendor', { orderId, from: order.status, pickup_code: pickupCode });
+    return { success: true, pickup_code: pickup?.pickup_code || pickupCode };
   }
 
   /**
