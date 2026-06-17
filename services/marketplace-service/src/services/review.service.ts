@@ -1,4 +1,10 @@
 import { prisma } from '../config/database';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.SUPABASE_URL || '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || ''
+);
 
 export class ReviewService {
   static async submitReview(
@@ -74,7 +80,31 @@ export class ReviewService {
       }),
       prisma.marketplaceReview.count({ where: { storeId } }),
     ]);
-    return { reviews, total, page, limit, totalPages: Math.ceil(total / limit) };
+
+    // Fetch customer names from Supabase
+    const customerIds = [...new Set(reviews.map((r) => r.customerId))];
+    const { data: users } = await supabase
+      .from('users')
+      .select('id, first_name, last_name')
+      .in('id', customerIds);
+
+    const userMap = new Map((users || []).map((u: any) => [u.id, u]));
+
+    const reviewsWithCustomer = reviews.map((r) => {
+      const user = userMap.get(r.customerId) as any;
+      return {
+        ...r,
+        customer: user
+          ? {
+              firstName: user.first_name,
+              lastName: user.last_name,
+              fullName: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
+            }
+          : null,
+      };
+    });
+
+    return { reviews: reviewsWithCustomer, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   static async getProductReviews(productId: string, limit = 20, page = 1) {
@@ -89,6 +119,29 @@ export class ReviewService {
       }),
       prisma.marketplaceProductReview.count({ where: { productId } }),
     ]);
-    return { reviews, total, page, limit, totalPages: Math.ceil(total / limit) };
+
+    // Fetch customer names from Supabase
+    const customerIds = [...new Set(reviews.map((r) => r.review.customerId))];
+    const { data: users } = customerIds.length
+      ? await supabase.from('users').select('id, first_name, last_name').in('id', customerIds)
+      : { data: [] };
+
+    const userMap = new Map((users || []).map((u: any) => [u.id, u]));
+
+    const reviewsWithCustomer = reviews.map((r) => {
+      const user = userMap.get(r.review.customerId) as any;
+      return {
+        ...r,
+        customer: user
+          ? {
+              firstName: user.first_name,
+              lastName: user.last_name,
+              fullName: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
+            }
+          : null,
+      };
+    });
+
+    return { reviews: reviewsWithCustomer, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 }
