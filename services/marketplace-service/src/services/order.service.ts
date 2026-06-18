@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../config/database';
 import { WalletService } from './wallet.service';
 import { FareService } from './fare.service';
+import { emitToVendor } from './socket.service';
 import logger from '../utils/logger';
 
 interface PlaceOrderParams {
@@ -152,6 +153,25 @@ export class OrderService {
       await prisma.marketplaceCartItem.deleteMany({ where: { cartId: cart.id } });
       await prisma.marketplaceCart.delete({ where: { id: cart.id } });
     }
+
+    // Notify vendor of new order
+    emitToVendor(store.ownerId, 'marketplace:order:new_order', {
+      order_id: order.id,
+      status: 'pending',
+      total_amount: totalAmount,
+      subtotal,
+      delivery_fee: fare.deliveryFee,
+      service_fee: fare.serviceFee,
+      items: orderItemsData.map((i) => ({
+        product_id: i.productId,
+        name: i.productName,
+        quantity: i.quantity,
+        price: parseFloat(i.productPrice.toString()),
+      })),
+      delivery_address: deliveryAddress,
+      special_instructions: specialInstructions || null,
+      created_at: order.createdAt,
+    });
 
     // 10-minute pending expiry
     const PENDING_EXPIRY_MS = 10 * 60 * 1000;
