@@ -106,4 +106,76 @@ export class WalletController {
       return ResponseUtil.serverError(res, toMessage(err));
     }
   };
+
+  /**
+   * GET /api/wallet/transfer/lookup?phone=08012345678
+   * Look up a recipient by phone number — returns display name for confirmation.
+   * Frontend shows this before the user confirms the transfer.
+   */
+  lookupRecipient = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as AuthRequest).user!.id;
+      const phone  = req.query.phone as string;
+
+      if (!phone) return ResponseUtil.badRequest(res, 'phone query param is required');
+
+      const recipient = await WalletService.lookupRecipientByPhone(phone, userId);
+
+      if (!recipient) {
+        return ResponseUtil.notFound(res, 'No Olakz wallet account found for this phone number');
+      }
+
+      return ResponseUtil.success(res, { recipient }, 'Recipient found');
+    } catch (err: unknown) {
+      logger.error('Wallet lookup error:', err);
+      return ResponseUtil.serverError(res, toMessage(err));
+    }
+  };
+
+  /**
+   * POST /api/wallet/transfer
+   * Transfer money from the authenticated user's wallet to another by phone number.
+   * Body: { "phone": "08012345678", "amount": 500, "note": "Thanks!" }
+   */
+  transfer = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as AuthRequest).user!.id;
+      const { phone, amount, note } = req.body;
+
+      if (!phone)             return ResponseUtil.badRequest(res, 'Recipient phone number is required');
+      if (!amount)            return ResponseUtil.badRequest(res, 'Amount is required');
+      if (isNaN(Number(amount)) || Number(amount) <= 0)
+        return ResponseUtil.badRequest(res, 'Amount must be a positive number');
+
+      const result = await WalletService.transferByPhone({
+        senderUserId:   userId,
+        recipientPhone: phone,
+        amount:         Number(amount),
+        note:           note?.trim() || undefined,
+      });
+
+      return ResponseUtil.success(res, {
+        message:          `₦${Number(amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })} sent successfully to ${result.recipient.displayName}`,
+        transaction_ref:  result.transactionRef,
+        amount:           result.amount,
+        recipient:        result.recipient,
+        wallet: {
+          balance:       result.senderNewBalance,
+          currency_code: 'NGN',
+        },
+      });
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      logger.error('Wallet transfer error:', err);
+      if (
+        msg.includes('Insufficient') ||
+        msg.includes('not found') ||
+        msg.includes('Minimum') ||
+        msg.includes('greater than zero')
+      ) {
+        return ResponseUtil.badRequest(res, msg);
+      }
+      return ResponseUtil.serverError(res, msg);
+    }
+  };
 }

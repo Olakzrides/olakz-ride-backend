@@ -197,6 +197,51 @@ class UserService {
   }
 
   /**
+   * Update phone number.
+   * New number immediately becomes the user's wallet account identifier.
+   * No OTP needed — simple update.
+   */
+  async updatePhone(userId: string, phone: string): Promise<any> {
+    // Normalise to E.164
+    const normalizePhone = (p: string) => {
+      const d = p.replace(/\D/g, '');
+      if (d.startsWith('234')) return `+${d}`;
+      if (d.startsWith('0'))   return `+234${d.slice(1)}`;
+      if (d.length === 10)     return `+234${d}`;
+      return `+${d}`;
+    };
+    const normalizedPhone = normalizePhone(phone);
+
+    // Ensure the phone isn't already taken by another active account
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('phone', normalizedPhone)
+      .neq('id', userId)
+      .neq('status', 'account_deleted')
+      .single();
+
+    if (existing) {
+      throw new ConflictError('This phone number is already associated with another account.');
+    }
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .update({ phone: normalizedPhone, updated_at: new Date().toISOString() })
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      logger.error('Error updating phone number:', error);
+      throw new Error('Failed to update phone number');
+    }
+
+    logger.info(`Phone number updated for user: ${userId}`);
+    return this.formatUserData(user);
+  }
+
+  /**
    * Change password
    */
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {

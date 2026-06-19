@@ -14,11 +14,24 @@ import tokenService from './token.service';
 import otpService from './otp.service';
 import emailService from './email.service';
 
+/**
+ * Normalise any Nigerian phone format to E.164 (+234XXXXXXXXXX).
+ * Handles: 080XXXXXXXX, 234XXXXXXXXXX, +234XXXXXXXXXX
+ */
+function normalizePhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.startsWith('234')) return `+${digits}`;
+  if (digits.startsWith('0'))   return `+234${digits.slice(1)}`;
+  if (digits.length === 10)     return `+234${digits}`;  // 8012345678 → +2348012345678
+  return `+${digits}`;
+}
+
 interface RegisterData {
   firstName: string;
   lastName: string;
   email: string;
   password: string;
+  phone: string;
 }
 
 interface LoginData {
@@ -31,8 +44,9 @@ class AuthService {
    * Register new user — stores in pending_registrations until email is verified
    */
   async register(data: RegisterData): Promise<{ email: string }> {
-    const { firstName, lastName, email, password } = data;
+    const { firstName, lastName, email, password, phone } = data;
     const normalizedEmail = email.toLowerCase();
+    const normalizedPhone  = normalizePhone(phone);
 
     // Check if a verified account already exists
     const { data: existingUser } = await supabase
@@ -43,6 +57,18 @@ class AuthService {
 
     if (existingUser) {
       throw new ConflictError('An account with this email already exists. Please login instead.');
+    }
+
+    // Check if phone is already taken by an active account
+    const { data: existingPhone } = await supabase
+      .from('users')
+      .select('id')
+      .eq('phone', normalizedPhone)
+      .neq('status', 'account_deleted')
+      .single();
+
+    if (existingPhone) {
+      throw new ConflictError('An account with this phone number already exists.');
     }
 
     // Hash password
@@ -64,6 +90,7 @@ class AuthService {
         email: normalizedEmail,
         first_name: firstName,
         last_name: lastName,
+        phone: normalizedPhone,
         password_hash: passwordHash,
         otp_code: otpCode,
         otp_expires_at: otpExpiresAt.toISOString(),
@@ -90,10 +117,10 @@ class AuthService {
   async verifyEmail(email: string, otp: string): Promise<void> {
     const normalizedEmail = email.toLowerCase();
 
-    // Look up pending registration
+    // Look up pending registration — explicit columns bypass PostgREST schema cache
     const { data: pending, error: pendingError } = await supabase
       .from('pending_registrations')
-      .select('*')
+      .select('email, first_name, last_name, phone, password_hash, otp_code, otp_expires_at, otp_attempts, expires_at')
       .eq('email', normalizedEmail)
       .single();
 
@@ -151,6 +178,7 @@ class AuthService {
       password_hash: pending.password_hash,
       first_name: pending.first_name,
       last_name: pending.last_name,
+      phone: pending.phone ?? null,
       roles: ['customer'],
       active_role: 'customer',
       provider: 'emailpass',
@@ -164,6 +192,16 @@ class AuthService {
       logger.error('Error creating user from pending registration:', createError);
       throw new Error('Failed to complete registration');
     }
+
+     // Patch phone via update — bypasses PostgREST schema cache insert issue
+    if (pending.phone) {
+      await supabase
+        .from('users')
+        .update({ phone: pending.phone, updated_at: new Date().toISOString() })
+        .eq('email', normalizedEmail);
+      logger.info('Phone saved for new user', { email: normalizedEmail, phone: pending.phone });
+    }
+
 
     // Remove pending registration
     await supabase.from('pending_registrations').delete().eq('email', normalizedEmail);

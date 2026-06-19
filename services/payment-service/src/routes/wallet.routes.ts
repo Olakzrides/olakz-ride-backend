@@ -14,6 +14,10 @@ router.post('/topup', ctrl.topup);
 router.post('/topup/validate', ctrl.validateTopup);
 router.get('/transactions', ctrl.getTransactions);
 
+// Wallet-to-wallet transfer by phone number
+router.get('/transfer/lookup', ctrl.lookupRecipient);  // Step 1: look up recipient — returns name preview
+router.post('/transfer', ctrl.transfer);                // Step 2: execute transfer after confirmation
+
 // Virtual account (bank transfer funding)
 router.post('/virtual-account', vaCtrl.getOrCreate);
 router.get('/virtual-account', vaCtrl.get);
