@@ -31,7 +31,15 @@ export class WalletService {
     return Math.max(0, earned);
   }
 
-  static async getBalance(userId: string, currencyCode = 'NGN'): Promise<number> {
+  /**
+   * Get split wallet balance — cash vs promo.
+   * promo_credit transactions are ring-fenced and cannot be withdrawn or transferred.
+   */
+  static async getWalletBalances(userId: string, currencyCode = 'NGN'): Promise<{
+    cashBalance:  number;
+    promoBalance: number;
+    totalBalance: number;
+  }> {
     const { data: transactions, error } = await supabase
       .from('wallet_transactions')
       .select('amount, transaction_type')
@@ -40,24 +48,48 @@ export class WalletService {
       .eq('status', 'completed');
 
     if (error) {
-      logger.error('Get wallet balance error:', error);
-      return 0;
+      logger.error('Get wallet balances error:', error);
+      return { cashBalance: 0, promoBalance: 0, totalBalance: 0 };
     }
 
-    let balance = 0;
+    const CASH_CREDIT_TYPES  = new Set(['credit', 'refund', 'tip_received', 'earning', 'tip_payment']);
+    const PROMO_CREDIT_TYPES = new Set(['promo_credit']);
+    const DEBIT_TYPES        = new Set(['debit', 'hold', 'withdrawal']);
+
+    let cashBalance  = 0;
+    let promoBalance = 0;
+
     for (const tx of transactions || []) {
       const amount = parseFloat(tx.amount);
-      const type = tx.transaction_type;
-      if (type === 'credit' || type === 'refund' || type === 'tip_received' || type === 'earning') {
-        balance += amount;
-      } else if (type === 'debit' || type === 'hold' || type === 'withdrawal') {
-        balance -= amount;
-      } else if (type === 'tip_payment') {
-        balance += amount;
+      const type   = tx.transaction_type;
+
+      if (CASH_CREDIT_TYPES.has(type))  cashBalance  += amount;
+      else if (PROMO_CREDIT_TYPES.has(type)) promoBalance += amount;
+      else if (DEBIT_TYPES.has(type)) {
+        // Debit from cash first, then promo
+        if (cashBalance >= amount) {
+          cashBalance -= amount;
+        } else {
+          const remainder = amount - cashBalance;
+          cashBalance  = 0;
+          promoBalance = Math.max(0, promoBalance - remainder);
+        }
       }
     }
 
-    return Math.max(0, balance);
+    const safeCash  = Math.max(0, cashBalance);
+    const safePromo = Math.max(0, promoBalance);
+
+    return {
+      cashBalance:  safeCash,
+      promoBalance: safePromo,
+      totalBalance: safeCash + safePromo,
+    };
+  }
+
+  static async getBalance(userId: string, currencyCode = 'NGN'): Promise<number> {
+    const { totalBalance } = await this.getWalletBalances(userId, currencyCode);
+    return totalBalance;
   }
 
   static async deduct(params: {
@@ -414,11 +446,16 @@ export class WalletService {
       throw new Error('Recipient not found. Please check the phone number and try again.');
     }
 
-    // Check sender balance
-    const senderBalance = await this.getBalance(senderUserId, currencyCode);
-    if (senderBalance < amount) {
+    // Check sender cash balance — promo funds cannot be transferred
+    const { cashBalance, totalBalance } = await this.getWalletBalances(senderUserId, currencyCode);
+    if (totalBalance < amount) {
       throw new Error(
-        `Insufficient wallet balance. Required: ₦${amount.toFixed(2)}, Available: ₦${senderBalance.toFixed(2)}`
+        `Insufficient wallet balance. Required: ₦${amount.toFixed(2)}, Available: ₦${totalBalance.toFixed(2)}`
+      );
+    }
+    if (cashBalance < amount) {
+      throw new Error(
+        `Insufficient cash balance for transfer. Promo funds cannot be transferred. Cash available: ₦${cashBalance.toFixed(2)}`
       );
     }
 
@@ -494,7 +531,7 @@ export class WalletService {
       throw new Error('Transfer failed. Your wallet has been restored.');
     }
 
-    const senderNewBalance = await this.getBalance(senderUserId, currencyCode);
+    const { totalBalance: senderNewBalance } = await this.getWalletBalances(senderUserId, currencyCode);
 
     // ── Push notifications (non-blocking) ────────────────────────────────────
     this.sendTransferNotifications({

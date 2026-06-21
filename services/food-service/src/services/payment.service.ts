@@ -52,12 +52,12 @@ export class FoodPaymentService {
     const txRef = `food_pay_${orderId}_${Date.now()}`;
 
     if (paymentMethod === 'wallet') {
-      const balanceBefore = await WalletService.getBalance(customerId);
-      if (balanceBefore < amount) {
-        throw new Error(`Insufficient wallet balance. Required: ₦${amount.toFixed(2)}, Available: ₦${balanceBefore.toFixed(2)}`);
+      const balances = await WalletService.getBalances(customerId);
+      if (balances.totalBalance < amount) {
+        throw new Error(`Insufficient wallet balance. Required: ₦${amount.toFixed(2)}, Available: ₦${balances.totalBalance.toFixed(2)}`);
       }
 
-      const { transactionId: walletTxId, newBalance: balanceAfter } = await WalletService.deduct({
+      const { transactionId: walletTxId, newBalance: balanceAfter, cashPortion, promoPortion } = await WalletService.deduct({
         userId: customerId,
         amount,
         reference: txRef,
@@ -70,8 +70,10 @@ export class FoodPaymentService {
           payment_status: 'paid',
           payment_method: 'wallet',
           wallet_transaction_id: walletTxId,
-          wallet_balance_before: balanceBefore,
+          wallet_balance_before: balances.totalBalance,
           wallet_balance_after: balanceAfter,
+          wallet_cash_portion:  cashPortion,
+          wallet_promo_portion: promoPortion,
           updated_at: new Date().toISOString(),
         })
         .eq('id', orderId);
@@ -205,12 +207,25 @@ export class FoodPaymentService {
     const amount = parseFloat(order.total_amount);
 
     if (order.payment_method === 'wallet') {
-      const refundRef = `refund_${orderId}_${Date.now()}`;
-      await WalletService.credit({
-        userId: order.customer_id,
-        amount,
-        reference: refundRef,
-        description: `Refund for food order: ${refundReason}`,
+      // Look up stored portions from the original debit transaction for correct bucket routing
+      const { data: origTx } = await supabase
+        .from('wallet_transactions')
+        .select('metadata')
+        .eq('user_id', order.customer_id)
+        .eq('transaction_type', 'debit')
+        .ilike('description', `%${orderId}%`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const meta = (origTx?.metadata ?? {}) as Record<string, number>;
+      const promoPortion = Math.min(meta.promo_portion ?? 0, amount);
+      const cashPortion  = amount - promoPortion;
+      await WalletService.refundToBuckets({
+        userId:        order.customer_id,
+        cashPortion,
+        promoPortion,
+        baseReference: `refund_${orderId}`,
+        description:   `Refund for food order: ${refundReason}`,
       });
     } else if (order.payment_method === 'card') {
       if (!order.flw_transaction_id) throw new Error('No Flutterwave transaction ID found for this order');

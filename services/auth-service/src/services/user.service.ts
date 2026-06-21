@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import config from '../config';
 import supabase from '../utils/supabase';
 import logger from '../utils/logger';
+import tokenService from './token.service';
 import { NotFoundError, ValidationError, ConflictError } from '../utils/errors';
 
 class UserService {
@@ -307,11 +308,16 @@ class UserService {
   async deleteAccount(userId: string, reason?: string): Promise<void> {
     const { data: user, error: fetchError } = await supabase
       .from('users')
-      .select('id, status, metadata')
+      .select('id, status')
       .eq('id', userId)
       .single();
 
     if (fetchError || !user) {
+      logger.error('deleteAccount: user lookup failed', {
+        userId,
+        error: fetchError?.message,
+        code:  fetchError?.code,
+      });
       throw new NotFoundError('User not found');
     }
 
@@ -321,25 +327,27 @@ class UserService {
 
     const now = new Date().toISOString();
 
-    // Merge deletion info into the existing metadata JSON
-    const existingMeta = (user.metadata ?? {}) as Record<string, unknown>;
-    const updatedMeta = {
-      ...existingMeta,
-      account_deletion: {
-        deleted_at:    now,
-        reason:        reason?.trim() || null,
-      },
-    };
-
     // ── 1. Mark the users row as deleted ─────────────────────────────────────
     const { error: userErr } = await supabase
       .from('users')
-      .update({ status: 'account_deleted', metadata: updatedMeta, updated_at: now })
+      .update({ status: 'account_deleted', updated_at: now })
       .eq('id', userId);
 
     if (userErr) {
       logger.error('Error marking user as account_deleted:', userErr);
       throw new Error('Failed to delete account');
+    }
+
+    // ── 2. Revoke all tokens immediately ─────────────────────────────────────
+    // This ensures the old JWT cannot be used again even before it expires.
+    // The auth middleware now also does a live DB status check on every request,
+    // which is the belt-and-suspenders guard — but revoking here is the hard gate.
+    try {
+      await tokenService.revokeAllUserTokens(userId);
+    } catch (tokenErr) {
+      logger.warn('Could not revoke tokens on account delete (non-fatal)', {
+        userId, error: tokenErr instanceof Error ? tokenErr.message : String(tokenErr),
+      });
     }
 
     // ── 2. Disable driver record (non-fatal) ──────────────────────────────────

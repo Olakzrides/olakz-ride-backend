@@ -21,6 +21,7 @@ import airtimeRoutes from './routes/airtime.routes';
 import remittanceRoutes from './routes/remittance.routes';
 import storageRoutes from './routes/storage.routes';
 import marketplacePricingRoutes from './routes/marketplace-pricing.routes';
+import promosRoutes from './routes/promos.routes';
 
 const app = express();
 
@@ -88,6 +89,9 @@ app.use('/api/admin/storage', storageRoutes);
 
 // Step 16: marketplace delivery pricing config
 app.use('/api/admin/marketplace/pricing', marketplacePricingRoutes);
+
+// Step 17: signup promo campaign management
+app.use('/api/admin/promos', promosRoutes);
 
 // 404
 app.use((req, res) => {

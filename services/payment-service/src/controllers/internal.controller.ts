@@ -31,6 +31,10 @@ export class InternalController {
       if (!amount || amount <= 0) return ResponseUtil.badRequest(res, 'Invalid amount');
       if (!reference) return ResponseUtil.badRequest(res, 'reference is required');
 
+      // Get split balance BEFORE deduction so we can record how much came from each bucket.
+      // This lets callers store cash_portion/promo_portion for correct refund routing later.
+      const before = await WalletService.getWalletBalances(userId, currency_code);
+
       const { transactionId, newBalance } = await WalletService.deduct({
         userId,
         amount,
@@ -39,9 +43,20 @@ export class InternalController {
         description: description || 'Wallet deduction',
       });
 
-      logger.info('Internal wallet deduct', { userId, amount, reference });
+      // Calculate portions: cash is spent first, promo covers the remainder
+      const promoPortion = Math.max(0, amount - before.cashBalance);
+      const cashPortion  = amount - promoPortion;
+
+      logger.info('Internal wallet deduct', { userId, amount, reference, cashPortion, promoPortion });
       return ResponseUtil.success(res, {
-        transaction: { id: transactionId, amount, status: 'completed', reference },
+        transaction: {
+          id:           transactionId,
+          amount,
+          status:       'completed',
+          reference,
+          cash_portion:  cashPortion,   // store in calling service metadata for refund routing
+          promo_portion: promoPortion,  // store in calling service metadata for refund routing
+        },
         wallet: { balance: newBalance, currency_code },
       });
     } catch (err: unknown) {

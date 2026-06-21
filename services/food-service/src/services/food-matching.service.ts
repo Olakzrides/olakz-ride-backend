@@ -337,15 +337,28 @@ export class FoodMatchingService {
       .update({ status: 'courier_not_found', updated_at: new Date().toISOString() })
       .eq('id', orderId);
 
-    // Auto-refund wallet payment — customer shouldn't have to manually cancel
+    // Auto-refund wallet payment — route back to correct buckets
     if (order && order.payment_status === 'paid' && order.payment_method === 'wallet') {
       try {
-        const refundRef = `refund_courier_not_found_${orderId}_${Date.now()}`;
-        await WalletService.credit({
-          userId: order.customer_id,
-          amount: parseFloat(order.total_amount),
-          reference: refundRef,
-          description: 'Refund: no courier found for your food order',
+        const { data: origTx } = await supabase
+          .from('wallet_transactions')
+          .select('metadata')
+          .eq('user_id', order.customer_id)
+          .eq('transaction_type', 'debit')
+          .ilike('description', `%${orderId}%`)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const meta = (origTx?.metadata ?? {}) as Record<string, number>;
+        const total = parseFloat(order.total_amount);
+        const promoPortion = Math.min(meta.promo_portion ?? 0, total);
+        const cashPortion  = total - promoPortion;
+        await WalletService.refundToBuckets({
+          userId:        order.customer_id,
+          cashPortion,
+          promoPortion,
+          baseReference: `refund_courier_not_found_${orderId}`,
+          description:   'Refund: no courier found for your food order',
         });
         await supabase
           .from('food_orders')

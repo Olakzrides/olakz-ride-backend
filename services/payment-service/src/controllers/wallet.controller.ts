@@ -13,8 +13,15 @@ export class WalletController {
     try {
       const userId = (req as AuthRequest).user!.id;
       const currencyCode = (req.query.currency as string) || 'NGN';
-      const balance = await WalletService.getBalance(userId, currencyCode);
-      return ResponseUtil.success(res, { wallet: { balance, currency_code: currencyCode } });
+      const balances = await WalletService.getWalletBalances(userId, currencyCode);
+      return ResponseUtil.success(res, {
+        wallet: {
+          cash_balance:  balances.cashBalance,
+          promo_balance: balances.promoBalance,
+          total_balance: balances.totalBalance,
+          currency_code: currencyCode,
+        },
+      });
     } catch (err: unknown) {
       return ResponseUtil.serverError(res, toMessage(err));
     }

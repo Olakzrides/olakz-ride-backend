@@ -55,11 +55,14 @@ async function recoverStuckPendingOrders(): Promise<void> {
 
         // Refund if payment was collected but not yet refunded
         if (order.paymentStatus === 'paid' && order.paymentMethod === 'wallet') {
-          await WalletService.credit({
-            userId: order.customerId,
-            amount: parseFloat(order.totalAmount.toString()),
-            reference: `refund_recovery_${order.id}_${Date.now()}`,
-            description: 'Refund: marketplace order expired — vendor did not respond',
+          const cashPortion  = parseFloat((order as any).walletCashPortion  ?? order.totalAmount.toString());
+          const promoPortion = parseFloat((order as any).walletPromoPortion ?? '0');
+          await WalletService.refundToBuckets({
+            userId:        order.customerId,
+            cashPortion,
+            promoPortion,
+            baseReference: `refund_recovery_${order.id}`,
+            description:   'Refund: marketplace order expired — vendor did not respond',
           });
           await prisma.marketplaceOrder.update({
             where: { id: order.id },

@@ -610,7 +610,7 @@ export class DeliveryService {
       .update({
         status: 'cancelled',
         cancelled_at: new Date().toISOString(),
-        payment_status: 'refunded',
+        // Do NOT mark payment_status here — refundDeliveryPayment will set it to 'refunded'
       })
       .eq('id', deliveryId)
       .select()
@@ -628,8 +628,35 @@ export class DeliveryService {
       updatedBy: cancelledBy,
     });
 
-    logger.info(`Delivery ${deliveryId} cancelled`);
+    // ── Refund wallet payment if applicable ──────────────────────────────────
+    // delivery.payment_method and delivery.payment_status come from getDelivery above
+    if (
+      (delivery as any).payment_method === 'wallet' &&
+      (delivery as any).payment_status === 'paid'
+    ) {
+      const amount = parseFloat((delivery as any).estimated_fare ?? (delivery as any).final_fare ?? 0);
+      if (amount > 0) {
+        const paymentService = new DeliveryPaymentService();
+        const refundResult = await paymentService.refundDeliveryPayment({
+          deliveryId,
+          customerId: (delivery as any).customer_id,
+          amount,
+          currencyCode: 'NGN',
+          reason: reason || 'Delivery cancelled',
+        });
 
+        if (!refundResult.success) {
+          logger.error('Wallet refund failed on delivery cancellation', {
+            deliveryId,
+            amount,
+            message: refundResult.message,
+          });
+          // Non-fatal — delivery is still cancelled, refund can be retried manually
+        }
+      }
+    }
+
+    logger.info(`Delivery ${deliveryId} cancelled`);
     return data;
   }
 

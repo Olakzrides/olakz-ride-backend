@@ -106,14 +106,15 @@ export class OrderService {
     // totalAmount = subtotal + deliveryFee + combined serviceFee (which already includes roundingFee)
     const totalAmount = subtotal + fare.deliveryFee + fare.serviceFee;
 
-    // Wallet payment
-    const balanceBefore = await WalletService.getBalance(customerId);
-    if (balanceBefore < totalAmount) {
-      throw new Error(`Insufficient wallet balance. Required: ₦${totalAmount.toFixed(2)}, Available: ₦${balanceBefore.toFixed(2)}`);
+    // Wallet payment — use total balance (cash + promo) for eligibility check
+    const balances = await WalletService.getBalances(customerId);
+    if (balances.totalBalance < totalAmount) {
+      throw new Error(`Insufficient wallet balance. Required: ₦${totalAmount.toFixed(2)}, Available: ₦${balances.totalBalance.toFixed(2)}`);
     }
 
     const txRef = `mkt_order_${Date.now()}_${uuidv4().substring(0, 8)}`;
-    const { transactionId: walletTxId, newBalance: balanceAfter } = await WalletService.deduct({
+    // Deduct wallet — response includes cash_portion/promo_portion for correct refund routing
+    const { transactionId: walletTxId, newBalance: balanceAfter, cashPortion, promoPortion } = await WalletService.deduct({
       userId: customerId,
       amount: totalAmount,
       reference: txRef,
@@ -136,8 +137,10 @@ export class OrderService {
         deliveryAddress: deliveryAddress as any,
         specialInstructions: specialInstructions || null,
         walletTransactionId: walletTxId,
-        walletBalanceBefore: balanceBefore,
+        walletBalanceBefore: balances.totalBalance,
         walletBalanceAfter: balanceAfter,
+        walletCashPortion: cashPortion,    // stored for correct refund routing on cancellation
+        walletPromoPortion: promoPortion,  // stored for correct refund routing on cancellation
         orderItems: {
           create: orderItemsData,
         },
@@ -195,11 +198,12 @@ export class OrderService {
         await OrderService.recordStatusChange(order.id, 'cancelled', 'pending', 'system', 'system', 'Order expired — vendor did not respond in time');
 
         if (current.paymentStatus === 'paid' && current.paymentMethod === 'wallet') {
-          await WalletService.credit({
-            userId: current.customerId,
-            amount: parseFloat(current.totalAmount.toString()),
-            reference: `refund_expired_${order.id}_${Date.now()}`,
-            description: 'Refund: marketplace order expired — vendor did not respond',
+          await WalletService.refundToBuckets({
+            userId:        current.customerId,
+            cashPortion:   parseFloat((current as any).walletCashPortion  ?? current.totalAmount.toString()),
+            promoPortion:  parseFloat((current as any).walletPromoPortion ?? '0'),
+            baseReference: `refund_expired_${order.id}`,
+            description:   'Refund: marketplace order expired — vendor did not respond',
           });
           await prisma.marketplaceOrder.update({ where: { id: order.id }, data: { paymentStatus: 'refunded' } });
         }
@@ -275,11 +279,12 @@ export class OrderService {
     await OrderService.recordStatusChange(orderId, 'cancelled', order.status, customerId, 'customer', reason);
 
     if (order.paymentStatus === 'paid' && order.paymentMethod === 'wallet') {
-      await WalletService.credit({
-        userId: customerId,
-        amount: parseFloat(order.totalAmount.toString()),
-        reference: `refund_cancel_${orderId}_${Date.now()}`,
-        description: 'Refund: marketplace order cancelled',
+      await WalletService.refundToBuckets({
+        userId:        customerId,
+        cashPortion:   parseFloat((order as any).walletCashPortion  ?? order.totalAmount.toString()),
+        promoPortion:  parseFloat((order as any).walletPromoPortion ?? '0'),
+        baseReference: `refund_cancel_${orderId}`,
+        description:   'Refund: marketplace order cancelled',
       });
       await prisma.marketplaceOrder.update({ where: { id: orderId }, data: { paymentStatus: 'refunded' } });
     }

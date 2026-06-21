@@ -60,7 +60,7 @@ const createProxyOptions = (target: string, pathRewrite?: any, timeoutMs?: numbe
     
     // If body has been parsed by express.json(), re-send it to the proxied service
     // This avoids issues where the body was consumed by the gateway and never forwarded
-    if (!isMultipart && req.body && Object.keys(req.body).length && ['POST','PUT','PATCH'].includes(req.method)) {
+    if (!isMultipart && req.body && Object.keys(req.body).length && ['POST','PUT','PATCH','DELETE'].includes(req.method)) {
       const bodyData = JSON.stringify(req.body);
       proxyReq.setHeader('Content-Type', 'application/json');
       proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
