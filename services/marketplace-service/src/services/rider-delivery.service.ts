@@ -16,10 +16,34 @@ export class RiderDeliveryService {
     return order;
   }
 
-  static async pickedUp(orderId: string, driverId: string): Promise<void> {
+  static async headingToStore(orderId: string, driverId: string): Promise<void> {
     const order = await this.getOrderForRider(orderId, driverId);
 
     if (order.status !== 'rider_accepted') {
+      throw new Error(`Cannot mark heading_to_store from status: ${order.status}`);
+    }
+
+    await prisma.marketplaceOrder.update({
+      where: { id: orderId },
+      data: { status: 'heading_to_store', headingToStoreAt: new Date() },
+    });
+
+    await OrderService.recordStatusChange(orderId, 'heading_to_store', 'rider_accepted', driverId, 'rider');
+
+    emitToCustomer(order.customerId, 'marketplace:order:status_update', {
+      order_id: orderId,
+      status: 'heading_to_store',
+      message: 'Rider is on the way to pick up your order',
+    });
+
+    logger.info('Rider heading to store', { orderId, driverId });
+  }
+
+  static async pickedUp(orderId: string, driverId: string): Promise<void> {
+    const order = await this.getOrderForRider(orderId, driverId);
+
+    // Allow pickup from rider_accepted (skipped heading_to_store) or heading_to_store
+    if (!['rider_accepted', 'heading_to_store'].includes(order.status)) {
       throw new Error(`Cannot mark picked-up from status: ${order.status}`);
     }
 
@@ -28,21 +52,45 @@ export class RiderDeliveryService {
       data: { status: 'shipped', shippedAt: new Date() },
     });
 
-    await OrderService.recordStatusChange(orderId, 'shipped', 'rider_accepted', driverId, 'rider');
+    await OrderService.recordStatusChange(orderId, 'shipped', order.status, driverId, 'rider');
 
     emitToCustomer(order.customerId, 'marketplace:order:status_update', {
       order_id: orderId,
       status: 'shipped',
-      message: 'Your order has been picked up and is on the way',
+      message: 'Your order has been picked up',
     });
 
     logger.info('Rider confirmed pickup from vendor', { orderId, driverId });
   }
 
-  static async arrived(orderId: string, driverId: string): Promise<void> {
+  static async headingToCustomer(orderId: string, driverId: string): Promise<void> {
     const order = await this.getOrderForRider(orderId, driverId);
 
     if (order.status !== 'shipped') {
+      throw new Error(`Cannot mark heading_to_customer from status: ${order.status}`);
+    }
+
+    await prisma.marketplaceOrder.update({
+      where: { id: orderId },
+      data: { status: 'heading_to_customer', headingToCustomerAt: new Date() },
+    });
+
+    await OrderService.recordStatusChange(orderId, 'heading_to_customer', 'shipped', driverId, 'rider');
+
+    emitToCustomer(order.customerId, 'marketplace:order:status_update', {
+      order_id: orderId,
+      status: 'heading_to_customer',
+      message: 'Your order has been picked up and is on the way to you!',
+    });
+
+    logger.info('Rider heading to customer', { orderId, driverId });
+  }
+
+  static async arrived(orderId: string, driverId: string): Promise<void> {
+    const order = await this.getOrderForRider(orderId, driverId);
+
+    // Accept from shipped (skipped heading_to_customer) or heading_to_customer
+    if (!['shipped', 'heading_to_customer'].includes(order.status)) {
       throw new Error(`Cannot mark arrived from status: ${order.status}`);
     }
 
@@ -176,7 +224,10 @@ export class RiderDeliveryService {
 
   static async getActiveOrders(driverId: string) {
     return prisma.marketplaceOrder.findMany({
-      where: { riderId: driverId, status: { in: ['rider_accepted', 'shipped', 'arrived'] } },
+      where: {
+        riderId: driverId,
+        status: { in: ['rider_accepted', 'heading_to_store', 'shipped', 'heading_to_customer', 'arrived'] },
+      },
       include: { store: { select: { id: true, name: true, address: true, phone: true } }, orderItems: true },
       orderBy: { updatedAt: 'desc' },
     });

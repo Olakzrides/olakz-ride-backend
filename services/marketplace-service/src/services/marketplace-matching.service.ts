@@ -194,7 +194,7 @@ export class MarketplaceMatchingService {
 
     if (!order) throw new Error('Order not found');
 
-    const cancellableStatuses = ['rider_accepted', 'shipped', 'arrived'];
+    const cancellableStatuses = ['rider_accepted', 'heading_to_store', 'shipped', 'heading_to_customer', 'arrived'];
     if (!cancellableStatuses.includes(order.status)) {
       throw new Error(`Cannot cancel from status: ${order.status}`);
     }
