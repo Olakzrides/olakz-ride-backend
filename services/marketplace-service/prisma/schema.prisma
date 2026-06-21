@@ -181,7 +181,9 @@ model MarketplaceOrder {
   riderSearchAttempts  Int      @default(0) @map("rider_search_attempts")
   acceptedAt           DateTime? @map("accepted_at") @db.Timestamptz
   readyAt              DateTime? @map("ready_at") @db.Timestamptz
+  headingToStoreAt     DateTime? @map("heading_to_store_at") @db.Timestamptz
   shippedAt            DateTime? @map("shipped_at") @db.Timestamptz
+  headingToCustomerAt  DateTime? @map("heading_to_customer_at") @db.Timestamptz
   arrivedAt            DateTime? @map("arrived_at") @db.Timestamptz
   deliveredAt          DateTime? @map("delivered_at") @db.Timestamptz
   cancelledAt          DateTime? @map("cancelled_at") @db.Timestamptz
