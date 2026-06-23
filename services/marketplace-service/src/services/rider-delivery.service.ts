@@ -228,7 +228,7 @@ export class RiderDeliveryService {
         riderId: driverId,
         status: { in: ['rider_accepted', 'heading_to_store', 'shipped', 'heading_to_customer', 'arrived'] },
       },
-      include: { store: { select: { id: true, name: true, address: true, phone: true } }, orderItems: true },
+      include: { store: { select: { id: true, name: true, address: true, phone: true, latitude: true, longitude: true } }, orderItems: true },
       orderBy: { updatedAt: 'desc' },
     });
   }
