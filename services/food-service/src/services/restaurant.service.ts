@@ -225,11 +225,7 @@ export class RestaurantService {
     if (error) return null;
     return data;
   }
-}
 
-  /**
-   * Get available delivery vehicle types with fares for a restaurant + delivery location
-   */
   static async getDeliveryOptions(params: {
     restaurantId: string;
     deliveryLat: number;
@@ -296,3 +292,4 @@ export class RestaurantService {
       .filter((r) => r.status === 'fulfilled' && r.value !== null)
       .map((r) => (r as PromiseFulfilledResult<any>).value);
   }
+}
