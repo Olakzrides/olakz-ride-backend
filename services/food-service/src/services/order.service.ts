@@ -34,6 +34,7 @@ interface PlaceOrderParams {
   };
   paymentMethod: 'wallet' | 'card' | 'cash';
   specialInstructions?: string;
+  vehicle_type?: string;
 }
 
 export class OrderService {
@@ -42,6 +43,7 @@ export class OrderService {
    */
   static async placeOrder(params: PlaceOrderParams) {
     const { customerId, restaurantId, items, deliveryAddress, paymentMethod, specialInstructions } = params;
+    const vehicleType = params.vehicle_type || 'motorcycle';
 
     // 0. Validate items not empty
     if (!items || items.length === 0) {
@@ -122,7 +124,7 @@ export class OrderService {
       restaurantLng: restLng,
       deliveryLat: deliveryAddress.lat,
       deliveryLng: deliveryAddress.lng,
-      vehicleType: 'motorcycle',
+      vehicleType: vehicleType,
     });
 
     const totalAmount = subtotal + fare.deliveryFee + fare.serviceFee + fare.roundingFee;
@@ -171,6 +173,7 @@ export class OrderService {
         rounding_fee: fare.roundingFee,
         total_amount: totalAmount,
         delivery_address: deliveryAddress,
+        vehicle_type: vehicleType,
         special_instructions: specialInstructions || null,
         estimated_prep_time_minutes: restaurant.estimated_prep_time_minutes,
         wallet_transaction_id: walletTxId,
@@ -429,6 +432,7 @@ export class OrderService {
     restaurantId: string;
     items: Array<{ item_id: string; quantity: number; extras?: string[] }>;
     deliveryAddress: { lat: number; lng: number };
+    vehicle_type?: string;
   }) {
     const { data: restaurant } = await supabase
       .from('food_restaurants')
@@ -466,6 +470,7 @@ export class OrderService {
       restaurantLng: parseFloat(restaurant.longitude),
       deliveryLat: params.deliveryAddress.lat,
       deliveryLng: params.deliveryAddress.lng,
+      vehicleType: params.vehicle_type || 'motorcycle',
     });
 
     return {

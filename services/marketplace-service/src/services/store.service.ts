@@ -1,5 +1,6 @@
 import { prisma } from '../config/database';
 import { haversineKm } from '../utils/maps';
+import { FareService } from './fare.service';
 
 export class StoreService {
   static async listCategories() {
@@ -143,5 +144,59 @@ export class StoreService {
       orderBy: { averageRating: 'desc' },
       include: { category: true },
     });
+  }
+
+  static async getDeliveryOptions(params: { storeId: string; deliveryLat: number; deliveryLng: number }) {
+    const store = await prisma.marketplaceStore.findUnique({ where: { id: params.storeId } });
+    if (!store) throw new Error('Store not found');
+
+    const storeLat = parseFloat(store.latitude.toString());
+    const storeLng = parseFloat(store.longitude.toString());
+
+    const fareConfigs = await prisma.marketplaceFareConfig.findMany({
+      where: { isActive: true },
+      select: { vehicleType: true },
+      distinct: ['vehicleType'],
+    });
+
+    if (!fareConfigs.length) return [];
+
+    const displayNames: Record<string, string> = {
+      motorcycle: 'Motorcycle',
+      car: 'Car',
+      bicycle: 'Bicycle',
+      truck: 'Truck',
+      bus: 'Bus',
+      minibus: 'Minibus',
+    };
+
+    const results = await Promise.allSettled(
+      fareConfigs.map(async (config) => {
+        try {
+          const fare = await FareService.calculateFare({
+            storeLat,
+            storeLng,
+            deliveryLat: params.deliveryLat,
+            deliveryLng: params.deliveryLng,
+            vehicleType: config.vehicleType,
+          });
+          return {
+            vehicle_type: config.vehicleType,
+            display_name: displayNames[config.vehicleType] || config.vehicleType,
+            delivery_fee: fare.deliveryFee,
+            service_fee: fare.serviceFee,
+            total_fee: fare.totalFees,
+            estimated_distance_km: fare.distanceKm,
+            currency_code: fare.currencyCode,
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    return results
+      .filter((r) => r.status === 'fulfilled' && r.value !== null)
+      .map((r) => (r as PromiseFulfilledResult<any>).value);
   }
 }

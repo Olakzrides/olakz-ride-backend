@@ -1,5 +1,6 @@
 import { supabase } from '../config/database';
 import { MapsUtil } from '../utils/maps';
+import { FareService } from './fare.service';
 import logger from '../utils/logger';
 
 export class RestaurantService {
@@ -225,3 +226,73 @@ export class RestaurantService {
     return data;
   }
 }
+
+  /**
+   * Get available delivery vehicle types with fares for a restaurant + delivery location
+   */
+  static async getDeliveryOptions(params: {
+    restaurantId: string;
+    deliveryLat: number;
+    deliveryLng: number;
+  }) {
+    const { restaurantId, deliveryLat, deliveryLng } = params;
+
+    const { data: restaurant } = await supabase
+      .from('food_restaurants')
+      .select('id, latitude, longitude')
+      .eq('id', restaurantId)
+      .single();
+
+    if (!restaurant) throw new Error('Restaurant not found');
+
+    const restLat = parseFloat(restaurant.latitude);
+    const restLng = parseFloat(restaurant.longitude);
+
+    // Get all active vehicle types from fare config
+    const { data: fareConfigs } = await supabase
+      .from('food_fare_config')
+      .select('vehicle_type, city_tier')
+      .eq('is_active', true)
+      .eq('city_tier', 'low'); // use 'low' as default tier for options display
+
+    if (!fareConfigs || fareConfigs.length === 0) return [];
+
+    const displayNames: Record<string, string> = {
+      motorcycle: 'Motorcycle',
+      car: 'Car',
+      bicycle: 'Bicycle',
+      truck: 'Truck',
+      bus: 'Bus',
+      minibus: 'Minibus',
+    };
+
+    const options = await Promise.allSettled(
+      fareConfigs.map(async (config) => {
+        try {
+          const fare = await FareService.calculateFare({
+            restaurantLat: restLat,
+            restaurantLng: restLng,
+            deliveryLat,
+            deliveryLng,
+            vehicleType: config.vehicle_type,
+          });
+          return {
+            vehicle_type: config.vehicle_type,
+            display_name: displayNames[config.vehicle_type] || config.vehicle_type,
+            delivery_fee: fare.deliveryFee,
+            service_fee: fare.serviceFee,
+            total_fee: fare.deliveryFee + fare.serviceFee,
+            estimated_distance_km: fare.distanceKm,
+            estimated_minutes: fare.durationMinutes,
+            currency_code: fare.currencyCode,
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    return options
+      .filter((r) => r.status === 'fulfilled' && r.value !== null)
+      .map((r) => (r as PromiseFulfilledResult<any>).value);
+  }

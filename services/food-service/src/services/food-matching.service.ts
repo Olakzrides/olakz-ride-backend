@@ -28,7 +28,7 @@ export class FoodMatchingService {
 
     const { data: order } = await supabase
       .from('food_orders')
-      .select('id, restaurant_id, delivery_address, excluded_courier_ids, courier_search_attempts, food_restaurants(latitude, longitude)')
+      .select('id, restaurant_id, delivery_address, excluded_courier_ids, courier_search_attempts, vehicle_type, food_restaurants(latitude, longitude)')
       .eq('id', orderId)
       .single();
 
@@ -51,6 +51,7 @@ export class FoodMatchingService {
       restaurantLng: parseFloat(restaurant.longitude),
       excludedCourierIds: order.excluded_courier_ids || [],
       roundNumber: (order.courier_search_attempts || 0) + 1,
+      vehicleType: (order as any).vehicle_type || 'motorcycle',
     });
   }
 
@@ -64,9 +65,11 @@ export class FoodMatchingService {
       restaurantLng: number;
       excludedCourierIds: string[];
       roundNumber: number;
+      vehicleType?: string;
     }
   ): Promise<void> {
     const { restaurantLat, restaurantLng, excludedCourierIds, roundNumber } = params;
+    const vehicleType = params.vehicleType || 'motorcycle';
 
     // Guard: bail out immediately if order is no longer searching_courier.
     // This kills stale search chains that fire after a courier has already accepted.
@@ -92,7 +95,7 @@ export class FoodMatchingService {
       .update({ courier_search_attempts: roundNumber, updated_at: new Date().toISOString() })
       .eq('id', orderId);
 
-    const candidates = await this.findAvailableCouriers(restaurantLat, restaurantLng, excludedCourierIds);
+    const candidates = await this.findAvailableCouriers(restaurantLat, restaurantLng, excludedCourierIds, vehicleType);
 
     if (candidates.length === 0) {
       logger.warn('No couriers found in round', { orderId, roundNumber });
@@ -167,6 +170,7 @@ export class FoodMatchingService {
         restaurantLng,
         excludedCourierIds: currentOrder.excluded_courier_ids || [],
         roundNumber: roundNumber + 1,
+        vehicleType,
       });
     }, REQUEST_TIMEOUT_MS);
   }
@@ -255,7 +259,7 @@ export class FoodMatchingService {
   static async courierCancelAfterAccept(orderId: string, driverId: string, reason: string): Promise<void> {
     const { data: order } = await supabase
       .from('food_orders')
-      .select('id, status, customer_id, restaurant_id, courier_id, excluded_courier_ids, courier_search_attempts, food_restaurants(latitude, longitude)')
+      .select('id, status, customer_id, restaurant_id, courier_id, excluded_courier_ids, courier_search_attempts, vehicle_type, food_restaurants(latitude, longitude)')
       .eq('id', orderId)
       .single();
 
@@ -319,6 +323,7 @@ export class FoodMatchingService {
       restaurantLng: parseFloat(restaurant.longitude),
       excludedCourierIds: excluded,
       roundNumber: (order.courier_search_attempts || 0) + 1,
+      vehicleType: (order as any).vehicle_type || 'motorcycle',
     });
   }
 
@@ -383,7 +388,8 @@ export class FoodMatchingService {
   private static async findAvailableCouriers(
     restaurantLat: number,
     restaurantLng: number,
-    excludedCourierIds: string[]
+    excludedCourierIds: string[],
+    vehicleType = 'motorcycle'
   ): Promise<CourierCandidate[]> {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
@@ -394,7 +400,7 @@ export class FoodMatchingService {
         user_id,
         rating,
         service_types,
-        vehicles:driver_vehicles!inner(plate_number, manufacturer, model, color, vehicle_type_id, is_active),
+        vehicles:driver_vehicles!inner(plate_number, manufacturer, model, color, vehicle_type_id, is_active, vehicle_type:vehicle_types(name)),
         availability:driver_availability!inner(is_online, is_available, last_seen_at),
         location_tracking:driver_location_tracking(latitude, longitude, created_at)
       `)
@@ -431,14 +437,18 @@ export class FoodMatchingService {
 
       if (distance > MAX_SEARCH_RADIUS_KM) continue;
 
+      // Filter by vehicle type
       const vehicle = (driver.vehicles as any[])?.[0];
+      const driverVehicleTypeName: string = vehicle?.vehicle_type?.name || '';
+      if (driverVehicleTypeName.toLowerCase() !== vehicleType.toLowerCase()) continue;
+
       candidates.push({
         driverId: driver.id,
         userId: driver.user_id,
         distance,
         estimatedArrivalMinutes: Math.ceil((distance / 30) * 60),
         rating: parseFloat(driver.rating) || 0,
-        vehicleType: vehicle?.vehicle_type_id || 'motorcycle',
+        vehicleType: driverVehicleTypeName || vehicleType,
       });
     }
 

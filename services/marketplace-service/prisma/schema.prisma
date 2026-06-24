@@ -170,6 +170,7 @@ model MarketplaceOrder {
   roundingFee          Decimal  @default(0.00) @map("rounding_fee") @db.Decimal(10, 2)
   totalAmount          Decimal  @map("total_amount") @db.Decimal(10, 2)
   deliveryAddress      Json     @map("delivery_address")
+  vehicleType          String   @default("motorcycle") @map("vehicle_type") @db.VarChar(50)
   specialInstructions  String?  @map("special_instructions")
   walletTransactionId  String?  @map("wallet_transaction_id")
   walletBalanceBefore  Decimal? @map("wallet_balance_before") @db.Decimal(10, 2)
