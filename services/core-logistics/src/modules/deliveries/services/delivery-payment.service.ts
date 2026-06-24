@@ -506,6 +506,8 @@ export class DeliveryPaymentService {
 
   /**
    * Complete cash payment (when courier collects cash)
+   * Cash is paid physically — no wallet transaction needed for the customer.
+   * Just mark the delivery as paid.
    */
   async completeCashPayment(params: {
     deliveryId: string;
@@ -515,61 +517,22 @@ export class DeliveryPaymentService {
     currencyCode: string;
   }): Promise<DeliveryPaymentResult> {
     try {
-      const { deliveryId, customerId, courierId, amount, currencyCode } = params;
+      const { deliveryId } = params;
 
-      const reference = `delivery_cash_${deliveryId}_${Date.now()}`;
-
-      // Create cash payment record
-      const { data: transaction, error } = await supabase
-        .from('wallet_transactions')
-        .insert({
-          user_id: customerId,
-          transaction_type: 'debit',
-          amount: amount,
-          currency_code: currencyCode,
-          status: 'completed',
-          description: `Delivery cash payment - ${deliveryId}`,
-          reference,
-          metadata: {
-            payment_type: 'delivery_cash',
-            delivery_id: deliveryId,
-            courier_id: courierId,
-            collected_at: new Date().toISOString(),
-          },
-        })
-        .select()
-        .single();
-
-      if (error) {
-        logger.error('Create cash payment transaction error:', error);
-        return {
-          success: false,
-          message: 'Failed to record cash payment',
-        };
-      }
-
-      // Update delivery payment status
+      // Update delivery payment status only — no wallet debit for cash payments
       await supabase
         .from('deliveries')
         .update({
           payment_status: 'paid',
-          payment_transaction_id: transaction.id,
           updated_at: new Date().toISOString(),
         })
         .eq('id', deliveryId);
 
-      logger.info('Cash payment completed:', {
-        deliveryId,
-        customerId,
-        courierId,
-        amount,
-        transactionId: transaction.id,
-      });
+      logger.info('Cash payment completed (physical collection):', { deliveryId });
 
       return {
         success: true,
         message: 'Cash payment recorded successfully',
-        paymentId: transaction.id,
       };
     } catch (error: any) {
       logger.error('Complete cash payment error:', error);
