@@ -42,14 +42,16 @@ export class MarketplaceMatchingService {
       storeLng: parseFloat(order.store.longitude.toString()),
       excludedRiderIds: order.excludedRiderIds || [],
       roundNumber: (order.riderSearchAttempts || 0) + 1,
+      vehicleType: (order as any).vehicleType || 'motorcycle',
     });
   }
 
   private static async runSearchRound(
     orderId: string,
-    params: { storeLat: number; storeLng: number; excludedRiderIds: string[]; roundNumber: number }
+    params: { storeLat: number; storeLng: number; excludedRiderIds: string[]; roundNumber: number; vehicleType?: string }
   ): Promise<void> {
     const { storeLat, storeLng, excludedRiderIds, roundNumber } = params;
+    const vehicleType = params.vehicleType || 'motorcycle';
 
     // Status guard — bail if order is no longer searching
     const current = await prisma.marketplaceOrder.findUnique({
@@ -72,7 +74,7 @@ export class MarketplaceMatchingService {
       data: { riderSearchAttempts: roundNumber },
     });
 
-    const candidates = await this.findAvailableRiders(storeLat, storeLng, excludedRiderIds);
+    const candidates = await this.findAvailableRiders(storeLat, storeLng, excludedRiderIds, vehicleType);
 
     if (candidates.length === 0) {
       logger.warn('No riders found in round', { orderId, roundNumber });
@@ -278,7 +280,8 @@ export class MarketplaceMatchingService {
   private static async findAvailableRiders(
     storeLat: number,
     storeLng: number,
-    excludedRiderIds: string[]
+    excludedRiderIds: string[],
+    vehicleType: string = 'motorcycle'
   ): Promise<RiderCandidate[]> {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
@@ -286,7 +289,7 @@ export class MarketplaceMatchingService {
       .from('drivers')
       .select(`
         id, user_id, rating,
-        vehicles:driver_vehicles!inner(is_active),
+        vehicles:driver_vehicles!inner(is_active, vehicle_type:vehicle_types(name)),
         availability:driver_availability!inner(is_online, is_available, last_seen_at),
         location_tracking:driver_location_tracking(latitude, longitude, created_at)
       `)
@@ -313,6 +316,13 @@ export class MarketplaceMatchingService {
         (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
       if (locations.length === 0) continue;
+
+      // Filter by vehicle type — check if any of the driver's vehicles match
+      const vehicles = (driver.vehicles as any[]) || [];
+      const hasMatchingVehicle = vehicles.some(
+        (v: any) => v.vehicle_type?.name?.toLowerCase() === vehicleType.toLowerCase()
+      );
+      if (!hasMatchingVehicle) continue;
 
       const latest = locations[0];
       const distance = haversineKm(

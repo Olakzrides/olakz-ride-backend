@@ -88,4 +88,22 @@ export class StoreController {
       return ResponseUtil.serverError(res, err.message);
     }
   };
+
+  getDeliveryOptions = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { store_id, delivery_lat, delivery_lng } = req.query;
+      if (!store_id || !delivery_lat || !delivery_lng) {
+        return ResponseUtil.badRequest(res, 'store_id, delivery_lat, and delivery_lng are required');
+      }
+      const options = await StoreService.getDeliveryOptions({
+        storeId: store_id as string,
+        deliveryLat: parseFloat(delivery_lat as string),
+        deliveryLng: parseFloat(delivery_lng as string),
+      });
+      return ResponseUtil.success(res, { delivery_options: options });
+    } catch (err: any) {
+      if (err.message === 'Store not found') return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
 }

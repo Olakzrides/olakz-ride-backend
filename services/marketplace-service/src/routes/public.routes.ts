@@ -15,5 +15,6 @@ router.get('/products/:id', storeCtrl.getProduct);
 router.get('/products/:id/similar', storeCtrl.getSimilarProducts);
 router.get('/products/:id/reviews', reviewCtrl.getProductReviews);
 router.get('/search', storeCtrl.search);
+router.get('/delivery-options', storeCtrl.getDeliveryOptions);
 
 export default router;

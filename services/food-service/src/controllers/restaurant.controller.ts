@@ -82,4 +82,26 @@ export class RestaurantController {
       return ResponseUtil.serverError(res, err.message);
     }
   };
+
+  /**
+   * POST /api/food/delivery-options
+   * Returns available vehicle types with estimated fares for a given restaurant and delivery location
+   */
+  getDeliveryOptions = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { restaurant_id, delivery_lat, delivery_lng } = req.body;
+      if (!restaurant_id || !delivery_lat || !delivery_lng) {
+        return ResponseUtil.badRequest(res, 'restaurant_id, delivery_lat, and delivery_lng are required');
+      }
+      const options = await RestaurantService.getDeliveryOptions({
+        restaurantId: restaurant_id,
+        deliveryLat: parseFloat(delivery_lat),
+        deliveryLng: parseFloat(delivery_lng),
+      });
+      return ResponseUtil.success(res, { delivery_options: options });
+    } catch (err: any) {
+      if (err.message === 'Restaurant not found') return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
 }

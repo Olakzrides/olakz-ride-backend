@@ -7,9 +7,9 @@ import { AuthRequest } from '../middleware/auth.middleware';
 export class OrderController {
   estimate = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { store_id, items, delivery_address } = req.body;
+      const { store_id, items, delivery_address, vehicle_type } = req.body;
       if (!store_id || !items || !delivery_address) return ResponseUtil.badRequest(res, 'store_id, items and delivery_address are required');
-      const result = await OrderService.estimateTotal({ storeId: store_id, items, deliveryAddress: delivery_address });
+      const result = await OrderService.estimateTotal({ storeId: store_id, items, deliveryAddress: delivery_address, vehicleType: vehicle_type });
       return ResponseUtil.success(res, result);
     } catch (err: any) {
       if (err.message === 'Store not found') return ResponseUtil.notFound(res, err.message);
@@ -20,11 +20,11 @@ export class OrderController {
   placeOrder = async (req: Request, res: Response): Promise<Response> => {
     try {
       const customerId = (req as AuthRequest).user!.id;
-      const { store_id, items, delivery_address, payment_method = 'wallet', special_instructions } = req.body;
+      const { store_id, items, delivery_address, payment_method = 'wallet', special_instructions, vehicle_type } = req.body;
       if (!store_id || !items || !delivery_address) return ResponseUtil.badRequest(res, 'store_id, items and delivery_address are required');
       if (payment_method !== 'wallet') return ResponseUtil.badRequest(res, 'Only wallet payment is supported');
 
-      const order = await OrderService.placeOrder({ customerId, storeId: store_id, items, deliveryAddress: delivery_address, paymentMethod: 'wallet', specialInstructions: special_instructions });
+      const order = await OrderService.placeOrder({ customerId, storeId: store_id, items, deliveryAddress: delivery_address, paymentMethod: 'wallet', specialInstructions: special_instructions, vehicleType: vehicle_type });
       return ResponseUtil.created(res, { order }, 'Order placed successfully');
     } catch (err: any) {
       if (err.message?.includes('Insufficient')) return ResponseUtil.badRequest(res, err.message);
