@@ -44,7 +44,7 @@ export class OrderService {
    * Place a new food order
    */
   static async placeOrder(params: PlaceOrderParams) {
-    const { customerId, restaurantId, items, deliveryAddress, paymentMethod, specialInstructions } = params;
+    const { customerId, restaurantId, items, deliveryAddress, paymentMethod, specialInstructions, promoCode, vehicleType } = params;
 
     // 0. Validate items not empty
     if (!items || items.length === 0) {
