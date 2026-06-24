@@ -576,14 +576,18 @@ class AuthService {
   ): Promise<void> {
     const { deviceId, ipAddress } = context;
 
-    // ── 1. Find active promo ────────────────────────────────────────────────
+    // ── 1. Find active promo (new status model) ─────────────────────────────
+    // Active = stored status not paused/ended/deactivated AND within date window
+    // No need for admin to manually activate — auto-activates when starts_at arrives.
     const now = new Date().toISOString();
     const { data: promo, error: promoError } = await supabase
       .from('signup_promos')
       .select('id, promo_amount, total_budget_cap, claims_count')
-      .eq('is_active', true)
+      .not('status', 'in', '("ended","deactivated","paused")')
       .lte('starts_at', now)
       .gt('ends_at', now)
+      .order('starts_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (promoError || !promo) return; // No active promo — nothing to do

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../config/database';
 import { WalletService } from './wallet.service';
 import { FareService } from './fare.service';
+import { VendorPromoService } from './vendor-promo.service';
 import { emitToVendor } from './socket.service';
 import logger from '../utils/logger';
 
@@ -12,6 +13,7 @@ interface PlaceOrderParams {
   deliveryAddress: { address: string; lat: number; lng: number; label?: string };
   paymentMethod: 'wallet';
   specialInstructions?: string;
+  promoCode?: string;  // optional vendor promo code — applied to subtotal
 }
 
 export class OrderService {
@@ -53,7 +55,7 @@ export class OrderService {
   }
 
   static async placeOrder(params: PlaceOrderParams) {
-    const { customerId, storeId, items, deliveryAddress, paymentMethod, specialInstructions } = params;
+    const { customerId, storeId, items, deliveryAddress, paymentMethod, specialInstructions, promoCode } = params;
 
     if (!items || items.length === 0) throw new Error('Order must contain at least one item');
 
@@ -106,19 +108,41 @@ export class OrderService {
     // totalAmount = subtotal + deliveryFee + combined serviceFee (which already includes roundingFee)
     const totalAmount = subtotal + fare.deliveryFee + fare.serviceFee;
 
+    // ── Apply vendor promo code (discount on subtotal only) ──────────────────
+    let promoId:        string | undefined;
+    let discountAmount: number = 0;
+
+    if (promoCode) {
+      const promoResult = await VendorPromoService.validateCode({
+        code:      promoCode,
+        storeId,
+        customerId,
+        subtotal,
+      });
+
+      if (!promoResult.valid) {
+        throw new Error(promoResult.message);
+      }
+
+      promoId        = promoResult.promoId;
+      discountAmount = promoResult.discountAmount ?? 0;
+    }
+
+    const discountedTotal = Math.max(0, totalAmount - discountAmount);
+
     // Wallet payment — use total balance (cash + promo) for eligibility check
     const balances = await WalletService.getBalances(customerId);
-    if (balances.totalBalance < totalAmount) {
-      throw new Error(`Insufficient wallet balance. Required: ₦${totalAmount.toFixed(2)}, Available: ₦${balances.totalBalance.toFixed(2)}`);
+    if (balances.totalBalance < discountedTotal) {
+      throw new Error(`Insufficient wallet balance. Required: ₦${discountedTotal.toFixed(2)}, Available: ₦${balances.totalBalance.toFixed(2)}`);
     }
 
     const txRef = `mkt_order_${Date.now()}_${uuidv4().substring(0, 8)}`;
-    // Deduct wallet — response includes cash_portion/promo_portion for correct refund routing
+    // Deduct discountedTotal — promo discount already removed from what's charged
     const { transactionId: walletTxId, newBalance: balanceAfter, cashPortion, promoPortion } = await WalletService.deduct({
-      userId: customerId,
-      amount: totalAmount,
-      reference: txRef,
-      description: `Marketplace order at ${store.name}`,
+      userId:      customerId,
+      amount:      discountedTotal,
+      reference:   txRef,
+      description: `Marketplace order at ${store.name}${discountAmount > 0 ? ` (promo: -₦${discountAmount.toFixed(2)})` : ''}`,
     });
 
     // Create order
@@ -126,27 +150,55 @@ export class OrderService {
       data: {
         customerId,
         storeId,
-        status: 'pending',
+        status:         'pending',
         paymentMethod,
-        paymentStatus: 'paid',
+        paymentStatus:  'paid',
         subtotal,
-        deliveryFee: fare.deliveryFee,
-        serviceFee: fare.serviceFee,
-        roundingFee: fare.roundingFee,
-        totalAmount,
+        deliveryFee:    fare.deliveryFee,
+        serviceFee:     fare.serviceFee,
+        roundingFee:    fare.roundingFee,
+        totalAmount:    discountedTotal,         // what the customer actually paid
         deliveryAddress: deliveryAddress as any,
         specialInstructions: specialInstructions || null,
         walletTransactionId: walletTxId,
         walletBalanceBefore: balances.totalBalance,
-        walletBalanceAfter: balanceAfter,
-        walletCashPortion: cashPortion,    // stored for correct refund routing on cancellation
-        walletPromoPortion: promoPortion,  // stored for correct refund routing on cancellation
-        orderItems: {
-          create: orderItemsData,
-        },
+        walletBalanceAfter:  balanceAfter,
+        walletCashPortion:   cashPortion,
+        walletPromoPortion:  promoPortion,
+        orderItems: { create: orderItemsData },
       },
       include: { orderItems: true },
-    });
+    }) as any;
+
+    // Store promo fields (new columns — cast to any until prisma generate is re-run)
+    if (promoId && discountAmount > 0) {
+      await prisma.marketplaceOrder.update({
+        where: { id: order.id },
+        data: {
+          // Using raw update via supabase to avoid Prisma type error before prisma generate
+        } as any,
+      }).catch(() => {/* ignore — promo fields stored below via supabase */});
+
+      // Write promo fields directly via supabase (bypasses Prisma type check)
+      const { supabase: supabaseClient } = await import('../config/database');
+      await supabaseClient
+        .from('marketplace_orders')
+        .update({
+          promo_id:        promoId,
+          promo_code:      promoCode!.trim().toUpperCase(),
+          discount_amount: discountAmount,
+          original_total:  totalAmount,
+        })
+        .eq('id', order.id);
+
+      // Record promo use (non-blocking)
+      VendorPromoService.recordUse({
+        promoId,
+        userId:         customerId,
+        orderId:        order.id,
+        discountAmount,
+      }).catch(() => {/* already logged inside recordUse */});
+    }
 
     await OrderService.recordStatusChange(order.id, 'pending', null, customerId, 'customer');
 
@@ -159,12 +211,15 @@ export class OrderService {
 
     // Notify vendor of new order
     emitToVendor(store.ownerId, 'marketplace:order:new_order', {
-      order_id: order.id,
-      status: 'pending',
-      total_amount: totalAmount,
+      order_id:            order.id,
+      status:              'pending',
+      total_amount:        discountedTotal,
+      original_total:      discountAmount > 0 ? totalAmount : undefined,
+      discount_amount:     discountAmount > 0 ? discountAmount : undefined,
+      promo_code:          promoCode ? promoCode.trim().toUpperCase() : undefined,
       subtotal,
-      delivery_fee: fare.deliveryFee,
-      service_fee: fare.serviceFee,
+      delivery_fee:        fare.deliveryFee,
+      service_fee:         fare.serviceFee,
       items: orderItemsData.map((i) => ({
         product_id: i.productId,
         name: i.productName,
@@ -218,13 +273,16 @@ export class OrderService {
       ...order,
       fare_breakdown: {
         subtotal,
-        delivery_fee:  fare.deliveryFee,
-        service_fee:   fare.serviceFee,   // service_fee + rounding_fee combined
-        total_fees:    fare.totalFees,
-        total_amount:  totalAmount,
-        distance_km:   fare.distanceKm,
-        distance_text: fare.distanceText,
-        currency_code: fare.currencyCode,
+        discount_amount:  discountAmount > 0 ? discountAmount : null,
+        promo_code:       promoCode ? promoCode.trim().toUpperCase() : null,
+        delivery_fee:     fare.deliveryFee,
+        service_fee:      fare.serviceFee,
+        total_fees:       fare.totalFees,
+        original_total:   totalAmount,
+        total_amount:     discountedTotal,
+        distance_km:      fare.distanceKm,
+        distance_text:    fare.distanceText,
+        currency_code:    fare.currencyCode,
       },
     };
   }

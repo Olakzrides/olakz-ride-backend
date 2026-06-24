@@ -7,6 +7,7 @@ import { testDatabaseConnection, disconnectDatabase, prisma } from './config/dat
 import { validateEnv } from './config';
 import { initMarketplaceSocketService } from './services/socket.service';
 import { WalletService } from './services/wallet.service';
+import { VendorPromoService } from './services/vendor-promo.service';
 import logger from './utils/logger';
 
 const PORT = parseInt(process.env.PORT || '3006', 10);
@@ -101,6 +102,14 @@ async function start() {
     // Run recovery immediately on startup, then every 5 minutes
     await recoverStuckPendingOrders();
     setInterval(recoverStuckPendingOrders, 5 * 60 * 1000);
+
+    // ── Vendor promo status sync ───────────────────────────────────────────
+    await VendorPromoService.syncStatuses();
+    setInterval(() => {
+      VendorPromoService.syncStatuses().catch((err) =>
+        logger.error('Promo status sync error', { error: err.message })
+      );
+    }, 60 * 1000);
 
     const shutdown = async (signal: string) => {
       logger.info(`${signal} received — shutting down`);

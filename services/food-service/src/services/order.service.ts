@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { supabase } from '../config/database';
 import { WalletService } from './wallet.service';
 import { FareService } from './fare.service';
+import { VendorPromoService } from './vendor-promo.service';
 import { getFoodSocketService } from './food-socket.service';
 import { FoodNotificationService } from './food-notification.service';
 import logger from '../utils/logger';
@@ -34,6 +35,7 @@ interface PlaceOrderParams {
   };
   paymentMethod: 'wallet' | 'card' | 'cash';
   specialInstructions?: string;
+  promoCode?: string;  // optional vendor promo code — applied to subtotal
 }
 
 export class OrderService {
@@ -41,7 +43,7 @@ export class OrderService {
    * Place a new food order
    */
   static async placeOrder(params: PlaceOrderParams) {
-    const { customerId, restaurantId, items, deliveryAddress, paymentMethod, specialInstructions } = params;
+    const { customerId, restaurantId, items, deliveryAddress, paymentMethod, specialInstructions, promoCode } = params;
 
     // 0. Validate items not empty
     if (!items || items.length === 0) {
@@ -127,6 +129,28 @@ export class OrderService {
 
     const totalAmount = subtotal + fare.deliveryFee + fare.serviceFee + fare.roundingFee;
 
+    // ── Apply vendor promo code (discount on subtotal only) ──────────────────
+    let promoId:        string | undefined;
+    let discountAmount: number = 0;
+
+    if (promoCode) {
+      const promoResult = await VendorPromoService.validateCode({
+        code:     promoCode,
+        storeRef: restaurantId,
+        customerId,
+        subtotal,
+      });
+
+      if (!promoResult.valid) {
+        throw new Error(promoResult.message);
+      }
+
+      promoId        = promoResult.promoId;
+      discountAmount = promoResult.discountAmount ?? 0;
+    }
+
+    const discountedTotal = Math.max(0, totalAmount - discountAmount);
+
     // 5. Handle payment
     if (paymentMethod === 'card') {
       throw new Error('Card payment not yet implemented');
@@ -137,21 +161,21 @@ export class OrderService {
 
     // Wallet payment — use total balance (cash + promo) for eligibility check
     const balances = await WalletService.getBalances(customerId);
-    if (balances.totalBalance < totalAmount) {
-      throw new Error(`Insufficient wallet balance. Required: ₦${totalAmount.toFixed(2)}, Available: ₦${balances.totalBalance.toFixed(2)}`);
+    if (balances.totalBalance < discountedTotal) {
+      throw new Error(`Insufficient wallet balance. Required: ₦${discountedTotal.toFixed(2)}, Available: ₦${balances.totalBalance.toFixed(2)}`);
     }
 
     const txRef = `food_order_${Date.now()}_${uuidv4().substring(0, 8)}`;
 
-    // Deduct wallet — response includes cash_portion/promo_portion for correct refund routing
+    // Deduct wallet — charge discountedTotal (subtotal discount already removed)
     const { transactionId: walletTxId, newBalance: balanceAfter, cashPortion, promoPortion } = await WalletService.deduct({
-      userId: customerId,
-      amount: totalAmount,
-      reference: txRef,
-      description: `Food order at ${restaurant.name}`,
+      userId:      customerId,
+      amount:      discountedTotal,
+      reference:   txRef,
+      description: `Food order at ${restaurant.name}${discountAmount > 0 ? ` (promo: -₦${discountAmount.toFixed(2)})` : ''}`,
     });
 
-    logger.info('Wallet deducted for food order', { customerId, totalAmount, txRef, cashPortion, promoPortion });
+    logger.info('Wallet deducted for food order', { customerId, discountedTotal, txRef, cashPortion, promoPortion });
 
     // Generate 4-digit delivery code (customer shows to courier at door)
     const deliveryCode = Math.floor(1000 + Math.random() * 9000).toString();
@@ -160,24 +184,27 @@ export class OrderService {
     const { data: order, error: orderError } = await supabase
       .from('food_orders')
       .insert({
-        customer_id: customerId,
+        customer_id:   customerId,
         restaurant_id: restaurantId,
-        status: 'pending',
+        status:         'pending',
         payment_method: paymentMethod,
         payment_status: 'paid',
         subtotal,
-        delivery_fee: fare.deliveryFee,
-        service_fee: fare.serviceFee,
-        rounding_fee: fare.roundingFee,
-        total_amount: totalAmount,
+        delivery_fee:   fare.deliveryFee,
+        service_fee:    fare.serviceFee,
+        rounding_fee:   fare.roundingFee,
+        total_amount:   discountedTotal,          // what the customer actually paid
+        discount_amount: discountAmount > 0 ? discountAmount : null,
+        promo_id:        promoId ?? null,
+        promo_code:      promoCode ? promoCode.trim().toUpperCase() : null,
         delivery_address: deliveryAddress,
         special_instructions: specialInstructions || null,
         estimated_prep_time_minutes: restaurant.estimated_prep_time_minutes,
         wallet_transaction_id: walletTxId,
         wallet_balance_before: balances.totalBalance,
-        wallet_balance_after: balanceAfter,
-        wallet_cash_portion: cashPortion,    // stored for correct refund routing on cancellation
-        wallet_promo_portion: promoPortion,  // stored for correct refund routing on cancellation
+        wallet_balance_after:  balanceAfter,
+        wallet_cash_portion:   cashPortion,
+        wallet_promo_portion:  promoPortion,
         delivery_code: deliveryCode,
       })
       .select()
@@ -198,6 +225,16 @@ export class OrderService {
     // 7. Insert order items
     const orderItems = orderItemsData.map((oi) => ({ ...oi, order_id: order.id }));
     await supabase.from('food_order_items').insert(orderItems);
+
+    // 7b. Record promo use (non-blocking — order is already placed)
+    if (promoId && discountAmount > 0) {
+      VendorPromoService.recordUse({
+        promoId,
+        userId:         customerId,
+        orderId:        order.id,
+        discountAmount,
+      }).catch(() => {/* already logged inside recordUse */});
+    }
 
     // 8. Record status history
     await this.recordStatusChange(order.id, 'pending', null, customerId, 'customer');
@@ -301,13 +338,15 @@ export class OrderService {
       order_items: orderItemsData,
       fare_breakdown: {
         subtotal,
-        delivery_fee: fare.deliveryFee,
-        service_fee: fare.serviceFee,
-        rounding_fee: fare.roundingFee,
-        total_amount: totalAmount,
-        distance_km: fare.distanceKm,
-        distance_text: fare.distanceText,
-        currency_code: fare.currencyCode,
+        discount_amount:  discountAmount > 0 ? discountAmount : null,
+        promo_code:       promoCode ? promoCode.trim().toUpperCase() : null,
+        delivery_fee:     fare.deliveryFee,
+        service_fee:      fare.serviceFee,
+        rounding_fee:     fare.roundingFee,
+        total_amount:     discountedTotal,
+        distance_km:      fare.distanceKm,
+        distance_text:    fare.distanceText,
+        currency_code:    fare.currencyCode,
       },
     };
   }

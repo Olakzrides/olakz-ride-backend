@@ -321,8 +321,10 @@ class UserService {
       throw new NotFoundError('User not found');
     }
 
+    // Idempotent — if already deleted, return success instead of throwing
     if (user.status === 'account_deleted') {
-      throw new ValidationError('Account is already deleted');
+      logger.info('deleteAccount: account already deleted (idempotent)', { userId });
+      return;
     }
 
     const now = new Date().toISOString();
@@ -339,9 +341,6 @@ class UserService {
     }
 
     // ── 2. Revoke all tokens immediately ─────────────────────────────────────
-    // This ensures the old JWT cannot be used again even before it expires.
-    // The auth middleware now also does a live DB status check on every request,
-    // which is the belt-and-suspenders guard — but revoking here is the hard gate.
     try {
       await tokenService.revokeAllUserTokens(userId);
     } catch (tokenErr) {
@@ -350,28 +349,68 @@ class UserService {
       });
     }
 
-    // ── 2. Disable driver record (non-fatal) ──────────────────────────────────
-    const { error: driverErr } = await supabase
+    // ── 3. Disable driver record (non-fatal) ──────────────────────────────────
+    await supabase
       .from('drivers')
       .update({ status: 'account_deleted', updated_at: now })
       .eq('user_id', userId);
 
-    if (driverErr) {
-      logger.warn('Could not update driver record on account delete (may not exist)', {
-        userId, error: driverErr.message,
-      });
-    }
-
-    // ── 3. Disable vendor record (non-fatal) ──────────────────────────────────
-    const { error: vendorErr } = await supabase
+    // ── 4. Disable vendor record + deactivate all vendor products (non-fatal) ─
+    // Look up the vendor record to get the owner_id used in food/marketplace
+    const { data: vendor } = await supabase
       .from('vendors')
-      .update({ verification_status: 'account_deleted', is_active: false, updated_at: now })
-      .eq('user_id', userId);
+      .select('id, user_id')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-    if (vendorErr) {
-      logger.warn('Could not update vendor record on account delete (may not exist)', {
-        userId, error: vendorErr.message,
-      });
+    if (vendor) {
+      // Mark vendor record as deleted
+      await supabase
+        .from('vendors')
+        .update({ verification_status: 'account_deleted', is_active: false, updated_at: now })
+        .eq('user_id', userId);
+
+      // Deactivate food menu items (food_restaurants is keyed by owner_id = user_id)
+      const { data: restaurant } = await supabase
+        .from('food_restaurants')
+        .select('id')
+        .eq('owner_id', userId)
+        .maybeSingle();
+
+      if (restaurant) {
+        await supabase
+          .from('food_restaurants')
+          .update({ is_active: false, is_open: false, updated_at: now })
+          .eq('owner_id', userId);
+
+        await supabase
+          .from('food_menu_items')
+          .update({ is_active: false, is_available: false, updated_at: now })
+          .eq('restaurant_id', restaurant.id);
+
+        logger.info('Food restaurant + menu deactivated on account delete', { userId, restaurantId: restaurant.id });
+      }
+
+      // Deactivate marketplace products (marketplace_stores is keyed by owner_id = user_id)
+      const { data: store } = await supabase
+        .from('marketplace_stores')
+        .select('id')
+        .eq('owner_id', userId)
+        .maybeSingle();
+
+      if (store) {
+        await supabase
+          .from('marketplace_stores')
+          .update({ is_active: false, is_open: false, updated_at: now })
+          .eq('owner_id', userId);
+
+        await supabase
+          .from('marketplace_products')
+          .update({ is_active: false, is_available: false, updated_at: now })
+          .eq('store_id', store.id);
+
+        logger.info('Marketplace store + products deactivated on account delete', { userId, storeId: store.id });
+      }
     }
 
     logger.info('User self-deleted account — data preserved for audit', {
