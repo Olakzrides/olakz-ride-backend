@@ -35,7 +35,8 @@ interface PlaceOrderParams {
   };
   paymentMethod: 'wallet' | 'card' | 'cash';
   specialInstructions?: string;
-  promoCode?: string;  // optional vendor promo code — applied to subtotal
+  vehicleType?: string;  // optional vehicle type from colleague's branch
+  promoCode?: string;    // optional vendor promo code — applied to subtotal
 }
 
 export class OrderService {
@@ -43,7 +44,7 @@ export class OrderService {
    * Place a new food order
    */
   static async placeOrder(params: PlaceOrderParams) {
-    const { customerId, restaurantId, items, deliveryAddress, paymentMethod, specialInstructions, promoCode } = params;
+    const { customerId, restaurantId, items, deliveryAddress, paymentMethod, specialInstructions } = params;
 
     // 0. Validate items not empty
     if (!items || items.length === 0) {
@@ -124,7 +125,7 @@ export class OrderService {
       restaurantLng: restLng,
       deliveryLat: deliveryAddress.lat,
       deliveryLng: deliveryAddress.lng,
-      vehicleType: 'motorcycle',
+      vehicleType: vehicleType,
     });
 
     const totalAmount = subtotal + fare.deliveryFee + fare.serviceFee + fare.roundingFee;
@@ -198,6 +199,7 @@ export class OrderService {
         promo_id:        promoId ?? null,
         promo_code:      promoCode ? promoCode.trim().toUpperCase() : null,
         delivery_address: deliveryAddress,
+        vehicle_type: vehicleType,
         special_instructions: specialInstructions || null,
         estimated_prep_time_minutes: restaurant.estimated_prep_time_minutes,
         wallet_transaction_id: walletTxId,
@@ -472,6 +474,7 @@ export class OrderService {
     restaurantId: string;
     items: Array<{ item_id: string; quantity: number; extras?: string[] }>;
     deliveryAddress: { lat: number; lng: number };
+    vehicle_type?: string;
   }) {
     const { data: restaurant } = await supabase
       .from('food_restaurants')
@@ -509,6 +512,7 @@ export class OrderService {
       restaurantLng: parseFloat(restaurant.longitude),
       deliveryLat: params.deliveryAddress.lat,
       deliveryLng: params.deliveryAddress.lng,
+      vehicleType: params.vehicle_type || 'motorcycle',
     });
 
     return {

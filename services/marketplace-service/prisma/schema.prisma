@@ -170,6 +170,7 @@ model MarketplaceOrder {
   roundingFee          Decimal  @default(0.00) @map("rounding_fee") @db.Decimal(10, 2)
   totalAmount          Decimal  @map("total_amount") @db.Decimal(10, 2)
   deliveryAddress      Json     @map("delivery_address")
+  vehicleType          String   @default("motorcycle") @map("vehicle_type") @db.VarChar(50)
   specialInstructions  String?  @map("special_instructions")
   walletTransactionId  String?  @map("wallet_transaction_id")
   walletBalanceBefore  Decimal? @map("wallet_balance_before") @db.Decimal(10, 2)
@@ -183,7 +184,9 @@ model MarketplaceOrder {
   riderSearchAttempts  Int      @default(0) @map("rider_search_attempts")
   acceptedAt           DateTime? @map("accepted_at") @db.Timestamptz
   readyAt              DateTime? @map("ready_at") @db.Timestamptz
+  headingToStoreAt     DateTime? @map("heading_to_store_at") @db.Timestamptz
   shippedAt            DateTime? @map("shipped_at") @db.Timestamptz
+  headingToCustomerAt  DateTime? @map("heading_to_customer_at") @db.Timestamptz
   arrivedAt            DateTime? @map("arrived_at") @db.Timestamptz
   deliveredAt          DateTime? @map("delivered_at") @db.Timestamptz
   cancelledAt          DateTime? @map("cancelled_at") @db.Timestamptz

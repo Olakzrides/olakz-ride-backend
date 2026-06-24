@@ -7,7 +7,7 @@ import { AuthRequest } from '../middleware/auth.middleware';
 export class OrderController {
   estimateTotal = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { restaurant_id, items, delivery_address } = req.body;
+      const { restaurant_id, items, delivery_address, vehicle_type } = req.body;
 
       if (!restaurant_id || !items?.length || !delivery_address?.lat || !delivery_address?.lng) {
         return ResponseUtil.badRequest(res, 'restaurant_id, items, and delivery_address (lat, lng) are required');
@@ -17,6 +17,7 @@ export class OrderController {
         restaurantId: restaurant_id,
         items,
         deliveryAddress: delivery_address,
+        vehicle_type: vehicle_type,
       });
 
       return ResponseUtil.success(res, estimate);
@@ -31,7 +32,7 @@ export class OrderController {
       const customerId = (req as AuthRequest).user!.id;
       const {
         restaurant_id, items, delivery_address, payment_method = 'wallet',
-        special_instructions, promo_code,
+        special_instructions, vehicle_type, promo_code,
       } = req.body;
 
       if (!restaurant_id) return ResponseUtil.badRequest(res, 'restaurant_id is required');
@@ -47,7 +48,6 @@ export class OrderController {
         deliveryAddress:     delivery_address,
         paymentMethod:       payment_method,
         specialInstructions: special_instructions,
-        promoCode:           promo_code?.trim() || undefined,
       });
 
       return ResponseUtil.created(res, { order }, 'Order placed successfully');

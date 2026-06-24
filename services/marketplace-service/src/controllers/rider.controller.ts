@@ -86,6 +86,34 @@ export class RiderController {
     }
   };
 
+  headingToStore = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const driverId = await RiderController.getDriverId(req, res);
+      if (!driverId) return res as any;
+      await RiderDeliveryService.headingToStore(req.params.id, driverId);
+      return ResponseUtil.success(res, null, 'Marked as heading to store');
+    } catch (err: any) {
+      if (err.message === 'Order not found') return ResponseUtil.notFound(res, err.message);
+      if (err.message?.includes('Unauthorized')) return ResponseUtil.forbidden(res, err.message);
+      if (err.message?.includes('Cannot mark')) return ResponseUtil.badRequest(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  headingToCustomer = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const driverId = await RiderController.getDriverId(req, res);
+      if (!driverId) return res as any;
+      await RiderDeliveryService.headingToCustomer(req.params.id, driverId);
+      return ResponseUtil.success(res, null, 'Marked as heading to customer');
+    } catch (err: any) {
+      if (err.message === 'Order not found') return ResponseUtil.notFound(res, err.message);
+      if (err.message?.includes('Unauthorized')) return ResponseUtil.forbidden(res, err.message);
+      if (err.message?.includes('Cannot mark')) return ResponseUtil.badRequest(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
   pickedUp = async (req: Request, res: Response): Promise<Response> => {
     try {
       const driverId = await RiderController.getDriverId(req, res);

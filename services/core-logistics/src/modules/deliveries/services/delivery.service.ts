@@ -941,22 +941,19 @@ export class DeliveryService {
       const estimatedFare = parseFloat(delivery.estimated_fare);
       
       // Get delivery fare config to extract service_fee and rounding_fee
-      const { data: fareConfig, error: fareError } = await supabase
+      // Use maybeSingle so missing config doesn't crash the delivery completion
+      const { data: fareConfig } = await supabase
         .from('delivery_fare_config')
         .select('service_fee, rounding_fee')
         .eq('vehicle_type_id', delivery.vehicle_type.id)
         .eq('region_id', delivery.region.id)
         .eq('is_active', true)
-        .single();
+        .limit(1)
+        .maybeSingle();
 
-      if (fareError || !fareConfig) {
-        logger.error('Error fetching fare config for earnings calculation:', fareError);
-        throw new Error('Failed to calculate earnings - fare configuration not found');
-      }
-
-      // Platform earnings = service_fee + rounding_fee
-      const serviceFee = parseFloat(fareConfig.service_fee) || 0;
-      const roundingFee = parseFloat(fareConfig.rounding_fee) || 0;
+      // Platform earnings = service_fee + rounding_fee (default to 0 if config not found)
+      const serviceFee = parseFloat(fareConfig?.service_fee ?? '0') || 0;
+      const roundingFee = parseFloat(fareConfig?.rounding_fee ?? '0') || 0;
       const platformEarnings = serviceFee + roundingFee;
       
       // Courier earnings = total fare - platform earnings

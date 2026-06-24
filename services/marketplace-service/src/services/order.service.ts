@@ -13,7 +13,8 @@ interface PlaceOrderParams {
   deliveryAddress: { address: string; lat: number; lng: number; label?: string };
   paymentMethod: 'wallet';
   specialInstructions?: string;
-  promoCode?: string;  // optional vendor promo code — applied to subtotal
+  promoCode?: string;    // optional vendor promo code — applied to subtotal
+  vehicleType?: string;  // optional vehicle type for fare calculation
 }
 
 export class OrderService {
@@ -21,6 +22,7 @@ export class OrderService {
     storeId: string;
     items: Array<{ product_id: string; quantity: number }>;
     deliveryAddress: { lat: number; lng: number };
+    vehicleType?: string;
   }) {
     const store = await prisma.marketplaceStore.findUnique({ where: { id: params.storeId } });
     if (!store) throw new Error('Store not found');
@@ -40,6 +42,7 @@ export class OrderService {
       storeLng: parseFloat(store.longitude.toString()),
       deliveryLat: params.deliveryAddress.lat,
       deliveryLng: params.deliveryAddress.lng,
+      vehicleType: params.vehicleType || 'motorcycle',
     });
 
     return {
@@ -56,6 +59,7 @@ export class OrderService {
 
   static async placeOrder(params: PlaceOrderParams) {
     const { customerId, storeId, items, deliveryAddress, paymentMethod, specialInstructions, promoCode } = params;
+    const vehicleType = params.vehicleType || 'motorcycle';
 
     if (!items || items.length === 0) throw new Error('Order must contain at least one item');
 
@@ -103,6 +107,7 @@ export class OrderService {
       storeLat, storeLng,
       deliveryLat: deliveryAddress.lat,
       deliveryLng: deliveryAddress.lng,
+      vehicleType: vehicleType,
     });
 
     // totalAmount = subtotal + deliveryFee + combined serviceFee (which already includes roundingFee)
@@ -159,6 +164,7 @@ export class OrderService {
         roundingFee:    fare.roundingFee,
         totalAmount:    discountedTotal,         // what the customer actually paid
         deliveryAddress: deliveryAddress as any,
+        vehicleType: vehicleType,
         specialInstructions: specialInstructions || null,
         walletTransactionId: walletTxId,
         walletBalanceBefore: balances.totalBalance,
@@ -187,7 +193,6 @@ export class OrderService {
           promo_id:        promoId,
           promo_code:      promoCode!.trim().toUpperCase(),
           discount_amount: discountAmount,
-          original_total:  totalAmount,
         })
         .eq('id', order.id);
 
@@ -214,7 +219,6 @@ export class OrderService {
       order_id:            order.id,
       status:              'pending',
       total_amount:        discountedTotal,
-      original_total:      discountAmount > 0 ? totalAmount : undefined,
       discount_amount:     discountAmount > 0 ? discountAmount : undefined,
       promo_code:          promoCode ? promoCode.trim().toUpperCase() : undefined,
       subtotal,
@@ -278,7 +282,6 @@ export class OrderService {
         delivery_fee:     fare.deliveryFee,
         service_fee:      fare.serviceFee,
         total_fees:       fare.totalFees,
-        original_total:   totalAmount,
         total_amount:     discountedTotal,
         distance_km:      fare.distanceKm,
         distance_text:    fare.distanceText,

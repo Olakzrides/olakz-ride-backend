@@ -28,6 +28,7 @@ router.delete('/cart', authenticate, cartCtrl.clearCart);
 
 // ── Authenticated: Orders ──────────────────────────────────────
 router.post('/payment/estimate', orderCtrl.estimateTotal);   // public — no auth needed for estimate
+router.post('/delivery-options', restaurantCtrl.getDeliveryOptions); // public — get vehicle types with prices
 router.post('/order', authenticate, orderCtrl.placeOrder);
 router.get('/orders/history', authenticate, orderCtrl.getHistory);
 router.get('/orders/:id', authenticate, orderCtrl.getOrder);

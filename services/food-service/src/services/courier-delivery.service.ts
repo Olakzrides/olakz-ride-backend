@@ -77,7 +77,8 @@ export class CourierDeliveryService {
     const order = await this.getOrderForCourier(orderId, driverId);
 
     // Courier must have arrived at vendor AND vendor must have marked food ready
-    if (order.status !== 'arrived_vendor') {
+    // Accept both arrived_vendor (normal flow) and ready_for_pickup (vendor marked ready after rider arrived)
+    if (!['arrived_vendor', 'ready_for_pickup'].includes(order.status)) {
       throw new Error('You must mark arrived at vendor before verifying the pickup code');
     }
 
@@ -109,8 +110,8 @@ export class CourierDeliveryService {
   static async confirmPickedUp(orderId: string, driverId: string, pickupPhotoFile?: Express.Multer.File): Promise<void> {
     const order = await this.getOrderForCourier(orderId, driverId);
 
-    // Must be arrived_vendor AND food must be ready
-    if (order.status !== 'arrived_vendor') {
+    // Must be arrived_vendor or ready_for_pickup (vendor marked ready after rider arrived)
+    if (!['arrived_vendor', 'ready_for_pickup'].includes(order.status)) {
       throw new Error('You must mark arrived at vendor before confirming pickup');
     }
 

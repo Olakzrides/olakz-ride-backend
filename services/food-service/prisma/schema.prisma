@@ -201,6 +201,7 @@ model FoodOrder {
   roundingFee               Decimal  @default(0.00) @map("rounding_fee") @db.Decimal(10, 2)
   totalAmount               Decimal  @map("total_amount") @db.Decimal(10, 2)
   deliveryAddress           Json     @map("delivery_address")
+  vehicleType               String   @default("motorcycle") @map("vehicle_type") @db.VarChar(50)
   specialInstructions       String?  @map("special_instructions")
   estimatedPrepTimeMinutes  Int?     @map("estimated_prep_time_minutes")
   estimatedDeliveryTimeMinutes Int?  @map("estimated_delivery_time_minutes")
