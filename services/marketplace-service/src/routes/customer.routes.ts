@@ -8,10 +8,10 @@ import { WishlistController } from '../controllers/wishlist.controller';
 import { authenticate } from '../middleware/auth.middleware';
 
 const router = Router();
-const cartCtrl = new CartController();
-const orderCtrl = new OrderController();
-const addrCtrl = new AddressController();
-const reviewCtrl = new ReviewController();
+const cartCtrl    = new CartController();
+const orderCtrl   = new OrderController();
+const addrCtrl    = new AddressController();
+const reviewCtrl  = new ReviewController();
 const wishlistCtrl = new WishlistController();
 
 router.use(authenticate);

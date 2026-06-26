@@ -6,6 +6,7 @@ import app from './app';
 import { testDatabaseConnection, disconnectDatabase } from './config/database';
 import { validateEnv } from './config';
 import { initFoodSocketService } from './services/food-socket.service';
+import { VendorPromoService } from './services/vendor-promo.service';
 import logger from './utils/logger';
 
 const PORT = parseInt(process.env.PORT || '3005', 10);
@@ -31,6 +32,17 @@ async function start() {
         port: PORT,
       });
     });
+
+    // ── Vendor promo status sync ───────────────────────────────────────────
+    // Runs on startup then every 60 seconds.
+    // Transitions: scheduled → active when starts_at arrives
+    //              active    → ended  when ends_at passes or budget exhausted
+    await VendorPromoService.syncStatuses();
+    setInterval(() => {
+      VendorPromoService.syncStatuses().catch((err) =>
+        logger.error('Promo status sync error', { error: err.message })
+      );
+    }, 60 * 1000);
 
     const shutdown = async (signal: string) => {
       logger.info(`${signal} received — shutting down`);

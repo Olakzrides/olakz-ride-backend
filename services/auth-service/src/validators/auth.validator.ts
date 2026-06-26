@@ -33,6 +33,15 @@ const otpValidation = Joi.string()
     'any.required': 'OTP is required',
   });
 
+// Phone number validation — Nigerian formats: 080..., 081..., +234..., 234...
+const phoneValidation = Joi.string()
+  .pattern(/^(\+?234|0)[789][01]\d{8}$/)
+  .required()
+  .messages({
+    'string.pattern.base': 'Please provide a valid Nigerian phone number (e.g. 08012345678 or +2348012345678)',
+    'any.required': 'Phone number is required',
+  });
+
 export const registerValidator = {
   body: Joi.object({
     firstName: Joi.string()
@@ -57,6 +66,7 @@ export const registerValidator = {
       }),
     email: emailValidation,
     password: passwordValidation,
+    phone: phoneValidation,
   }),
 };
 
@@ -124,5 +134,11 @@ export const appleSignInValidator = {
       }).optional(),
       email: Joi.string().email().optional(),
     }).optional(),
+  }),
+};
+
+export const updatePhoneValidator = {
+  body: Joi.object({
+    phone: phoneValidation,
   }),
 };

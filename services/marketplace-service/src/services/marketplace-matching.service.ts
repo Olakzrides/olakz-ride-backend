@@ -239,10 +239,11 @@ export class MarketplaceMatchingService {
   }
 
   private static async handleRiderNotFound(orderId: string): Promise<void> {
+    // Fetch without a select so new columns (wallet_cash_portion/wallet_promo_portion)
+    // are included even before `prisma generate` is re-run after the schema migration.
     const order = await prisma.marketplaceOrder.findUnique({
       where: { id: orderId },
-      select: { customerId: true, storeId: true, totalAmount: true, paymentStatus: true, paymentMethod: true },
-    });
+    }) as any;
 
     await prisma.marketplaceOrder.update({
       where: { id: orderId },
@@ -251,11 +252,14 @@ export class MarketplaceMatchingService {
 
     if (order && order.paymentStatus === 'paid' && order.paymentMethod === 'wallet') {
       try {
-        await WalletService.credit({
-          userId: order.customerId,
-          amount: parseFloat(order.totalAmount.toString()),
-          reference: `refund_no_rider_${orderId}_${Date.now()}`,
-          description: 'Refund: no rider found for your marketplace order',
+        const cashPortion  = parseFloat((order.walletCashPortion  ?? order.totalAmount).toString());
+        const promoPortion = parseFloat((order.walletPromoPortion ?? 0).toString());
+        await WalletService.refundToBuckets({
+          userId:        order.customerId,
+          cashPortion,
+          promoPortion,
+          baseReference: `refund_no_rider_${orderId}`,
+          description:   'Refund: no rider found for your marketplace order',
         });
         await prisma.marketplaceOrder.update({ where: { id: orderId }, data: { paymentStatus: 'refunded' } });
         logger.info('Auto-refunded wallet for rider_not_found', { orderId });

@@ -100,9 +100,29 @@ class UserController {
   async deleteAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const authReq = req as AuthRequest;
-      const { reason } = req.body; // optional — string or undefined
+      const { reason } = req.body;
       await userService.deleteAccount(authReq.user!.userId, reason);
-      ResponseUtil.success(res, null, 'Account deleted successfully.');
+      ResponseUtil.success(res, null, 'Account deleted successfully. Your data has been retained for compliance purposes.');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * PATCH /api/users/phone
+   * Update phone number — new number immediately becomes wallet account identifier.
+   * Body: { "phone": "08012345678" }
+   */
+  async updatePhone(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const authReq = req as AuthRequest;
+      const { phone } = req.body;
+      if (!phone) {
+        ResponseUtil.error(res, 'Phone number is required', 400);
+        return;
+      }
+      const user = await userService.updatePhone(authReq.user!.userId, phone);
+      ResponseUtil.success(res, { user }, 'Phone number updated. This is now your wallet account identifier.');
     } catch (error) {
       next(error);
     }

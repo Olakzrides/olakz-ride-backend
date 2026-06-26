@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { VendorStoreController } from '../controllers/vendor-store.controller';
 import { VendorOrderController } from '../controllers/vendor-order.controller';
+import { VendorPromoController } from '../controllers/vendor-promo.controller';
 import { authenticate } from '../middleware/auth.middleware';
 import { isVendorApproved } from '../middleware/vendor.middleware';
 
 const router = Router();
 const storeCtrl = new VendorStoreController();
 const orderCtrl = new VendorOrderController();
+const promoCtrl = new VendorPromoController();
 
 router.use(authenticate);
 router.use(isVendorApproved);
@@ -38,5 +40,16 @@ router.put('/orders/:id/ready', orderCtrl.markReady);
 router.get('/analytics/dashboard', storeCtrl.getAnalyticsDashboard);
 router.get('/analytics/orders', storeCtrl.getAnalyticsOrders);
 router.get('/earnings', storeCtrl.getEarnings);
+
+// ─── Promo Campaigns ──────────────────────────────────────────────────────────
+router.get('/promos',                   promoCtrl.getAll);
+router.post('/promos',                  promoCtrl.create);
+router.get('/promos/:promoId',          promoCtrl.getById);
+router.patch('/promos/:promoId',        promoCtrl.update);
+router.delete('/promos/:promoId',       promoCtrl.delete);
+router.patch('/promos/:promoId/pause',  promoCtrl.pause);
+router.patch('/promos/:promoId/resume', promoCtrl.resume);
+router.patch('/promos/:promoId/end',    promoCtrl.end);
+router.get('/promos/:promoId/uses',     promoCtrl.getUses);
 
 export default router;

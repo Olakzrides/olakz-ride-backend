@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import config from '../config';
 import supabase from '../utils/supabase';
 import logger from '../utils/logger';
+import tokenService from './token.service';
 import { NotFoundError, ValidationError, ConflictError } from '../utils/errors';
 
 class UserService {
@@ -197,6 +198,51 @@ class UserService {
   }
 
   /**
+   * Update phone number.
+   * New number immediately becomes the user's wallet account identifier.
+   * No OTP needed — simple update.
+   */
+  async updatePhone(userId: string, phone: string): Promise<any> {
+    // Normalise to E.164
+    const normalizePhone = (p: string) => {
+      const d = p.replace(/\D/g, '');
+      if (d.startsWith('234')) return `+${d}`;
+      if (d.startsWith('0'))   return `+234${d.slice(1)}`;
+      if (d.length === 10)     return `+234${d}`;
+      return `+${d}`;
+    };
+    const normalizedPhone = normalizePhone(phone);
+
+    // Ensure the phone isn't already taken by another active account
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('phone', normalizedPhone)
+      .neq('id', userId)
+      .neq('status', 'account_deleted')
+      .single();
+
+    if (existing) {
+      throw new ConflictError('This phone number is already associated with another account.');
+    }
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .update({ phone: normalizedPhone, updated_at: new Date().toISOString() })
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      logger.error('Error updating phone number:', error);
+      throw new Error('Failed to update phone number');
+    }
+
+    logger.info(`Phone number updated for user: ${userId}`);
+    return this.formatUserData(user);
+  }
+
+  /**
    * Change password
    */
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
@@ -262,34 +308,31 @@ class UserService {
   async deleteAccount(userId: string, reason?: string): Promise<void> {
     const { data: user, error: fetchError } = await supabase
       .from('users')
-      .select('id, status, metadata')
+      .select('id, status')
       .eq('id', userId)
       .single();
 
     if (fetchError || !user) {
+      logger.error('deleteAccount: user lookup failed', {
+        userId,
+        error: fetchError?.message,
+        code:  fetchError?.code,
+      });
       throw new NotFoundError('User not found');
     }
 
+    // Idempotent — if already deleted, return success instead of throwing
     if (user.status === 'account_deleted') {
-      throw new ValidationError('Account is already deleted');
+      logger.info('deleteAccount: account already deleted (idempotent)', { userId });
+      return;
     }
 
     const now = new Date().toISOString();
 
-    // Merge deletion info into the existing metadata JSON
-    const existingMeta = (user.metadata ?? {}) as Record<string, unknown>;
-    const updatedMeta = {
-      ...existingMeta,
-      account_deletion: {
-        deleted_at:    now,
-        reason:        reason?.trim() || null,
-      },
-    };
-
     // ── 1. Mark the users row as deleted ─────────────────────────────────────
     const { error: userErr } = await supabase
       .from('users')
-      .update({ status: 'account_deleted', metadata: updatedMeta, updated_at: now })
+      .update({ status: 'account_deleted', updated_at: now })
       .eq('id', userId);
 
     if (userErr) {
@@ -297,28 +340,77 @@ class UserService {
       throw new Error('Failed to delete account');
     }
 
-    // ── 2. Disable driver record (non-fatal) ──────────────────────────────────
-    const { error: driverErr } = await supabase
+    // ── 2. Revoke all tokens immediately ─────────────────────────────────────
+    try {
+      await tokenService.revokeAllUserTokens(userId);
+    } catch (tokenErr) {
+      logger.warn('Could not revoke tokens on account delete (non-fatal)', {
+        userId, error: tokenErr instanceof Error ? tokenErr.message : String(tokenErr),
+      });
+    }
+
+    // ── 3. Disable driver record (non-fatal) ──────────────────────────────────
+    await supabase
       .from('drivers')
       .update({ status: 'account_deleted', updated_at: now })
       .eq('user_id', userId);
 
-    if (driverErr) {
-      logger.warn('Could not update driver record on account delete (may not exist)', {
-        userId, error: driverErr.message,
-      });
-    }
-
-    // ── 3. Disable vendor record (non-fatal) ──────────────────────────────────
-    const { error: vendorErr } = await supabase
+    // ── 4. Disable vendor record + deactivate all vendor products (non-fatal) ─
+    // Look up the vendor record to get the owner_id used in food/marketplace
+    const { data: vendor } = await supabase
       .from('vendors')
-      .update({ verification_status: 'account_deleted', is_active: false, updated_at: now })
-      .eq('user_id', userId);
+      .select('id, user_id')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-    if (vendorErr) {
-      logger.warn('Could not update vendor record on account delete (may not exist)', {
-        userId, error: vendorErr.message,
-      });
+    if (vendor) {
+      // Mark vendor record as deleted
+      await supabase
+        .from('vendors')
+        .update({ verification_status: 'account_deleted', is_active: false, updated_at: now })
+        .eq('user_id', userId);
+
+      // Deactivate food menu items (food_restaurants is keyed by owner_id = user_id)
+      const { data: restaurant } = await supabase
+        .from('food_restaurants')
+        .select('id')
+        .eq('owner_id', userId)
+        .maybeSingle();
+
+      if (restaurant) {
+        await supabase
+          .from('food_restaurants')
+          .update({ is_active: false, is_open: false, updated_at: now })
+          .eq('owner_id', userId);
+
+        await supabase
+          .from('food_menu_items')
+          .update({ is_active: false, is_available: false, updated_at: now })
+          .eq('restaurant_id', restaurant.id);
+
+        logger.info('Food restaurant + menu deactivated on account delete', { userId, restaurantId: restaurant.id });
+      }
+
+      // Deactivate marketplace products (marketplace_stores is keyed by owner_id = user_id)
+      const { data: store } = await supabase
+        .from('marketplace_stores')
+        .select('id')
+        .eq('owner_id', userId)
+        .maybeSingle();
+
+      if (store) {
+        await supabase
+          .from('marketplace_stores')
+          .update({ is_active: false, is_open: false, updated_at: now })
+          .eq('owner_id', userId);
+
+        await supabase
+          .from('marketplace_products')
+          .update({ is_active: false, is_available: false, updated_at: now })
+          .eq('store_id', store.id);
+
+        logger.info('Marketplace store + products deactivated on account delete', { userId, storeId: store.id });
+      }
     }
 
     logger.info('User self-deleted account — data preserved for audit', {

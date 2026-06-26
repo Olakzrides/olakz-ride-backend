@@ -167,13 +167,11 @@ export class UserAdminController {
       if (!adminId) { ResponseUtil.unauthorized(res); return; }
       const { reason } = req.body;
       const user = await UserAdminService.terminateAccount(req.params.userId, adminId, reason);
+      // Service returns existing user object idempotently when already terminated
       ResponseUtil.success(res, { user }, 'Account permanently terminated. All data has been preserved.');
     } catch (err: unknown) {
       const msg = toMessage(err);
       if (msg === 'User not found') { ResponseUtil.notFound(res, 'User'); return; }
-      if (msg === 'ALREADY_TERMINATED') {
-        ResponseUtil.badRequest(res, 'This account is already terminated', 'ALREADY_TERMINATED'); return;
-      }
       logger.error('terminateAccount error', { error: msg });
       ResponseUtil.serverError(res, msg);
     }

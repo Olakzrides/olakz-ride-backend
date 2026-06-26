@@ -362,7 +362,12 @@ export class UserAdminService {
     if (fetchError || !existing) throw new Error('User not found');
 
     const current = (existing as Record<string, unknown>).status as string;
-    if (current === 'terminated') throw new Error('ALREADY_TERMINATED');
+
+    // Idempotent — if already terminated, return success instead of throwing
+    if (current === 'terminated') {
+      logger.info('terminateAccount: account already terminated (idempotent)', { adminId, userId });
+      return existing;
+    }
 
     const { data: user, error } = await supabase
       .from('users')
@@ -372,6 +377,66 @@ export class UserAdminService {
       .single();
 
     if (error || !user) throw new Error('Failed to terminate account');
+
+    const now = new Date().toISOString();
+
+    // Disable driver record (non-fatal)
+    await supabase
+      .from('drivers')
+      .update({ status: 'account_deleted', updated_at: now })
+      .eq('user_id', userId);
+
+    // Disable vendor record + deactivate all vendor products (non-fatal)
+    const { data: vendor } = await supabase
+      .from('vendors')
+      .select('id, user_id')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (vendor) {
+      await supabase
+        .from('vendors')
+        .update({ verification_status: 'account_deleted', is_active: false, updated_at: now })
+        .eq('user_id', userId);
+
+      // Deactivate food restaurant + menu items
+      const { data: restaurant } = await supabase
+        .from('food_restaurants')
+        .select('id')
+        .eq('owner_id', userId)
+        .maybeSingle();
+
+      if (restaurant) {
+        await supabase
+          .from('food_restaurants')
+          .update({ is_active: false, is_open: false, updated_at: now })
+          .eq('owner_id', userId);
+        await supabase
+          .from('food_menu_items')
+          .update({ is_active: false, is_available: false, updated_at: now })
+          .eq('restaurant_id', restaurant.id);
+        logger.info('Food restaurant + menu deactivated on account termination', { userId, adminId, restaurantId: restaurant.id });
+      }
+
+      // Deactivate marketplace store + products
+      const { data: store } = await supabase
+        .from('marketplace_stores')
+        .select('id')
+        .eq('owner_id', userId)
+        .maybeSingle();
+
+      if (store) {
+        await supabase
+          .from('marketplace_stores')
+          .update({ is_active: false, is_open: false, updated_at: now })
+          .eq('owner_id', userId);
+        await supabase
+          .from('marketplace_products')
+          .update({ is_active: false, is_available: false, updated_at: now })
+          .eq('store_id', store.id);
+        logger.info('Marketplace store + products deactivated on account termination', { userId, adminId, storeId: store.id });
+      }
+    }
 
     logger.warn('Admin terminated user account', { adminId, userId, previousStatus: current, reason: reason ?? 'No reason provided' });
     return user;

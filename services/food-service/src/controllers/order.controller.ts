@@ -31,7 +31,8 @@ export class OrderController {
     try {
       const customerId = (req as AuthRequest).user!.id;
       const {
-        restaurant_id, items, delivery_address, payment_method = 'wallet', special_instructions, vehicle_type,
+        restaurant_id, items, delivery_address, payment_method = 'wallet',
+        special_instructions, vehicle_type, promo_code,
       } = req.body;
 
       if (!restaurant_id) return ResponseUtil.badRequest(res, 'restaurant_id is required');
@@ -42,18 +43,24 @@ export class OrderController {
 
       const order = await OrderService.placeOrder({
         customerId,
-        restaurantId: restaurant_id,
+        restaurantId:        restaurant_id,
         items,
-        deliveryAddress: delivery_address,
-        paymentMethod: payment_method,
+        deliveryAddress:     delivery_address,
+        paymentMethod:       payment_method,
         specialInstructions: special_instructions,
-        vehicle_type: vehicle_type,
       });
 
       return ResponseUtil.created(res, { order }, 'Order placed successfully');
     } catch (err: any) {
       if (err.message?.includes('not found')) return ResponseUtil.notFound(res, err.message);
-      if (err.message?.includes('not available') || err.message?.includes('closed') || err.message?.includes('Insufficient')) {
+      if (
+        err.message?.includes('not available') ||
+        err.message?.includes('closed') ||
+        err.message?.includes('Insufficient') ||
+        err.message?.includes('promo') ||
+        err.message?.includes('Promo') ||
+        err.message?.includes('Minimum order')
+      ) {
         return ResponseUtil.badRequest(res, err.message);
       }
       if (err.message?.includes('not yet implemented')) return ResponseUtil.badRequest(res, err.message);

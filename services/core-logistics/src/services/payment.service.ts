@@ -35,10 +35,37 @@ export class PaymentService {
         params: { currency: currencyCode },
         headers: { 'x-user-id': userId },
       });
-      return response.data?.data?.wallet?.balance ?? 0;
+      // Support both old shape { balance } and new split shape { total_balance }
+      const wallet = response.data?.data?.wallet;
+      return wallet?.total_balance ?? wallet?.balance ?? 0;
     } catch (error: any) {
       logger.error('Get wallet balance (via payment-service) error:', error.response?.data || error.message);
       return 0;
+    }
+  }
+
+  /**
+   * Get the split wallet balance (cash vs promo).
+   * Used to tag hold transactions so refunds go back to the right bucket.
+   */
+  async getWalletBalances(userId: string, currencyCode: string = 'NGN'): Promise<{
+    cashBalance: number;
+    promoBalance: number;
+    totalBalance: number;
+  }> {
+    try {
+      const response = await this.client.get('/api/internal/payment/wallet/balance', {
+        params: { currency: currencyCode },
+        headers: { 'x-user-id': userId },
+      });
+      const wallet = response.data?.data?.wallet;
+      const total = wallet?.total_balance ?? wallet?.balance ?? 0;
+      const cash  = wallet?.cash_balance  ?? total;
+      const promo = wallet?.promo_balance ?? 0;
+      return { cashBalance: cash, promoBalance: promo, totalBalance: total };
+    } catch (error: any) {
+      logger.error('Get wallet balances (via payment-service) error:', error.response?.data || error.message);
+      return { cashBalance: 0, promoBalance: 0, totalBalance: 0 };
     }
   }
 
@@ -241,41 +268,44 @@ export class PaymentService {
     try {
       const { userId, amount, currencyCode, description } = params;
 
-      const balanceCheck = await this.checkSufficientBalance(userId, amount, currencyCode);
-      if (!balanceCheck.sufficient) {
+      // Get split balance — need to know promo vs cash for correct refund routing later
+      const { cashBalance, totalBalance } = await this.getWalletBalances(userId, currencyCode);
+
+      if (totalBalance < amount) {
         logger.warn('Insufficient wallet balance for hold:', {
-          userId,
-          required: amount,
-          available: balanceCheck.currentBalance,
+          userId, required: amount, available: totalBalance,
         });
         return {
           status: 'failed',
           message: 'Insufficient wallet balance',
           errorCode: 'INSUFFICIENT_BALANCE',
-          details: {
-            required: amount,
-            available: balanceCheck.currentBalance,
-            shortfall: amount - balanceCheck.currentBalance,
-          },
+          details: { required: amount, available: totalBalance, shortfall: amount - totalBalance },
         };
       }
+
+      // Calculate how much of this hold is funded by promo vs cash.
+      // Cash is spent first; promo covers the remainder.
+      const promoPortion = Math.max(0, amount - cashBalance);
+      const cashPortion  = amount - promoPortion;
 
       const reference = `hold_${Date.now()}_${userId}`;
 
       const { data: holdTransaction, error } = await supabase
         .from('wallet_transactions')
         .insert({
-          user_id: userId,
+          user_id:          userId,
           transaction_type: 'hold',
           amount,
-          currency_code: currencyCode,
-          status: 'pending',
+          currency_code:    currencyCode,
+          status:           'pending',
           description,
           reference,
           metadata: {
-            hold_type: 'ride_payment',
-            balance_before: balanceCheck.currentBalance,
-            created_at: new Date().toISOString(),
+            hold_type:      'ride_payment',
+            balance_before: totalBalance,
+            cash_portion:   cashPortion,    // used by releasePaymentHold to refund correctly
+            promo_portion:  promoPortion,   // used by releasePaymentHold to refund correctly
+            created_at:     new Date().toISOString(),
           },
         })
         .select()
@@ -291,7 +321,7 @@ export class PaymentService {
         .update({ status: 'completed' })
         .eq('id', holdTransaction.id);
 
-      logger.info('Payment hold created:', { userId, amount, reference });
+      logger.info('Payment hold created:', { userId, amount, reference, cashPortion, promoPortion });
 
       return { status: 'hold_created', holdId: holdTransaction.id, message: 'Payment hold created successfully' };
     } catch (error) {
@@ -318,51 +348,116 @@ export class PaymentService {
         return { success: false, message: 'Invalid hold transaction' };
       }
 
-      const heldAmount = parseFloat(holdTransaction.amount);
-      const userId = holdTransaction.user_id;
+      const heldAmount   = parseFloat(holdTransaction.amount);
+      const userId       = holdTransaction.user_id;
       const currencyCode = holdTransaction.currency_code;
+      const meta         = (holdTransaction.metadata ?? {}) as Record<string, number>;
 
-      const { data: deductTransaction, error: deductError } = await supabase
+      // The 'hold' transaction already reduced the balance when it was created.
+      // We do NOT insert another debit here — we only handle the difference:
+      //   • If finalAmount < heldAmount → refund the overage back to the right bucket
+      //   • If finalAmount > heldAmount → charge the extra (edge case: toll/surge added)
+      //   • If equal → nothing extra needed
+
+      const diff = heldAmount - finalAmount;
+
+      if (diff > 0) {
+        // Overheld — refund the difference.
+        // Route back to the correct bucket using the portions stored at hold time.
+        const promoPortion = meta.promo_portion ?? 0;
+
+        // Proportion of the overage that came from promo vs cash
+        const promoOverage = Math.min(promoPortion, diff);
+        const cashOverage  = diff - promoOverage;
+
+        if (promoOverage > 0) {
+          await supabase.from('wallet_transactions').insert({
+            user_id:          userId,
+            ride_id:          rideId,
+            transaction_type: 'promo_credit',   // returns to promo bucket
+            amount:           promoOverage,
+            currency_code:    currencyCode,
+            status:           'completed',
+            description:      `Ride overpayment refund (promo) - ${rideId}`,
+            reference:        `refund_promo_${rideId}_${Date.now()}`,
+            metadata:         { hold_transaction_id: holdId, refund_type: 'overpayment_promo' },
+          });
+        }
+
+        if (cashOverage > 0) {
+          await supabase.from('wallet_transactions').insert({
+            user_id:          userId,
+            ride_id:          rideId,
+            transaction_type: 'refund',         // returns to cash bucket
+            amount:           cashOverage,
+            currency_code:    currencyCode,
+            status:           'completed',
+            description:      `Ride overpayment refund (cash) - ${rideId}`,
+            reference:        `refund_cash_${rideId}_${Date.now()}`,
+            metadata:         { hold_transaction_id: holdId, refund_type: 'overpayment_cash' },
+          });
+        }
+      } else if (diff < 0) {
+        // Underheld — final fare exceeded the hold (e.g. surge, tolls).
+        // Deduct the extra from the wallet now.
+        const extra = Math.abs(diff);
+        const { error: extraErr } = await supabase
+          .from('wallet_transactions')
+          .insert({
+            user_id:          userId,
+            ride_id:          rideId,
+            transaction_type: 'debit',          // recognised by getWalletBalances
+            amount:           extra,
+            currency_code:    currencyCode,
+            status:           'completed',
+            description:      `Ride fare adjustment - ${rideId}`,
+            reference:        `fare_adj_${rideId}_${Date.now()}`,
+            metadata:         { hold_transaction_id: holdId, adjustment_type: 'underhold' },
+          })
+          .select('id')
+          .single();
+
+        if (extraErr) {
+          logger.error('Ride fare adjustment debit error:', extraErr);
+          // Non-fatal — hold already covered the base amount
+        }
+      }
+
+      // Record the final settled payment amount for reporting/audit
+      const { data: paymentRecord, error: paymentErr } = await supabase
         .from('wallet_transactions')
         .insert({
-          user_id: userId,
-          ride_id: rideId,
-          transaction_type: 'deduct',
-          amount: finalAmount,
-          currency_code: currencyCode,
-          status: 'completed',
-          description: `Ride payment - ${rideId}`,
-          reference: `ride_${rideId}_${Date.now()}`,
-          metadata: { hold_transaction_id: holdId, original_hold_amount: heldAmount },
+          user_id:          userId,
+          ride_id:          rideId,
+          transaction_type: 'payment',          // audit/reporting record — amount is informational
+          amount:           finalAmount,
+          currency_code:    currencyCode,
+          status:           'completed',
+          description:      `Ride payment settled - ${rideId}`,
+          reference:        `ride_payment_${rideId}_${Date.now()}`,
+          metadata:         {
+            hold_transaction_id: holdId,
+            held_amount:         heldAmount,
+            final_amount:        finalAmount,
+            promo_portion:       meta.promo_portion ?? 0,
+            cash_portion:        meta.cash_portion  ?? heldAmount,
+          },
         })
-        .select()
+        .select('id')
         .single();
 
-      if (deductError) {
-        logger.error('Deduct transaction error:', deductError);
-        return { success: false, message: 'Failed to process payment' };
+      if (paymentErr) {
+        logger.error('Ride payment record error:', paymentErr);
+        // Non-fatal — balance was already settled above
       }
 
-      const refundAmount = heldAmount - finalAmount;
-      if (refundAmount > 0) {
-        await supabase.from('wallet_transactions').insert({
-          user_id: userId,
-          ride_id: rideId,
-          transaction_type: 'refund',
-          amount: refundAmount,
-          currency_code: currencyCode,
-          status: 'completed',
-          description: `Ride payment refund - ${rideId}`,
-          reference: `refund_${rideId}_${Date.now()}`,
-          metadata: { hold_transaction_id: holdId, deduct_transaction_id: deductTransaction.id },
-        });
-      }
+      logger.info('Ride payment processed', { rideId, holdId, heldAmount, finalAmount });
 
       return {
-        success: true,
-        paymentId: deductTransaction.id,
-        refundAmount: refundAmount > 0 ? refundAmount : undefined,
-        message: 'Payment processed successfully',
+        success:      true,
+        paymentId:    paymentRecord?.id,
+        refundAmount: diff > 0 ? diff : undefined,
+        message:      'Payment processed successfully',
       };
     } catch (error) {
       logger.error('Process ride payment error:', error);
@@ -380,7 +475,7 @@ export class PaymentService {
 
       const { data: holdTransaction, error: fetchError } = await supabase
         .from('wallet_transactions')
-        .select('user_id, amount, currency_code, status, reference')
+        .select('user_id, amount, currency_code, status, reference, metadata')
         .eq('id', holdId)
         .eq('transaction_type', 'hold')
         .single();
@@ -393,38 +488,74 @@ export class PaymentService {
         return { success: false, message: 'Hold transaction is not in completed status' };
       }
 
-      const refundReference = `refund_${Date.now()}_${holdTransaction.user_id}`;
+      const holdMeta     = (holdTransaction.metadata ?? {}) as Record<string, number>;
+      const totalAmount  = parseFloat(holdTransaction.amount);
+      const promoPortion = holdMeta.promo_portion ?? 0;
+      const cashPortion  = holdMeta.cash_portion  ?? totalAmount;
 
-      const { data: refundTransaction, error: refundError } = await supabase
-        .from('wallet_transactions')
-        .insert({
-          user_id: holdTransaction.user_id,
-          transaction_type: 'refund',
-          amount: holdTransaction.amount,
-          currency_code: holdTransaction.currency_code,
-          status: 'completed',
-          description: `Refund for hold: ${reason}`,
-          reference: refundReference,
-          metadata: {
-            refund_type: 'hold_release',
-            original_hold_id: holdId,
-            original_reference: holdTransaction.reference,
-            reason,
-            ...metadata,
-            created_at: new Date().toISOString(),
-          },
-        })
-        .select()
-        .single();
+      const baseMetadata = {
+        refund_type:       'hold_release',
+        original_hold_id:  holdId,
+        original_reference: holdTransaction.reference,
+        reason,
+        ...metadata,
+        created_at: new Date().toISOString(),
+      };
 
-      if (refundError) {
-        logger.error('Create refund transaction error:', refundError);
-        return { success: false, message: 'Failed to create refund transaction' };
+      let lastRefundId: string | undefined;
+
+      // ── Refund cash portion back to cash bucket ──────────────────────────
+      if (cashPortion > 0) {
+        const { data: cashRefund, error: cashErr } = await supabase
+          .from('wallet_transactions')
+          .insert({
+            user_id:          holdTransaction.user_id,
+            transaction_type: 'refund',          // → CASH_CREDIT_TYPES
+            amount:           cashPortion,
+            currency_code:    holdTransaction.currency_code,
+            status:           'completed',
+            description:      `Hold released (cash): ${reason}`,
+            reference:        `refund_cash_${Date.now()}_${holdTransaction.user_id}`,
+            metadata:         { ...baseMetadata, bucket: 'cash' },
+          })
+          .select('id')
+          .single();
+
+        if (cashErr) {
+          logger.error('Cash hold release refund error:', cashErr);
+          return { success: false, message: 'Failed to release hold (cash portion)' };
+        }
+        lastRefundId = cashRefund.id;
       }
 
-      logger.info('Payment hold released:', { holdId, refundId: refundTransaction.id, reason });
+      // ── Refund promo portion back to promo bucket ────────────────────────
+      if (promoPortion > 0) {
+        const { data: promoRefund, error: promoErr } = await supabase
+          .from('wallet_transactions')
+          .insert({
+            user_id:          holdTransaction.user_id,
+            transaction_type: 'promo_credit',    // → PROMO_CREDIT_TYPES
+            amount:           promoPortion,
+            currency_code:    holdTransaction.currency_code,
+            status:           'completed',
+            description:      `Hold released (promo): ${reason}`,
+            reference:        `refund_promo_${Date.now()}_${holdTransaction.user_id}`,
+            metadata:         { ...baseMetadata, bucket: 'promo' },
+          })
+          .select('id')
+          .single();
 
-      return { success: true, message: 'Payment hold released successfully', refundId: refundTransaction.id };
+        if (promoErr) {
+          logger.error('Promo hold release refund error:', promoErr);
+          // Non-fatal if cash refund already succeeded — log and continue
+        } else {
+          lastRefundId = lastRefundId ?? promoRefund.id;
+        }
+      }
+
+      logger.info('Payment hold released:', { holdId, refundId: lastRefundId, reason, cashPortion, promoPortion });
+
+      return { success: true, message: 'Payment hold released successfully', refundId: lastRefundId };
     } catch (error: any) {
       logger.error('Release payment hold error:', error);
       return { success: false, message: 'Failed to release payment hold' };

@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import config from '../config';
 import supabase from '../utils/supabase';
@@ -14,11 +15,26 @@ import tokenService from './token.service';
 import otpService from './otp.service';
 import emailService from './email.service';
 
+/**
+ * Normalise any Nigerian phone format to E.164 (+234XXXXXXXXXX).
+ * Handles: 080XXXXXXXX, 234XXXXXXXXXX, +234XXXXXXXXXX
+ */
+function normalizePhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.startsWith('234')) return `+${digits}`;
+  if (digits.startsWith('0'))   return `+234${digits.slice(1)}`;
+  if (digits.length === 10)     return `+234${digits}`;  // 8012345678 → +2348012345678
+  return `+${digits}`;
+}
+
 interface RegisterData {
   firstName: string;
   lastName: string;
   email: string;
   password: string;
+  phone: string;
+  deviceId?: string;   // ANDROID_ID / IOS identifierForVendor from X-Device-ID header
+  ipAddress?: string;  // captured at controller layer from req.ip
 }
 
 interface LoginData {
@@ -31,18 +47,31 @@ class AuthService {
    * Register new user — stores in pending_registrations until email is verified
    */
   async register(data: RegisterData): Promise<{ email: string }> {
-    const { firstName, lastName, email, password } = data;
+    const { firstName, lastName, email, password, phone, deviceId, ipAddress } = data;
     const normalizedEmail = email.toLowerCase();
+    const normalizedPhone  = normalizePhone(phone);
 
-    // Check if a verified account already exists
+    // Check if a verified account already exists (exclude deleted accounts — they can re-register)
     const { data: existingUser } = await supabase
       .from('users')
-      .select('id')
+      .select('id, status')
       .eq('email', normalizedEmail)
       .single();
 
-    if (existingUser) {
+    if (existingUser && existingUser.status !== 'account_deleted') {
       throw new ConflictError('An account with this email already exists. Please login instead.');
+    }
+
+    // Check if phone is already taken by an active account
+    const { data: existingPhone } = await supabase
+      .from('users')
+      .select('id')
+      .eq('phone', normalizedPhone)
+      .neq('status', 'account_deleted')
+      .single();
+
+    if (existingPhone) {
+      throw new ConflictError('An account with this phone number already exists.');
     }
 
     // Hash password
@@ -64,11 +93,14 @@ class AuthService {
         email: normalizedEmail,
         first_name: firstName,
         last_name: lastName,
+        phone: normalizedPhone,
         password_hash: passwordHash,
         otp_code: otpCode,
         otp_expires_at: otpExpiresAt.toISOString(),
         otp_attempts: 0,
         expires_at: expiresAt.toISOString(),
+        device_id: deviceId ?? null,
+        ip_address: ipAddress ?? null,
         created_at: new Date().toISOString(),
       }, { onConflict: 'email' });
 
@@ -90,10 +122,10 @@ class AuthService {
   async verifyEmail(email: string, otp: string): Promise<void> {
     const normalizedEmail = email.toLowerCase();
 
-    // Look up pending registration
+    // Look up pending registration — explicit columns bypass PostgREST schema cache
     const { data: pending, error: pendingError } = await supabase
       .from('pending_registrations')
-      .select('*')
+      .select('email, first_name, last_name, phone, password_hash, otp_code, otp_expires_at, otp_attempts, expires_at, device_id, ip_address')
       .eq('email', normalizedEmail)
       .single();
 
@@ -143,27 +175,75 @@ class AuthService {
       throw new ValidationError(`Invalid OTP. ${remaining} attempt${remaining > 1 ? 's' : ''} remaining.`);
     }
 
-    // OTP valid — create the real user
-    const userId = uuidv4();
-    const { error: createError } = await supabase.from('users').insert({
-      id: userId,
-      email: normalizedEmail,
-      password_hash: pending.password_hash,
-      first_name: pending.first_name,
-      last_name: pending.last_name,
-      roles: ['customer'],
-      active_role: 'customer',
-      provider: 'emailpass',
-      email_verified: true,
-      status: 'active',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
+    // OTP valid — create or reactivate the user
+    // If the email belongs to a deleted account, reactivate it instead of inserting a duplicate.
+    const { data: deletedAccount } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', normalizedEmail)
+      .eq('status', 'account_deleted')
+      .single();
 
-    if (createError) {
-      logger.error('Error creating user from pending registration:', createError);
-      throw new Error('Failed to complete registration');
+    let userId: string;
+
+    if (deletedAccount) {
+      // Reactivate the existing deleted account with fresh details
+      userId = deletedAccount.id;
+      const { error: reactivateError } = await supabase
+        .from('users')
+        .update({
+          password_hash:  pending.password_hash,
+          first_name:     pending.first_name,
+          last_name:      pending.last_name,
+          phone:          pending.phone ?? null,
+          roles:          ['customer'],
+          active_role:    'customer',
+          email_verified: true,
+          status:         'active',
+          updated_at:     new Date().toISOString(),
+        })
+        .eq('id', userId);
+
+      if (reactivateError) {
+        logger.error('Error reactivating deleted account:', reactivateError);
+        throw new Error('Failed to complete registration');
+      }
+
+      logger.info('Deleted account reactivated on re-registration', { email: normalizedEmail, userId });
+    } else {
+      // Fresh registration — insert new row
+      userId = uuidv4();
+      const { error: createError } = await supabase.from('users').insert({
+        id:             userId,
+        email:          normalizedEmail,
+        password_hash:  pending.password_hash,
+        first_name:     pending.first_name,
+        last_name:      pending.last_name,
+        phone:          pending.phone ?? null,
+        roles:          ['customer'],
+        active_role:    'customer',
+        provider:       'emailpass',
+        email_verified: true,
+        status:         'active',
+        created_at:     new Date().toISOString(),
+        updated_at:     new Date().toISOString(),
+      });
+
+      if (createError) {
+        logger.error('Error creating user from pending registration:', createError);
+        throw new Error('Failed to complete registration');
+      }
     }
+
+     // Patch phone via update — bypasses PostgREST schema cache insert issue
+    if (pending.phone) {
+      await supabase
+        .from('users')
+        .update({ phone: pending.phone, updated_at: new Date().toISOString() })
+        .eq('email', normalizedEmail);
+      logger.info('Phone saved for new user', { email: normalizedEmail, phone: pending.phone });
+    }
+
 
     // Remove pending registration
     await supabase.from('pending_registrations').delete().eq('email', normalizedEmail);
@@ -173,6 +253,22 @@ class AuthService {
       await emailService.sendWelcomeEmail(normalizedEmail, pending.first_name);
     } catch (err) {
       logger.warn('Failed to send welcome email:', err);
+    }
+
+    // ── Signup promo credit (non-blocking) ────────────────────────────────────
+    // Check if there is an active promo campaign and award the credit if so.
+    // Uses a crypto hash of the E.164 phone for fraud fingerprinting.
+    // pending.phone is already normalized to E.164 from the registration step.
+    if (pending.phone) {
+      this.awardSignupPromoIfActive(userId, normalizePhone(pending.phone), {
+        deviceId:  pending.device_id  ?? undefined,
+        ipAddress: pending.ip_address ?? undefined,
+      }).catch((err) =>
+        logger.warn('Signup promo award failed (non-fatal)', {
+          email: normalizedEmail,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      );
     }
 
     logger.info(`Email verified and user created: ${normalizedEmail}`);
@@ -262,8 +358,12 @@ class AuthService {
     }
 
     // Check account status
+    if (user.status === 'account_deleted') {
+      throw new UnauthorizedError('This account has been deleted. Please register again to create a new account.');
+    }
+
     if (user.status !== 'active') {
-      throw new UnauthorizedError('Your account has been disabled. Please contact support.');
+      throw new UnauthorizedError('Your account has been suspended. Please contact support.');
     }
 
     // Verify password (only for emailpass provider)
@@ -456,6 +556,158 @@ class AuthService {
       logger.info('Cleaned up old login attempts');
     }
   }
+  /**
+   * Award a signup promo credit to a newly verified user if:
+   *  1. There is an active promo with remaining budget
+   *  2. This phone hash has not claimed the promo before       (primary gate)
+   *  3. This device ID has not claimed the promo before        (secondary gate — soft block)
+   *  4. This user hasn't already claimed it                    (belt-and-suspenders)
+   *
+   * IP address is stored as a soft signal for forensics — NOT used as a hard block
+   * because many users share IPs (mobile carriers, NAT, VPNs).
+   *
+   * Phone + Device together form the production fraud fingerprint.
+   * Non-blocking — called with .catch() so failures never break signup.
+   */
+  private async awardSignupPromoIfActive(
+    userId: string,
+    normalizedPhone: string,
+    context: { deviceId?: string; ipAddress?: string } = {}
+  ): Promise<void> {
+    const { deviceId, ipAddress } = context;
+
+    // ── 1. Find active promo (new status model) ─────────────────────────────
+    // Active = stored status not paused/ended/deactivated AND within date window
+    // No need for admin to manually activate — auto-activates when starts_at arrives.
+    const now = new Date().toISOString();
+    const { data: promo, error: promoError } = await supabase
+      .from('signup_promos')
+      .select('id, promo_amount, total_budget_cap, claims_count')
+      .not('status', 'in', '("ended","deactivated","paused")')
+      .lte('starts_at', now)
+      .gt('ends_at', now)
+      .order('starts_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (promoError || !promo) return; // No active promo — nothing to do
+
+    const promoAmount     = parseFloat(promo.promo_amount);
+    const totalBudget     = parseFloat(promo.total_budget_cap);
+    const disbursed       = promoAmount * (promo.claims_count ?? 0);
+    const remainingBudget = totalBudget - disbursed;
+
+    if (remainingBudget < promoAmount) {
+      logger.info('Signup promo budget exhausted — no credit awarded', { promoId: promo.id, userId });
+      return;
+    }
+
+    // ── 2. Phone hash fraud gate (primary — hard block) ─────────────────────
+    const phoneHash = crypto.createHash('sha256').update(normalizedPhone).digest('hex');
+
+    const { data: phoneClash } = await supabase
+      .from('promo_signup_claims')
+      .select('id')
+      .eq('promo_id', promo.id)
+      .eq('phone_hash', phoneHash)
+      .maybeSingle();
+
+    if (phoneClash) {
+      logger.warn('Promo fraud gate — phone hash already claimed', {
+        promoId: promo.id,
+        userId,
+      });
+      return;
+    }
+
+    // ── 3. Device ID fraud gate (secondary — hard block if device known) ────
+    // ANDROID_ID / IOS identifierForVendor sent as X-Device-ID header by the app.
+    // If the device has already claimed this promo under any account, block it.
+    if (deviceId) {
+      const { data: deviceClash } = await supabase
+        .from('promo_signup_claims')
+        .select('id')
+        .eq('promo_id', promo.id)
+        .eq('device_id', deviceId)
+        .maybeSingle();
+
+      if (deviceClash) {
+        logger.warn('Promo fraud gate — device ID already claimed', {
+          promoId: promo.id,
+          userId,
+          deviceId,
+        });
+        return;
+      }
+    }
+
+    // ── 4. User dedup gate (belt-and-suspenders) ────────────────────────────
+    const { data: userClash } = await supabase
+      .from('promo_signup_claims')
+      .select('id')
+      .eq('promo_id', promo.id)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (userClash) {
+      logger.info('User already claimed this promo — skipping', { promoId: promo.id, userId });
+      return;
+    }
+
+    // ── 5. Credit wallet as promo_credit ────────────────────────────────────
+    const reference = `promo_signup_${promo.id}_${userId}`;
+    const { error: txError } = await supabase
+      .from('wallet_transactions')
+      .insert({
+        user_id:          userId,
+        transaction_type: 'promo_credit',
+        amount:           promoAmount,
+        currency_code:    'NGN',
+        status:           'completed',
+        reference,
+        description:      'Welcome bonus — signup promo credit',
+        metadata: {
+          promo_id:    promo.id,
+          credited_by: 'auth-service',
+          credited_at: new Date().toISOString(),
+        },
+      });
+
+    if (txError) {
+      logger.error('Failed to credit signup promo to wallet', {
+        userId, promoId: promo.id, error: txError.message,
+      });
+      return;
+    }
+
+    // ── 6. Record claim fingerprint (phone + device + ip) ───────────────────
+    await supabase.from('promo_signup_claims').insert({
+      promo_id:   promo.id,
+      user_id:    userId,
+      phone_hash: phoneHash,
+      device_id:  deviceId  ?? null,   // hard fraud gate on next signup from same device
+      ip_address: ipAddress ?? null,   // soft signal — stored for forensics, not a hard block
+      amount:     promoAmount,
+      claimed_at: new Date().toISOString(),
+    });
+
+    // ── 7. Increment claims_count on the promo ──────────────────────────────
+    await supabase
+      .from('signup_promos')
+      .update({
+        claims_count: (promo.claims_count ?? 0) + 1,
+        updated_at:   new Date().toISOString(),
+      })
+      .eq('id', promo.id);
+
+    logger.info(`✅ Signup promo credit of ₦${promoAmount} awarded`, {
+      userId,
+      promoId:  promo.id,
+      reference,
+      hasDevice: !!deviceId,
+    });
+  }
+
 }
 
 export default new AuthService();

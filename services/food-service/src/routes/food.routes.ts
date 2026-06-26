@@ -7,9 +7,9 @@ import { authenticate } from '../middleware/auth.middleware';
 
 const router = Router();
 const restaurantCtrl = new RestaurantController();
-const cartCtrl = new CartController();
-const orderCtrl = new OrderController();
-const paymentCtrl = new PaymentController();
+const cartCtrl       = new CartController();
+const orderCtrl      = new OrderController();
+const paymentCtrl    = new PaymentController();
 
 // ── Public: Restaurant & Menu Browse ──────────────────────────
 router.get('/restaurants', restaurantCtrl.listRestaurants);
