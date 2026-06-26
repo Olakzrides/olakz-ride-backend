@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { createClient } from '@supabase/supabase-js';
 import { ResponseUtil } from '../utils/response';
 import logger from '../utils/logger';
 
@@ -12,11 +13,17 @@ export interface AuthRequest extends Request {
   };
 }
 
-export const authenticate = (
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY!,
+  { auth: { autoRefreshToken: false, persistSession: false } }
+);
+
+export const authenticate = async (
   req: Request,
   res: Response,
   next: NextFunction
-): void | Response => {
+): Promise<void | Response> => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
@@ -28,8 +35,27 @@ export const authenticate = (
     if (!secret) return ResponseUtil.serverError(res, 'Auth configuration error');
 
     const decoded = jwt.verify(token, secret) as any;
+    const userId = decoded.userId || decoded.id;
+
+    // Live status check — deleted/suspended users cannot use old tokens
+    const { data: userRow } = await supabase
+      .from('users')
+      .select('status')
+      .eq('id', userId)
+      .single();
+
+    if (!userRow) {
+      return ResponseUtil.unauthorized(res, 'Account not found');
+    }
+    if (userRow.status === 'account_deleted') {
+      return ResponseUtil.unauthorized(res, 'This account has been deleted. Please register again.');
+    }
+    if (userRow.status !== 'active') {
+      return ResponseUtil.unauthorized(res, 'Your account has been suspended. Please contact support.');
+    }
+
     (req as AuthRequest).user = {
-      id: decoded.userId || decoded.id,
+      id: userId,
       email: decoded.email,
       role: decoded.role || 'customer',
       roles: decoded.roles,

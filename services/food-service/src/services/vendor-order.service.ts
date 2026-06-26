@@ -151,14 +151,29 @@ export class VendorOrderService {
 
     await OrderService.recordStatusChange(orderId, 'rejected', 'pending', vendorId, 'vendor', rejectionReason);
 
-    // Refund customer wallet
+    // Refund customer wallet — route back to correct buckets using stored portions
     if (order.payment_status === 'paid' && order.payment_method === 'wallet') {
       const { WalletService } = await import('./wallet.service');
-      await WalletService.credit({
-        userId: order.customer_id,
-        amount: parseFloat(order.total_amount),
-        reference: `refund_rejected_${orderId}_${Date.now()}`,
-        description: `Refund: order rejected by restaurant`,
+      // Retrieve stored portions from the original debit transaction
+      const { data: origTx } = await supabase
+        .from('wallet_transactions')
+        .select('metadata')
+        .eq('user_id', order.customer_id)
+        .eq('transaction_type', 'debit')
+        .ilike('description', `%${orderId}%`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const meta = (origTx?.metadata ?? {}) as Record<string, number>;
+      const total = parseFloat(order.total_amount);
+      const promoPortion = Math.min(meta.promo_portion ?? 0, total);
+      const cashPortion  = total - promoPortion;
+      await WalletService.refundToBuckets({
+        userId:        order.customer_id,
+        cashPortion,
+        promoPortion,
+        baseReference: `refund_rejected_${orderId}`,
+        description:   'Refund: order rejected by restaurant',
       });
       await supabase.from('food_orders').update({ payment_status: 'refunded' }).eq('id', orderId);
       logger.info('Wallet refunded for rejected order', { orderId, amount: order.total_amount });

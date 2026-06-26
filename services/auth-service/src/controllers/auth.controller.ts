@@ -11,7 +11,15 @@ class AuthController {
    */
   async register(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const result = await authService.register(req.body);
+      // X-Device-ID: ANDROID_ID on Android, identifierForVendor on iOS
+      const deviceId  = (req.headers['x-device-id'] as string | undefined)?.trim() || undefined;
+      const ipAddress = (req.ip || req.socket.remoteAddress || '').replace('::ffff:', '') || undefined;
+
+      const result = await authService.register({
+        ...req.body,
+        deviceId,
+        ipAddress,
+      });
       ResponseUtil.success(
         res,
         result,

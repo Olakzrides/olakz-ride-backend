@@ -110,13 +110,17 @@ export class VendorOrderService {
     });
     await OrderService.recordStatusChange(orderId, 'cancelled', 'pending', vendorId, 'vendor', rejectionReason);
 
-    // Refund customer
+    // Refund customer — route back to correct buckets using stored portions
     if (order.paymentStatus === 'paid' && order.paymentMethod === 'wallet') {
-      await WalletService.credit({
-        userId: order.customerId,
-        amount: parseFloat(order.totalAmount.toString()),
-        reference: `refund_rejected_${orderId}_${Date.now()}`,
-        description: 'Refund: marketplace order rejected by vendor',
+      const total        = parseFloat(order.totalAmount.toString());
+      const cashPortion  = parseFloat((order.walletCashPortion  ?? order.totalAmount).toString());
+      const promoPortion = parseFloat((order.walletPromoPortion ?? 0).toString());
+      await WalletService.refundToBuckets({
+        userId:        order.customerId,
+        cashPortion,
+        promoPortion,
+        baseReference: `refund_rejected_${orderId}`,
+        description:   'Refund: marketplace order rejected by vendor',
       });
       await prisma.marketplaceOrder.update({ where: { id: orderId }, data: { paymentStatus: 'refunded' } });
     }

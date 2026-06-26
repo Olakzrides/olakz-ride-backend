@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { VendorController } from '../controllers/vendor.controller';
 import { MenuController } from '../controllers/menu.controller';
+import { VendorPromoController } from '../controllers/vendor-promo.controller';
 import { authenticate } from '../middleware/auth.middleware';
 import { isVendorApproved } from '../middleware/vendor.middleware';
 
 const router = Router();
 const vendorCtrl = new VendorController();
-const menuCtrl = new MenuController();
+const menuCtrl   = new MenuController();
+const promoCtrl  = new VendorPromoController();
 
 // All vendor routes require authentication + approved vendor status
 router.use(authenticate, isVendorApproved);
@@ -44,5 +46,16 @@ router.post('/orders/:id/accept', vendorCtrl.acceptOrder);
 router.post('/orders/:id/reject', vendorCtrl.rejectOrder);
 router.put('/orders/:id/status', vendorCtrl.updateStatus);
 router.put('/orders/:id/preparation-time', vendorCtrl.updatePrepTime);
+
+// ─── Promo Campaigns ──────────────────────────────────────────────────────────
+router.get('/promos',                   promoCtrl.getAll);
+router.post('/promos',                  promoCtrl.create);
+router.get('/promos/:promoId',          promoCtrl.getById);
+router.patch('/promos/:promoId',        promoCtrl.update);
+router.delete('/promos/:promoId',       promoCtrl.delete);
+router.patch('/promos/:promoId/pause',  promoCtrl.pause);
+router.patch('/promos/:promoId/resume', promoCtrl.resume);
+router.patch('/promos/:promoId/end',    promoCtrl.end);
+router.get('/promos/:promoId/uses',     promoCtrl.getUses);
 
 export default router;

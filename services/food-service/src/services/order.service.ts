@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { supabase } from '../config/database';
 import { WalletService } from './wallet.service';
 import { FareService } from './fare.service';
+import { VendorPromoService } from './vendor-promo.service';
 import { getFoodSocketService } from './food-socket.service';
 import { FoodNotificationService } from './food-notification.service';
 import logger from '../utils/logger';
@@ -34,7 +35,8 @@ interface PlaceOrderParams {
   };
   paymentMethod: 'wallet' | 'card' | 'cash';
   specialInstructions?: string;
-  vehicle_type?: string;
+  vehicleType?: string;  // optional vehicle type from colleague's branch
+  promoCode?: string;    // optional vendor promo code — applied to subtotal
 }
 
 export class OrderService {
@@ -42,8 +44,7 @@ export class OrderService {
    * Place a new food order
    */
   static async placeOrder(params: PlaceOrderParams) {
-    const { customerId, restaurantId, items, deliveryAddress, paymentMethod, specialInstructions } = params;
-    const vehicleType = params.vehicle_type || 'motorcycle';
+    const { customerId, restaurantId, items, deliveryAddress, paymentMethod, specialInstructions, promoCode, vehicleType } = params;
 
     // 0. Validate items not empty
     if (!items || items.length === 0) {
@@ -129,6 +130,28 @@ export class OrderService {
 
     const totalAmount = subtotal + fare.deliveryFee + fare.serviceFee + fare.roundingFee;
 
+    // ── Apply vendor promo code (discount on subtotal only) ──────────────────
+    let promoId:        string | undefined;
+    let discountAmount: number = 0;
+
+    if (promoCode) {
+      const promoResult = await VendorPromoService.validateCode({
+        code:     promoCode,
+        storeRef: restaurantId,
+        customerId,
+        subtotal,
+      });
+
+      if (!promoResult.valid) {
+        throw new Error(promoResult.message);
+      }
+
+      promoId        = promoResult.promoId;
+      discountAmount = promoResult.discountAmount ?? 0;
+    }
+
+    const discountedTotal = Math.max(0, totalAmount - discountAmount);
+
     // 5. Handle payment
     if (paymentMethod === 'card') {
       throw new Error('Card payment not yet implemented');
@@ -137,23 +160,23 @@ export class OrderService {
       throw new Error('Cash payment not yet implemented');
     }
 
-    // Wallet payment
-    const balanceBefore = await WalletService.getBalance(customerId);
-    if (balanceBefore < totalAmount) {
-      throw new Error(`Insufficient wallet balance. Required: ₦${totalAmount.toFixed(2)}, Available: ₦${balanceBefore.toFixed(2)}`);
+    // Wallet payment — use total balance (cash + promo) for eligibility check
+    const balances = await WalletService.getBalances(customerId);
+    if (balances.totalBalance < discountedTotal) {
+      throw new Error(`Insufficient wallet balance. Required: ₦${discountedTotal.toFixed(2)}, Available: ₦${balances.totalBalance.toFixed(2)}`);
     }
 
     const txRef = `food_order_${Date.now()}_${uuidv4().substring(0, 8)}`;
 
-    // Deduct wallet
-    const { transactionId: walletTxId, newBalance: balanceAfter } = await WalletService.deduct({
-      userId: customerId,
-      amount: totalAmount,
-      reference: txRef,
-      description: `Food order at ${restaurant.name}`,
+    // Deduct wallet — charge discountedTotal (subtotal discount already removed)
+    const { transactionId: walletTxId, newBalance: balanceAfter, cashPortion, promoPortion } = await WalletService.deduct({
+      userId:      customerId,
+      amount:      discountedTotal,
+      reference:   txRef,
+      description: `Food order at ${restaurant.name}${discountAmount > 0 ? ` (promo: -₦${discountAmount.toFixed(2)})` : ''}`,
     });
 
-    logger.info('Wallet deducted for food order', { customerId, totalAmount, txRef });
+    logger.info('Wallet deducted for food order', { customerId, discountedTotal, txRef, cashPortion, promoPortion });
 
     // Generate 4-digit delivery code (customer shows to courier at door)
     const deliveryCode = Math.floor(1000 + Math.random() * 9000).toString();
@@ -162,35 +185,41 @@ export class OrderService {
     const { data: order, error: orderError } = await supabase
       .from('food_orders')
       .insert({
-        customer_id: customerId,
+        customer_id:   customerId,
         restaurant_id: restaurantId,
-        status: 'pending',
+        status:         'pending',
         payment_method: paymentMethod,
         payment_status: 'paid',
         subtotal,
-        delivery_fee: fare.deliveryFee,
-        service_fee: fare.serviceFee,
-        rounding_fee: fare.roundingFee,
-        total_amount: totalAmount,
+        delivery_fee:   fare.deliveryFee,
+        service_fee:    fare.serviceFee,
+        rounding_fee:   fare.roundingFee,
+        total_amount:   discountedTotal,          // what the customer actually paid
+        discount_amount: discountAmount > 0 ? discountAmount : null,
+        promo_id:        promoId ?? null,
+        promo_code:      promoCode ? promoCode.trim().toUpperCase() : null,
         delivery_address: deliveryAddress,
         vehicle_type: vehicleType,
         special_instructions: specialInstructions || null,
         estimated_prep_time_minutes: restaurant.estimated_prep_time_minutes,
         wallet_transaction_id: walletTxId,
-        wallet_balance_before: balanceBefore,
-        wallet_balance_after: balanceAfter,
+        wallet_balance_before: balances.totalBalance,
+        wallet_balance_after:  balanceAfter,
+        wallet_cash_portion:   cashPortion,
+        wallet_promo_portion:  promoPortion,
         delivery_code: deliveryCode,
       })
       .select()
       .single();
 
     if (orderError) {
-      // Refund wallet on order creation failure
-      await WalletService.credit({
-        userId: customerId,
-        amount: totalAmount,
-        reference: `refund_${txRef}`,
-        description: 'Refund: order creation failed',
+      // Refund wallet on order creation failure — route back to correct buckets
+      await WalletService.refundToBuckets({
+        userId:        customerId,
+        cashPortion,
+        promoPortion,
+        baseReference: txRef,
+        description:   'Refund: order creation failed',
       }).catch((e) => logger.error('Refund failed after order creation error', e));
       throw new Error('Failed to create order');
     }
@@ -198,6 +227,16 @@ export class OrderService {
     // 7. Insert order items
     const orderItems = orderItemsData.map((oi) => ({ ...oi, order_id: order.id }));
     await supabase.from('food_order_items').insert(orderItems);
+
+    // 7b. Record promo use (non-blocking — order is already placed)
+    if (promoId && discountAmount > 0) {
+      VendorPromoService.recordUse({
+        promoId,
+        userId:         customerId,
+        orderId:        order.id,
+        discountAmount,
+      }).catch(() => {/* already logged inside recordUse */});
+    }
 
     // 8. Record status history
     await this.recordStatusChange(order.id, 'pending', null, customerId, 'customer');
@@ -228,14 +267,15 @@ export class OrderService {
 
         await this.recordStatusChange(order.id, 'cancelled', 'pending', 'system', 'system', 'Order expired — vendor did not respond in time');
 
-        // Refund wallet
+        // Refund wallet — route back to correct buckets using stored portions
         if (currentOrder.payment_status === 'paid' && currentOrder.payment_method === 'wallet') {
-          const refundRef = `refund_expired_${order.id}_${Date.now()}`;
-          await WalletService.credit({
-            userId: currentOrder.customer_id,
-            amount: parseFloat(currentOrder.total_amount),
-            reference: refundRef,
-            description: 'Refund: order expired — vendor did not respond',
+          const refundRef = `refund_expired_${order.id}`;
+          await WalletService.refundToBuckets({
+            userId:        currentOrder.customer_id,
+            cashPortion:   parseFloat((currentOrder as any).wallet_cash_portion  ?? currentOrder.total_amount),
+            promoPortion:  parseFloat((currentOrder as any).wallet_promo_portion ?? '0'),
+            baseReference: refundRef,
+            description:   'Refund: order expired — vendor did not respond',
           });
           await supabase.from('food_orders').update({ payment_status: 'refunded' }).eq('id', order.id);
         }
@@ -300,13 +340,15 @@ export class OrderService {
       order_items: orderItemsData,
       fare_breakdown: {
         subtotal,
-        delivery_fee: fare.deliveryFee,
-        service_fee: fare.serviceFee,
-        rounding_fee: fare.roundingFee,
-        total_amount: totalAmount,
-        distance_km: fare.distanceKm,
-        distance_text: fare.distanceText,
-        currency_code: fare.currencyCode,
+        discount_amount:  discountAmount > 0 ? discountAmount : null,
+        promo_code:       promoCode ? promoCode.trim().toUpperCase() : null,
+        delivery_fee:     fare.deliveryFee,
+        service_fee:      fare.serviceFee,
+        rounding_fee:     fare.roundingFee,
+        total_amount:     discountedTotal,
+        distance_km:      fare.distanceKm,
+        distance_text:    fare.distanceText,
+        currency_code:    fare.currencyCode,
       },
     };
   }
@@ -404,14 +446,14 @@ export class OrderService {
 
     await this.recordStatusChange(orderId, 'cancelled', order.status, customerId, 'customer', reason);
 
-    // Refund wallet if paid
+    // Refund wallet — route back to correct buckets using stored portions
     if (order.payment_status === 'paid' && order.payment_method === 'wallet') {
-      const refundRef = `refund_${orderId}_${Date.now()}`;
-      await WalletService.credit({
-        userId: customerId,
-        amount: parseFloat(order.total_amount),
-        reference: refundRef,
-        description: `Refund for cancelled food order`,
+      await WalletService.refundToBuckets({
+        userId:        customerId,
+        cashPortion:   parseFloat(order.wallet_cash_portion  ?? order.total_amount),
+        promoPortion:  parseFloat(order.wallet_promo_portion ?? '0'),
+        baseReference: `refund_${orderId}`,
+        description:   'Refund for cancelled food order',
       });
 
       await supabase

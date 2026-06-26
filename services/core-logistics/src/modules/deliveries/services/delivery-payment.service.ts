@@ -124,45 +124,43 @@ export class DeliveryPaymentService {
     try {
       const { deliveryId, customerId, amount, currencyCode } = params;
 
-      // Check wallet balance
-      const balanceCheck = await this.paymentService.checkSufficientBalance(
-        customerId,
-        amount,
-        currencyCode
-      );
+      // Check wallet balance using total (cash + promo)
+      const balances = await this.paymentService.getWalletBalances(customerId, currencyCode);
 
-      if (!balanceCheck.sufficient) {
+      if (balances.totalBalance < amount) {
         logger.warn('Insufficient wallet balance for delivery:', {
-          customerId,
-          deliveryId,
-          required: amount,
-          available: balanceCheck.currentBalance,
+          customerId, deliveryId, required: amount, available: balances.totalBalance,
         });
-
         return {
           success: false,
-          message: `Insufficient wallet balance. Required: ${amount} ${currencyCode}, Available: ${balanceCheck.currentBalance} ${currencyCode}`,
+          message: `Insufficient wallet balance. Required: ${amount} ${currencyCode}, Available: ${balances.totalBalance} ${currencyCode}`,
         };
       }
 
-      // Create debit transaction immediately
+      // Debit wallet — response includes cash_portion/promo_portion for refund routing
       const reference = `delivery_${deliveryId}_${Date.now()}`;
+
+      // balances already fetched above — use directly for portion calculation
+      const promoPortion = Math.max(0, amount - balances.cashBalance);
+      const cashPortion  = amount - promoPortion;
 
       const { data: transaction, error } = await supabase
         .from('wallet_transactions')
         .insert({
-          user_id: customerId,
+          user_id:          customerId,
           transaction_type: 'debit',
-          amount: amount,
-          currency_code: currencyCode,
-          status: 'completed',
-          description: `Delivery payment - ${deliveryId}`,
+          amount,
+          currency_code:    currencyCode,
+          status:           'completed',
+          description:      `Delivery payment - ${deliveryId}`,
           reference,
           metadata: {
-            payment_type: 'delivery',
-            delivery_id: deliveryId,
-            balance_before: balanceCheck.currentBalance,
-            charged_at: new Date().toISOString(),
+            payment_type:   'delivery',
+            delivery_id:    deliveryId,
+            balance_before: balances.totalBalance,
+            cash_portion:   cashPortion,    // used by refund to route back to correct bucket
+            promo_portion:  promoPortion,   // used by refund to route back to correct bucket
+            charged_at:     new Date().toISOString(),
           },
         })
         .select()
@@ -544,7 +542,9 @@ export class DeliveryPaymentService {
   }
 
   /**
-   * Refund delivery payment (for cancellations)
+   * Refund delivery payment (for cancellations).
+   * Looks up the original wallet debit transaction to find the stored
+   * cash_portion / promo_portion and routes the refund to the correct bucket.
    */
   async refundDeliveryPayment(params: {
     deliveryId: string;
@@ -556,65 +556,104 @@ export class DeliveryPaymentService {
     try {
       const { deliveryId, customerId, amount, currencyCode, reason } = params;
 
-      const reference = `delivery_refund_${deliveryId}_${Date.now()}`;
-
-      // Create refund transaction
-      const { data: transaction, error } = await supabase
+      // ── Look up the original debit transaction for this delivery ──────────
+      // processWalletPayment stores cash_portion/promo_portion in metadata
+      const { data: originalTx } = await supabase
         .from('wallet_transactions')
-        .insert({
-          user_id: customerId,
-          transaction_type: 'refund',
-          amount: amount,
-          currency_code: currencyCode,
-          status: 'completed',
-          description: `Delivery refund - ${deliveryId}: ${reason}`,
-          reference,
-          metadata: {
-            refund_type: 'delivery_cancellation',
-            delivery_id: deliveryId,
-            reason,
-            refunded_at: new Date().toISOString(),
-          },
-        })
-        .select()
-        .single();
+        .select('metadata')
+        .eq('user_id', customerId)
+        .eq('transaction_type', 'debit')
+        .ilike('description', `%${deliveryId}%`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      if (error) {
-        logger.error('Create refund transaction error:', error);
-        return {
-          success: false,
-          message: 'Failed to process refund',
-        };
+      const meta         = (originalTx?.metadata ?? {}) as Record<string, number>;
+      const promoPortion = Math.min(meta.promo_portion ?? 0, amount);
+      const cashPortion  = amount - promoPortion;
+
+      const baseRef = `delivery_refund_${deliveryId}`;
+      const refundIds: string[] = [];
+
+      // ── Refund cash portion → cash bucket ─────────────────────────────────
+      if (cashPortion > 0) {
+        const { data: cashTx, error: cashErr } = await supabase
+          .from('wallet_transactions')
+          .insert({
+            user_id:          customerId,
+            transaction_type: 'refund',         // → CASH_CREDIT_TYPES
+            amount:           cashPortion,
+            currency_code:    currencyCode,
+            status:           'completed',
+            description:      `Delivery refund (cash) - ${deliveryId}: ${reason}`,
+            reference:        `${baseRef}_cash_${Date.now()}`,
+            metadata: {
+              refund_type:  'delivery_cancellation',
+              delivery_id:  deliveryId,
+              bucket:       'cash',
+              reason,
+              refunded_at:  new Date().toISOString(),
+            },
+          })
+          .select('id')
+          .single();
+
+        if (cashErr) {
+          logger.error('Create cash refund transaction error:', cashErr);
+          return { success: false, message: 'Failed to process cash refund' };
+        }
+        refundIds.push(cashTx.id);
       }
 
-      // Update delivery payment status
+      // ── Refund promo portion → promo bucket ───────────────────────────────
+      if (promoPortion > 0) {
+        const { data: promoTx, error: promoErr } = await supabase
+          .from('wallet_transactions')
+          .insert({
+            user_id:          customerId,
+            transaction_type: 'promo_credit',   // → PROMO_CREDIT_TYPES
+            amount:           promoPortion,
+            currency_code:    currencyCode,
+            status:           'completed',
+            description:      `Delivery refund (promo) - ${deliveryId}: ${reason}`,
+            reference:        `${baseRef}_promo_${Date.now()}`,
+            metadata: {
+              refund_type:  'delivery_cancellation',
+              delivery_id:  deliveryId,
+              bucket:       'promo',
+              reason,
+              refunded_at:  new Date().toISOString(),
+            },
+          })
+          .select('id')
+          .single();
+
+        if (promoErr) {
+          logger.error('Create promo refund transaction error:', promoErr);
+          // Non-fatal if cash portion already succeeded
+        } else {
+          refundIds.push(promoTx.id);
+        }
+      }
+
+      // ── Mark delivery as refunded ─────────────────────────────────────────
       await supabase
         .from('deliveries')
-        .update({
-          payment_status: 'refunded',
-          updated_at: new Date().toISOString(),
-        })
+        .update({ payment_status: 'refunded', updated_at: new Date().toISOString() })
         .eq('id', deliveryId);
 
       logger.info('Delivery payment refunded:', {
-        deliveryId,
-        customerId,
-        amount,
-        transactionId: transaction.id,
-        reason,
+        deliveryId, customerId, amount, cashPortion, promoPortion, reason,
       });
 
       return {
-        success: true,
-        message: 'Payment refunded successfully',
-        paymentId: transaction.id,
+        success:   true,
+        message:   'Payment refunded successfully',
+        paymentId: refundIds[0],
       };
     } catch (error: any) {
       logger.error('Refund delivery payment error:', error);
-      return {
-        success: false,
-        message: error.message || 'Refund failed',
-      };
+      return { success: false, message: error.message || 'Refund failed' };
     }
   }
 }

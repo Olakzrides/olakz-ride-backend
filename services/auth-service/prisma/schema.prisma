@@ -104,6 +104,7 @@ model PendingRegistration {
   email        String   @unique @db.VarChar(255)
   firstName    String   @map("first_name") @db.VarChar(100)
   lastName     String   @map("last_name") @db.VarChar(100)
+  phone        String?  @db.VarChar(20)
   passwordHash String   @map("password_hash") @db.VarChar(255)
   otpCode      String   @map("otp_code") @db.VarChar(10)
   otpExpiresAt DateTime @map("otp_expires_at") @db.Timestamptz(6)

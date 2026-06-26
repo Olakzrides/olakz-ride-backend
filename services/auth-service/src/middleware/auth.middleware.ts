@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import tokenService from '../services/token.service';
+import supabase from '../utils/supabase';
 import { UnauthorizedError } from '../utils/errors';
 
 export interface AuthRequest extends Request {
@@ -11,7 +12,9 @@ export interface AuthRequest extends Request {
 }
 
 /**
- * Verify JWT token from Authorization header
+ * Verify JWT token from Authorization header.
+ * After signature verification, checks the user's live status in the DB
+ * so deleted/suspended accounts can never use old tokens.
  */
 export const authMiddleware = async (
   req: AuthRequest,
@@ -25,16 +28,36 @@ export const authMiddleware = async (
       throw new UnauthorizedError('No token provided');
     }
 
-    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+    const token = authHeader.substring(7);
 
-    // Verify token
+    // 1. Verify JWT signature + expiry
     const decoded = tokenService.verifyAccessToken(token);
 
-    // Attach user to request
+    // 2. Check live account status — catches deleted/suspended accounts
+    //    even if the JWT hasn't expired yet.
+    const { data: userRow } = await supabase
+      .from('users')
+      .select('status')
+      .eq('id', decoded.userId)
+      .single();
+
+    if (!userRow) {
+      throw new UnauthorizedError('Account not found');
+    }
+
+    if (userRow.status === 'account_deleted') {
+      throw new UnauthorizedError('This account has been deleted. Please register again.');
+    }
+
+    if (userRow.status !== 'active') {
+      throw new UnauthorizedError('Your account has been suspended. Please contact support.');
+    }
+
+    // 3. Attach user to request
     req.user = {
       userId: decoded.userId,
-      email: decoded.email,
-      role: decoded.role,
+      email:  decoded.email,
+      role:   decoded.role,
     };
 
     next();

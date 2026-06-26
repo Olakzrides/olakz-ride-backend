@@ -175,6 +175,8 @@ model MarketplaceOrder {
   walletTransactionId  String?  @map("wallet_transaction_id")
   walletBalanceBefore  Decimal? @map("wallet_balance_before") @db.Decimal(10, 2)
   walletBalanceAfter   Decimal? @map("wallet_balance_after") @db.Decimal(10, 2)
+  walletCashPortion    Decimal? @map("wallet_cash_portion") @db.Decimal(10, 2)
+  walletPromoPortion   Decimal? @map("wallet_promo_portion") @db.Decimal(10, 2)
   cancellationReason   String?  @map("cancellation_reason")
   cancelledBy          String?  @map("cancelled_by") @db.VarChar(20)
   rejectionReason      String?  @map("rejection_reason")

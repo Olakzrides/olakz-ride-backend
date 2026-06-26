@@ -31,7 +31,15 @@ export class WalletService {
     return Math.max(0, earned);
   }
 
-  static async getBalance(userId: string, currencyCode = 'NGN'): Promise<number> {
+  /**
+   * Get split wallet balance — cash vs promo.
+   * promo_credit transactions are ring-fenced and cannot be withdrawn or transferred.
+   */
+  static async getWalletBalances(userId: string, currencyCode = 'NGN'): Promise<{
+    cashBalance:  number;
+    promoBalance: number;
+    totalBalance: number;
+  }> {
     const { data: transactions, error } = await supabase
       .from('wallet_transactions')
       .select('amount, transaction_type')
@@ -40,24 +48,48 @@ export class WalletService {
       .eq('status', 'completed');
 
     if (error) {
-      logger.error('Get wallet balance error:', error);
-      return 0;
+      logger.error('Get wallet balances error:', error);
+      return { cashBalance: 0, promoBalance: 0, totalBalance: 0 };
     }
 
-    let balance = 0;
+    const CASH_CREDIT_TYPES  = new Set(['credit', 'refund', 'tip_received', 'earning', 'tip_payment']);
+    const PROMO_CREDIT_TYPES = new Set(['promo_credit']);
+    const DEBIT_TYPES        = new Set(['debit', 'hold', 'withdrawal']);
+
+    let cashBalance  = 0;
+    let promoBalance = 0;
+
     for (const tx of transactions || []) {
       const amount = parseFloat(tx.amount);
-      const type = tx.transaction_type;
-      if (type === 'credit' || type === 'refund' || type === 'tip_received' || type === 'earning') {
-        balance += amount;
-      } else if (type === 'debit' || type === 'hold' || type === 'withdrawal') {
-        balance -= amount;
-      } else if (type === 'tip_payment') {
-        balance += amount;
+      const type   = tx.transaction_type;
+
+      if (CASH_CREDIT_TYPES.has(type))  cashBalance  += amount;
+      else if (PROMO_CREDIT_TYPES.has(type)) promoBalance += amount;
+      else if (DEBIT_TYPES.has(type)) {
+        // Debit from cash first, then promo
+        if (cashBalance >= amount) {
+          cashBalance -= amount;
+        } else {
+          const remainder = amount - cashBalance;
+          cashBalance  = 0;
+          promoBalance = Math.max(0, promoBalance - remainder);
+        }
       }
     }
 
-    return Math.max(0, balance);
+    const safeCash  = Math.max(0, cashBalance);
+    const safePromo = Math.max(0, promoBalance);
+
+    return {
+      cashBalance:  safeCash,
+      promoBalance: safePromo,
+      totalBalance: safeCash + safePromo,
+    };
+  }
+
+  static async getBalance(userId: string, currencyCode = 'NGN'): Promise<number> {
+    const { totalBalance } = await this.getWalletBalances(userId, currencyCode);
+    return totalBalance;
   }
 
   static async deduct(params: {
@@ -333,5 +365,238 @@ export class WalletService {
     if (error) throw error;
 
     return { transactions: data || [], total: count || 0 };
+  }
+
+  // ─── Phone-to-phone wallet transfer ──────────────────────────────────────
+
+  /**
+   * Normalise any Nigerian phone format to E.164 (+234XXXXXXXXXX).
+   */
+  private static normalizePhone(phone: string): string {
+    const d = phone.replace(/\D/g, '');
+    if (d.startsWith('234'))  return `+${d}`;           // 2348012345678  → +2348012345678
+    if (d.startsWith('0'))    return `+234${d.slice(1)}`; // 08012345678    → +2348012345678
+    if (d.length === 10)      return `+234${d}`;          // 8012345678     → +2348012345678
+    return `+${d}`;
+  }
+
+  /**
+   * Look up a user by phone number and return a safe preview for the sender
+   * to confirm the correct recipient before sending money.
+   *
+   * Returns: { userId, displayName, phone } or null if not found.
+   */
+  static async lookupRecipientByPhone(phone: string, requestingUserId: string): Promise<{
+    userId: string;
+    displayName: string;
+    phone: string;
+  } | null> {
+    const normalizedPhone = this.normalizePhone(phone);
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, phone, status')
+      .eq('phone', normalizedPhone)
+      .single();
+
+    if (!user || user.status === 'account_deleted' || user.status === 'terminated') {
+      return null;
+    }
+
+    // Prevent sending to yourself
+    if (user.id === requestingUserId) {
+      return null;
+    }
+
+    // Full name for clear identification — no ambiguity on who they're sending to
+    const fullName = `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || 'Unknown';
+
+    return {
+      userId:      user.id,
+      displayName: fullName,
+      phone:       normalizedPhone,
+    };
+  }
+
+  /**
+   * Transfer money from one wallet to another by phone number.
+   * Atomic — both debit and credit happen or neither does.
+   * Sends push/in-app notifications to both parties.
+   */
+  static async transferByPhone(params: {
+    senderUserId: string;
+    recipientPhone: string;
+    amount: number;
+    note?: string;
+    currencyCode?: string;
+  }): Promise<{
+    transactionRef: string;
+    amount: number;
+    recipient: { displayName: string; phone: string };
+    senderNewBalance: number;
+  }> {
+    const { senderUserId, recipientPhone, amount, note, currencyCode = 'NGN' } = params;
+
+    if (!amount || amount <= 0) throw new Error('Transfer amount must be greater than zero');
+    if (amount < 10)            throw new Error('Minimum transfer amount is ₦10');
+
+    // Resolve recipient
+    const recipient = await this.lookupRecipientByPhone(recipientPhone, senderUserId);
+    if (!recipient) {
+      throw new Error('Recipient not found. Please check the phone number and try again.');
+    }
+
+    // Check sender cash balance — promo funds cannot be transferred
+    const { cashBalance, totalBalance } = await this.getWalletBalances(senderUserId, currencyCode);
+    if (totalBalance < amount) {
+      throw new Error(
+        `Insufficient wallet balance. Required: ₦${amount.toFixed(2)}, Available: ₦${totalBalance.toFixed(2)}`
+      );
+    }
+    if (cashBalance < amount) {
+      throw new Error(
+        `Insufficient cash balance for transfer. Promo funds cannot be transferred. Cash available: ₦${cashBalance.toFixed(2)}`
+      );
+    }
+
+    // Fetch sender name for notification
+    const { data: sender } = await supabase
+      .from('users')
+      .select('first_name, last_name')
+      .eq('id', senderUserId)
+      .single();
+
+    const senderName = sender
+      ? `${sender.first_name} ${((sender.last_name as string) ?? '').charAt(0).toUpperCase()}.`.trim()
+      : 'Someone';
+
+    const txRef = `transfer_${Date.now()}_${senderUserId.substring(0, 8)}`;
+
+    // ── Debit sender ──────────────────────────────────────────────────────────
+    const { error: debitError } = await supabase
+      .from('wallet_transactions')
+      .insert({
+        user_id:          senderUserId,
+        transaction_type: 'debit',
+        amount,
+        currency_code:    currencyCode,
+        status:           'completed',
+        reference:        `${txRef}_debit`,
+        description:      note
+          ? `Transfer to ${recipient.displayName}: ${note}`
+          : `Transfer to ${recipient.displayName}`,
+        metadata: {
+          transfer_type:      'wallet_to_wallet',
+          recipient_user_id:  recipient.userId,
+          recipient_phone:    recipient.phone,
+          tx_ref:             txRef,
+        },
+      });
+
+    if (debitError) throw new Error(`Transfer failed: ${debitError.message}`);
+
+    // ── Credit recipient ──────────────────────────────────────────────────────
+    const { error: creditError } = await supabase
+      .from('wallet_transactions')
+      .insert({
+        user_id:          recipient.userId,
+        transaction_type: 'credit',
+        amount,
+        currency_code:    currencyCode,
+        status:           'completed',
+        reference:        `${txRef}_credit`,
+        description:      note
+          ? `Transfer from ${senderName}: ${note}`
+          : `Transfer from ${senderName}`,
+        metadata: {
+          transfer_type:    'wallet_to_wallet',
+          sender_user_id:   senderUserId,
+          sender_name:      senderName,
+          tx_ref:           txRef,
+        },
+      });
+
+    if (creditError) {
+      // Attempt rollback — re-credit sender
+      await supabase.from('wallet_transactions').insert({
+        user_id:          senderUserId,
+        transaction_type: 'credit',
+        amount,
+        currency_code:    currencyCode,
+        status:           'completed',
+        reference:        `${txRef}_rollback`,
+        description:      'Transfer rollback — recipient credit failed',
+        metadata:         { transfer_type: 'rollback', original_ref: txRef },
+      });
+      throw new Error('Transfer failed. Your wallet has been restored.');
+    }
+
+    const { totalBalance: senderNewBalance } = await this.getWalletBalances(senderUserId, currencyCode);
+
+    // ── Push notifications (non-blocking) ────────────────────────────────────
+    this.sendTransferNotifications({
+      senderUserId,
+      senderName,
+      recipientUserId: recipient.userId,
+      recipientDisplayName: recipient.displayName,
+      amount,
+      currencyCode,
+      txRef,
+    }).catch((err) => logger.warn('Transfer notification failed (non-fatal)', { error: err?.message }));
+
+    logger.info('Wallet-to-wallet transfer completed', {
+      from: senderUserId,
+      to: recipient.userId,
+      amount,
+      txRef,
+    });
+
+    return {
+      transactionRef: txRef,
+      amount,
+      recipient: { displayName: recipient.displayName, phone: recipient.phone },
+      senderNewBalance,
+    };
+  }
+
+  /**
+   * Fire push + in-app notifications to both sender and recipient.
+   */
+  private static async sendTransferNotifications(params: {
+    senderUserId:         string;
+    senderName:           string;
+    recipientUserId:      string;
+    recipientDisplayName: string;
+    amount:               number;
+    currencyCode:         string;
+    txRef:                string;
+  }): Promise<void> {
+    const { senderUserId, senderName, recipientUserId, recipientDisplayName, amount, txRef } = params;
+    const formatted = `₦${amount.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
+
+    // Attempt to reach core-logistics push notification service
+    const coreUrl = process.env.CORE_LOGISTICS_URL || 'http://localhost:3001';
+    const internalKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
+    const headers = { 'x-internal-api-key': internalKey };
+
+    await Promise.allSettled([
+      // Notify sender
+      axios.post(`${coreUrl}/api/internal/push/send`, {
+        userId:           senderUserId,
+        notificationType: 'wallet_transfer_sent',
+        title:            'Transfer Successful',
+        body:             `You sent ${formatted} to ${recipientDisplayName}`,
+        data:             { type: 'wallet_transfer', direction: 'sent', tx_ref: txRef, amount: String(amount) },
+      }, { headers, timeout: 5000 }),
+
+      // Notify recipient
+      axios.post(`${coreUrl}/api/internal/push/send`, {
+        userId:           recipientUserId,
+        notificationType: 'wallet_transfer_received',
+        title:            'Money Received',
+        body:             `You received ${formatted} from ${senderName}`,
+        data:             { type: 'wallet_transfer', direction: 'received', tx_ref: txRef, amount: String(amount) },
+      }, { headers, timeout: 5000 }),
+    ]);
   }
 }

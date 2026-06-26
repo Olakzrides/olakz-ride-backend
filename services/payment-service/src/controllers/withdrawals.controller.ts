@@ -51,12 +51,13 @@ export class WithdrawalsController {
       const totalDeduction = amount + fee;
       const netAmount = amount; // what lands in the bank
 
-      // Check earned balance — only earned money can be withdrawn
+      // Check earned balance — only platform earnings (driver/vendor payouts) can be withdrawn.
+      // Card top-ups, refunds, and promo credits are NOT withdrawable.
       const earnedBalance = await WalletService.getEarnedBalance(userId);
       if (earnedBalance < totalDeduction) {
         return ResponseUtil.badRequest(
           res,
-          `Insufficient earned balance. Available to withdraw: ₦${earnedBalance.toLocaleString()}${fee > 0 ? ` (includes ₦${fee} transfer fee)` : ''}`
+          `Insufficient earned balance. Available to withdraw: ₦${earnedBalance.toLocaleString('en-NG', { minimumFractionDigits: 2 })}${fee > 0 ? ` (includes ₦${fee} transfer fee)` : ''}. Only platform earnings can be withdrawn.`
         );
       }
 
@@ -182,7 +183,7 @@ export class WithdrawalsController {
         return ResponseUtil.serverError(res, 'Failed to fetch withdrawals');
       }
 
-      // Also return current earned balance
+      // Return earned balance — only platform earnings are withdrawable
       const earnedBalance = await WalletService.getEarnedBalance(userId);
 
       return ResponseUtil.success(res, {

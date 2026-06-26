@@ -22,7 +22,8 @@ interface JWTPayload {
 }
 
 /**
- * Verify JWT token and attach user to request
+ * Verify JWT token and check live account status.
+ * Deleted/suspended accounts are rejected even if their JWT has not expired.
  */
 export const authenticate = async (
   req: AuthenticatedRequest,
@@ -31,18 +32,13 @@ export const authenticate = async (
 ): Promise<void | Response> => {
   try {
     const authHeader = req.headers.authorization;
-
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return ResponseUtil.unauthorized(res, 'No token provided');
     }
 
     const token = authHeader.substring(7);
+    if (!token) return ResponseUtil.unauthorized(res, 'No token provided');
 
-    if (!token) {
-      return ResponseUtil.unauthorized(res, 'No token provided');
-    }
-
-    // Get JWT secret from environment
     const jwtSecret = process.env.JWT_SECRET;
     if (!jwtSecret) {
       logger.error('JWT_SECRET not configured');
@@ -51,29 +47,35 @@ export const authenticate = async (
 
     try {
       const decoded = jwt.verify(token, jwtSecret) as JWTPayload;
+      const userId = decoded.userId || decoded.id;
 
-      req.user = {
-        id: decoded.userId || decoded.id,
-        email: decoded.email,
-        role: decoded.role || 'customer',
-      };
+      // Live status check — deleted/suspended users cannot use old tokens
+      const { createClient } = await import('@supabase/supabase-js');
+      const supabase = createClient(
+        process.env.SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY!,
+        { auth: { autoRefreshToken: false, persistSession: false } }
+      );
+      const { data: userRow } = await supabase
+        .from('users')
+        .select('status')
+        .eq('id', userId)
+        .single();
 
-      logger.debug('User authenticated via JWT', {
-        userId: req.user.id,
-        email: req.user.email,
-        role: req.user.role
-      });
+      if (!userRow) return ResponseUtil.unauthorized(res, 'Account not found');
+      if (userRow.status === 'account_deleted') {
+        return ResponseUtil.unauthorized(res, 'This account has been deleted. Please register again.');
+      }
+      if (userRow.status !== 'active') {
+        return ResponseUtil.unauthorized(res, 'Your account has been suspended. Please contact support.');
+      }
 
+      req.user = { id: userId, email: decoded.email, role: decoded.role || 'customer' };
       next();
     } catch (jwtError: any) {
-      logger.warn('Invalid JWT token', {
-        error: jwtError.message,
-        token: token.substring(0, 20) + '...'
-      });
-      
+      logger.warn('Invalid JWT token', { error: jwtError.message });
       return ResponseUtil.unauthorized(res, 'Invalid or expired token');
     }
-
   } catch (error: any) {
     logger.error('Authentication error:', error);
     return ResponseUtil.serverError(res, 'Authentication failed');
