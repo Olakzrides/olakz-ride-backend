@@ -22,6 +22,7 @@ import remittanceRoutes from './routes/remittance.routes';
 import storageRoutes from './routes/storage.routes';
 import marketplacePricingRoutes from './routes/marketplace-pricing.routes';
 import promosRoutes from './routes/promos.routes';
+import broadcastRoutes from './routes/broadcast.routes';
 
 const app = express();
 
@@ -92,6 +93,9 @@ app.use('/api/admin/marketplace/pricing', marketplacePricingRoutes);
 
 // Step 17: signup promo campaign management
 app.use('/api/admin/promos', promosRoutes);
+
+// Step 18: admin broadcast notifications
+app.use('/api/admin/notifications', broadcastRoutes);
 
 // 404
 app.use((req, res) => {

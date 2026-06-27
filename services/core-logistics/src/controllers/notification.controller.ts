@@ -270,6 +270,60 @@ export class NotificationController {
   };
 
   /**
+   * Mark all notifications as read
+   * PUT /api/notifications/read-all
+   */
+  markAllAsRead = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return ResponseUtil.unauthorized(res);
+
+      const { error } = await supabase
+        .from('notification_history')
+        .update({ status: 'read', read_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .neq('status', 'read');
+
+      if (error) {
+        logger.error('markAllAsRead error:', error);
+        return ResponseUtil.error(res, 'Failed to mark all as read');
+      }
+
+      return ResponseUtil.success(res, { message: 'All notifications marked as read' });
+    } catch (error: any) {
+      logger.error('markAllAsRead error:', error);
+      return ResponseUtil.error(res, 'Failed to mark all as read');
+    }
+  };
+
+  /**
+   * Get unread notification count (for bell badge)
+   * GET /api/notifications/unread-count
+   */
+  getUnreadCount = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return ResponseUtil.unauthorized(res);
+
+      const { count, error } = await supabase
+        .from('notification_history')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .neq('status', 'read');
+
+      if (error) {
+        logger.error('getUnreadCount error:', error);
+        return ResponseUtil.error(res, 'Failed to get unread count');
+      }
+
+      return ResponseUtil.success(res, { unread_count: count ?? 0 });
+    } catch (error: any) {
+      logger.error('getUnreadCount error:', error);
+      return ResponseUtil.error(res, 'Failed to get unread count');
+    }
+  };
+
+  /**
    * Test push notification (for development/testing)
    * POST /api/notifications/test
    */
