@@ -48,8 +48,8 @@ export class InitializationService {
         const superAdmin = await prisma.user.upsert({
           where: { email: superAdminEmail.toLowerCase() },
           update: {
-            roles: ['admin'],
-            activeRole: 'admin',
+            roles: ['super_admin'],
+            activeRole: 'super_admin',
             updatedAt: new Date(),
           },
           create: {
@@ -58,8 +58,8 @@ export class InitializationService {
             firstName: 'Super',
             lastName: 'Admin',
             username: 'superadmin',
-            roles: ['admin'],
-            activeRole: 'admin',
+            roles: ['super_admin'],
+            activeRole: 'super_admin',
             provider: 'emailpass',
             emailVerified: true,
             status: 'active',

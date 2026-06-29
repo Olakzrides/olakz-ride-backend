@@ -23,6 +23,7 @@ import storageRoutes from './routes/storage.routes';
 import marketplacePricingRoutes from './routes/marketplace-pricing.routes';
 import promosRoutes from './routes/promos.routes';
 import broadcastRoutes from './routes/broadcast.routes';
+import subAdminRoutes from './routes/sub-admin.routes';
 
 const app = express();
 
@@ -96,6 +97,9 @@ app.use('/api/admin/promos', promosRoutes);
 
 // Step 18: admin broadcast notifications
 app.use('/api/admin/notifications', broadcastRoutes);
+
+// Step 19: super-admin → sub-admin account management
+app.use('/api/admin/administrators', subAdminRoutes);
 
 // 404
 app.use((req, res) => {

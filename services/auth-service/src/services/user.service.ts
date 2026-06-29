@@ -243,18 +243,28 @@ class UserService {
   }
 
   /**
-   * Change password
+   * Change password.
+   * Blocked for admin and super_admin accounts — password is exclusively
+   * managed by the super admin. Restriction lifts when admin role is removed.
    */
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
     // Get user
     const { data: user, error } = await supabase
       .from('users')
-      .select('password_hash, provider')
+      .select('password_hash, provider, roles')
       .eq('id', userId)
       .single();
 
     if (error || !user) {
       throw new NotFoundError('User not found');
+    }
+
+    // ── Block admin accounts from self-service password changes ───────────────
+    const userRoles: string[] = Array.isArray(user.roles) ? user.roles : [];
+    if (userRoles.includes('admin') || userRoles.includes('super_admin')) {
+      throw new ValidationError(
+        'Admin accounts cannot change their own password. Contact your Super Admin to reset it.'
+      );
     }
 
     // Check if user uses password authentication
