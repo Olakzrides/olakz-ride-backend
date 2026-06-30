@@ -1,6 +1,6 @@
 import { createApp } from './app';
 import { config, validateEnv } from './config/env';
-import { testDatabaseConnection, disconnectDatabase } from './config/database';
+import { testDatabaseConnection, disconnectDatabase, supabase } from './config/database';
 import { logger } from './config/logger';
 import { SocketService } from './services/socket.service';
 import { RideMatchingService } from './services/ride-matching.service';
@@ -53,6 +53,31 @@ async function startServer() {
     // Initialize delivery scheduler service
     DeliverySchedulerService.start();
     logger.info('Delivery scheduler service started');
+
+    // ── 3-month broadcast notification cleanup ────────────────────────────────
+    // Runs on startup then every 24 hours.
+    // Deletes notification_history rows of type 'broadcast' older than 90 days.
+    // Only affects broadcast notifications — ride/delivery/food notifications are unaffected.
+    async function cleanupOldBroadcastNotifications(): Promise<void> {
+      try {
+        const { error } = await supabase.rpc('cleanup_old_broadcast_notifications');
+        if (error) {
+          // RPC not available — fallback direct delete
+          const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+          await supabase
+            .from('notification_history')
+            .delete()
+            .eq('notification_type', 'broadcast')
+            .lt('sent_at', ninetyDaysAgo);
+        }
+        logger.info('Broadcast notification cleanup completed (3-month retention)');
+      } catch (err: any) {
+        logger.error('Broadcast notification cleanup error (non-fatal)', { error: err.message });
+      }
+    }
+
+    await cleanupOldBroadcastNotifications();
+    setInterval(cleanupOldBroadcastNotifications, 24 * 60 * 60 * 1000); // daily
 
     // Make services available globally
     app.set('socketService', socketService);

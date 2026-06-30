@@ -12,7 +12,10 @@ class SecurityService {
   // ─── Password ────────────────────────────────────────────────────────────────
 
   /**
-   * Change password — requires current password verification
+   * Change password — requires current password verification.
+   * Blocked for admin and super_admin accounts — only the super admin can
+   * reset their password via the admin management endpoint. This prevents
+   * a sub admin from changing their own password and bypassing super admin control.
    */
   async changePassword(userId: string, currentPassword: string, newPassword: string, confirmPassword: string): Promise<void> {
     if (newPassword !== confirmPassword) {
@@ -25,11 +28,21 @@ class SecurityService {
 
     const { data: user, error } = await supabase
       .from('users')
-      .select('password_hash, provider')
+      .select('password_hash, provider, roles')
       .eq('id', userId)
       .single();
 
     if (error || !user) throw new NotFoundError('User not found');
+
+    // ── Block admin accounts from self-service password changes ───────────────
+    // Admin passwords are exclusively managed by the super admin.
+    // Once the admin role is removed, this restriction lifts automatically.
+    const userRoles: string[] = Array.isArray(user.roles) ? user.roles : [];
+    if (userRoles.includes('admin') || userRoles.includes('super_admin')) {
+      throw new ValidationError(
+        'Admin accounts cannot change their own password. Contact your Super Admin to reset it.'
+      );
+    }
 
     if (user.provider !== 'emailpass') {
       throw new ValidationError('Password change is not available for OAuth accounts');

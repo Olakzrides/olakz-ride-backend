@@ -377,6 +377,178 @@ export class PushNotificationService {
   }
 
   /**
+   * Send a broadcast notification to a role-based FCM topic.
+   *
+   * Topic naming convention:
+   *   all_users          → everyone
+   *   role_customer      → customers only
+   *   role_driver        → drivers only
+   *   role_vendor        → vendors only
+   *
+   * The mobile app subscribes to the relevant topic(s) on startup.
+   * FCM delivers to all subscribed devices instantly, including offline devices
+   * when they reconnect.
+   *
+   * Returns the FCM message ID and the topic used.
+   */
+  async sendBroadcast(params: {
+    title:      string;
+    body:       string;
+    targetRole: 'all' | 'customer' | 'driver' | 'vendor';
+    data?:      Record<string, string>;
+    broadcastId: string;
+  }): Promise<{
+    success:       boolean;
+    fcmMessageId?: string;
+    topic:         string;
+    error?:        string;
+  }> {
+    const { title, body, targetRole, data = {}, broadcastId } = params;
+
+    const topicMap: Record<string, string> = {
+      all:      'all_users',
+      customer: 'role_customer',
+      driver:   'role_driver',
+      vendor:   'role_vendor',
+    };
+
+    const topic = topicMap[targetRole] ?? 'all_users';
+
+    if (!this.isInitialized) {
+      logger.warn('sendBroadcast: Firebase not initialized');
+      return { success: false, topic, error: 'Push notifications not configured' };
+    }
+
+    try {
+      const message: admin.messaging.Message = {
+        topic,
+        notification: { title, body },
+        data: { ...data, broadcast_id: broadcastId, type: 'broadcast' },
+        android: {
+          priority: 'high',
+          notification: {
+            sound: 'default',
+            channelId: 'broadcasts',
+            priority: 'high',
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              alert: { title, body },
+              sound: 'default',
+              contentAvailable: true,
+            },
+          },
+        },
+      };
+
+      const fcmMessageId = await admin.messaging().send(message);
+
+      logger.info('Broadcast sent via FCM topic', { topic, broadcastId, fcmMessageId });
+      return { success: true, fcmMessageId, topic };
+    } catch (error: any) {
+      logger.error('sendBroadcast FCM error', { topic, error: error.message });
+      return { success: false, topic, error: error.message };
+    }
+  }
+
+  /**
+   * Fetch all active device tokens for a role (used for fan-out fallback
+   * or for counting devices_targeted before the topic send).
+   * Returns distinct user_ids and their token count.
+   */
+  async countTargetedDevices(targetRole: 'all' | 'customer' | 'driver' | 'vendor'): Promise<number> {
+    try {
+      let query = supabase
+        .from('device_tokens')
+        .select('user_id', { count: 'exact', head: true })
+        .eq('is_active', true);
+
+      if (targetRole !== 'all') {
+        // Join-style filter: get user_ids that have the given role
+        const { data: users } = await supabase
+          .from('users')
+          .select('id')
+          .contains('roles', [targetRole])
+          .eq('status', 'active');
+
+        if (!users || users.length === 0) return 0;
+        const userIds = users.map(u => u.id);
+        query = query.in('user_id', userIds);
+      }
+
+      const { count } = await query;
+      return count ?? 0;
+    } catch (err) {
+      logger.error('countTargetedDevices error', { error: err });
+      return 0;
+    }
+  }
+
+  /**
+   * Insert one notification_history inbox row per targeted user.
+   * Called after a successful broadcast so users see it in their bell inbox.
+   * Processes in batches of 1000 to avoid memory issues on large user bases.
+   */
+  async createInboxEntriesForBroadcast(params: {
+    broadcastId: string;
+    title:       string;
+    body:        string;
+    targetRole:  'all' | 'customer' | 'driver' | 'vendor';
+    data?:       Record<string, string>;
+  }): Promise<{ inserted: number }> {
+    const { broadcastId, title, body, targetRole, data = {} } = params;
+    const BATCH = 1000;
+    let offset  = 0;
+    let total   = 0;
+
+    while (true) {
+      let userQuery = supabase
+        .from('users')
+        .select('id')
+        .eq('status', 'active')
+        .range(offset, offset + BATCH - 1);
+
+      if (targetRole !== 'all') {
+        userQuery = userQuery.contains('roles', [targetRole]);
+      }
+
+      const { data: users, error } = await userQuery;
+      if (error || !users || users.length === 0) break;
+
+      const rows = users.map(u => ({
+        user_id:           u.id,
+        notification_type: 'broadcast',
+        channel:           'push',
+        title,
+        body,
+        data:              { ...data, broadcast_id: broadcastId },
+        broadcast_id:      broadcastId,
+        status:            'sent',
+        sent_at:           new Date().toISOString(),
+      }));
+
+      const { error: insertError } = await supabase
+        .from('notification_history')
+        .insert(rows);
+
+      if (insertError) {
+        logger.error('createInboxEntriesForBroadcast batch error', {
+          offset, error: insertError.message,
+        });
+      }
+
+      total  += users.length;
+      offset += BATCH;
+      if (users.length < BATCH) break;
+    }
+
+    logger.info('Broadcast inbox entries created', { broadcastId, total });
+    return { inserted: total };
+  }
+
+  /**
    * Send ride notification templates
    */
   async sendRideNotification(
