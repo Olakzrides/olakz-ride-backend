@@ -18,6 +18,8 @@ router.put('/preferences', notificationController.updatePreferences);
 
 // Notification history
 router.get('/history', notificationController.getHistory);
+router.get('/unread-count', notificationController.getUnreadCount);
+router.put('/read-all', notificationController.markAllAsRead);
 router.put('/:id/read', notificationController.markAsRead);
 
 // Test notification (development only)

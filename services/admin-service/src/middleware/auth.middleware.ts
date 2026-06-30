@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import config from '../config';
 import { logger } from '../utils/logger';
 import { ResponseUtil } from '../utils/response';
+import { supabase } from '../config/database';
 
 export interface AdminUser {
   id: string;
@@ -20,13 +21,52 @@ function toMessage(err: unknown): string {
 }
 
 /**
- * Verifies the JWT and checks for admin or super_admin role.
+ * Check if the user's tokens have been globally revoked.
+ *
+ * We store a row in `admin_token_revocations` keyed by user_id whenever
+ * a super admin strips the admin role or suspends the account. The row
+ * holds a `revoked_at` timestamp. Any JWT whose `iat` (issued-at) is
+ * BEFORE that timestamp is considered invalid — even if the JWT signature
+ * itself is still valid.
+ *
+ * This gives us instant forced-logout without needing to track individual
+ * tokens or maintain a full blacklist.
  */
-export const adminAuthMiddleware = (
+async function isTokenRevoked(userId: string, tokenIssuedAt: number): Promise<boolean> {
+  try {
+    const { data } = await supabase
+      .from('admin_token_revocations')
+      .select('revoked_at')
+      .eq('user_id', userId)
+      .order('revoked_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!data) return false; // no revocation record — token is valid
+
+    // Token issued BEFORE the revocation time → forcibly expired
+    const revokedAtMs = new Date(data.revoked_at).getTime();
+    const issuedAtMs  = tokenIssuedAt * 1000; // JWT iat is in seconds
+
+    return issuedAtMs < revokedAtMs;
+  } catch (err) {
+    // If DB check fails, fail open (don't block legitimate admins due to DB hiccup)
+    logger.error('isTokenRevoked DB check failed (fail-open)', { userId, error: toMessage(err) });
+    return false;
+  }
+}
+
+/**
+ * Verifies the JWT, checks admin/super_admin role, and validates
+ * against the token revocation table for instant forced-logout.
+ *
+ * Made async to support the DB revocation check.
+ */
+export const adminAuthMiddleware = async (
   req: AdminRequest,
   res: Response,
   next: NextFunction
-): void => {
+): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -55,6 +95,21 @@ export const adminAuthMiddleware = (
     if (!isAdmin) {
       ResponseUtil.forbidden(res, 'Admin access required', 'ADMIN_ACCESS_REQUIRED');
       return;
+    }
+
+    // ── Revocation check ────────────────────────────────────────────────────
+    // iat is the Unix timestamp (seconds) when the JWT was signed.
+    const iat = decoded.iat as number | undefined;
+    if (iat) {
+      const revoked = await isTokenRevoked(userId, iat);
+      if (revoked) {
+        ResponseUtil.unauthorized(
+          res,
+          'Your admin access has been revoked. Please log in again.',
+          'TOKEN_REVOKED'
+        );
+        return;
+      }
     }
 
     req.user = { id: userId, email: decoded.email as string, roles: userRoles, isAdmin: true };
