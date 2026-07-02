@@ -170,6 +170,11 @@ export class SocketService {
       this.handleRideRequestResponse(socket, data);
     });
 
+    // Hire request responses (driver accepts/rejects via WebSocket)
+    socket.on('hire:request:respond', (data) => {
+      this.handleHireRequestResponse(socket, data);
+    });
+
     // Ride status updates
     socket.on('ride:status:update', (data) => {
       this.handleRideStatusUpdate(socket, data);
@@ -953,6 +958,213 @@ logger.info('Customer socket emit debug', {
       }
     } catch (error) {
       logger.error('Error notifying passenger of driver assignment:', error);
+    }
+  }
+
+  // ── Transport Hire WebSocket methods ──────────────────────────────────────
+
+  /**
+   * Handle hire:request:respond from driver socket.
+   * Driver accepts or declines a hire request in real time.
+   * Mirrors handleRideRequestResponse but operates on hire_requests table.
+   *
+   * Client emits: { hireId, response: 'accept' | 'decline' }
+   */
+  private async handleHireRequestResponse(socket: AuthenticatedSocket, data: any): Promise<void> {
+    const { driverId } = socket;
+    if (!driverId || socket.userType !== 'driver') return;
+
+    try {
+      const { hireId, response } = data;
+      if (!hireId || !['accept', 'decline'].includes(response)) return;
+
+      logger.info(`Driver ${driverId} attempting to ${response} hire request: ${hireId}`);
+
+      // Check hire is still searching
+      const { data: hire } = await supabase
+        .from('transport_hires')
+        .select('id, status, customer_id')
+        .eq('id', hireId)
+        .single();
+
+      if (!hire || hire.status !== 'searching') {
+        socket.emit('hire:request:cancelled', {
+          hireId,
+          reason: hire ? `hire_already_${hire.status}` : 'hire_not_found',
+        });
+        return;
+      }
+
+      // Check driver has a pending hire_request row for this hire
+      const { data: hireReq } = await supabase
+        .from('hire_requests')
+        .select('id, status')
+        .eq('hire_id', hireId)
+        .eq('driver_id', driverId)
+        .eq('status', 'pending')
+        .maybeSingle();
+
+      if (!hireReq) {
+        socket.emit('hire:request:cancelled', { hireId, reason: 'no_pending_request' });
+        return;
+      }
+
+      if (response === 'decline') {
+        // Mark as declined
+        await supabase
+          .from('hire_requests')
+          .update({ status: 'declined', responded_at: new Date().toISOString() })
+          .eq('id', hireReq.id);
+
+        logger.info(`Driver ${driverId} declined hire ${hireId}`);
+        return;
+      }
+
+      // ── Accept ────────────────────────────────────────────────────────────
+      // Mark this request accepted
+      await supabase
+        .from('hire_requests')
+        .update({ status: 'accepted', responded_at: new Date().toISOString() })
+        .eq('id', hireReq.id);
+
+      // Expire all other pending requests for this hire
+      await supabase
+        .from('hire_requests')
+        .update({ status: 'expired', responded_at: new Date().toISOString() })
+        .eq('hire_id', hireId)
+        .eq('status', 'pending')
+        .neq('id', hireReq.id);
+
+      // Assign driver to hire
+      await supabase
+        .from('transport_hires')
+        .update({
+          driver_id:  driverId,
+          status:     'driver_assigned',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', hireId);
+
+      // Notify customer via WebSocket
+      const driverDetails = await this.getDriverDetailsForPassenger(driverId);
+      await this.notifyCustomerHireDriverAssigned(hire.customer_id, hireId, driverDetails);
+
+      // Confirm to the accepting driver
+      socket.emit('hire:accepted:confirmed', {
+        hireId,
+        status: 'driver_assigned',
+        message: 'Hire accepted. You have been assigned to this booking.',
+      });
+
+      logger.info(`Hire ${hireId} accepted by driver ${driverId} via WebSocket`);
+    } catch (error) {
+      logger.error('Error handling hire request response:', error);
+    }
+  }
+
+  /**
+   * Notify customer that a driver was assigned to their hire.
+   * Called from both WebSocket accept path and REST accept path.
+   * Emits hire:driver:assigned to the customer's socket.
+   */
+  async notifyCustomerHireDriverAssigned(
+    customerId: string,
+    hireId: string,
+    driverDetails: any
+  ): Promise<void> {
+    const payload = {
+      hireId,
+      status: 'driver_assigned',
+      driver: driverDetails,
+    };
+
+    const customerSocketId = this.customerSockets.get(customerId);
+    if (customerSocketId) {
+      this.io.to(customerSocketId).emit('hire:driver:assigned', payload);
+      logger.info(`hire:driver:assigned emitted to customer ${customerId} via memory socket`);
+    } else {
+      // Room-based fallback
+      this.io.to(`user:${customerId}`).emit('hire:driver:assigned', payload);
+
+      // DB socket fallback
+      const { data: conn } = await supabase
+        .from('socket_connections')
+        .select('socket_id')
+        .eq('user_id', customerId)
+        .eq('is_connected', true)
+        .order('connected_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (conn?.socket_id) {
+        this.io.to(conn.socket_id).emit('hire:driver:assigned', payload);
+        this.customerSockets.set(customerId, conn.socket_id);
+        logger.info(`hire:driver:assigned emitted to customer ${customerId} via DB fallback`);
+      }
+    }
+  }
+
+  /**
+   * Broadcast hire status update to both customer and driver.
+   * Called whenever hire status changes (confirmed, in_progress, completed, etc.)
+   * Emits hire:status:updated to both parties.
+   */
+  async broadcastHireStatusUpdate(hireId: string, statusData: {
+    status: string;
+    message?: string;
+    updatedAt?: string;
+  }): Promise<void> {
+    const { data: hire } = await supabase
+      .from('transport_hires')
+      .select('customer_id, driver_id')
+      .eq('id', hireId)
+      .single();
+
+    if (!hire) return;
+
+    const payload = { hireId, ...statusData, updatedAt: statusData.updatedAt ?? new Date().toISOString() };
+
+    // Notify customer
+    const customerSocket = this.customerSockets.get(hire.customer_id);
+    if (customerSocket) {
+      this.io.to(customerSocket).emit('hire:status:updated', payload);
+    } else {
+      this.io.to(`user:${hire.customer_id}`).emit('hire:status:updated', payload);
+    }
+
+    // Notify driver (if assigned)
+    if (hire.driver_id) {
+      const driverSocket = this.driverSockets.get(hire.driver_id);
+      if (driverSocket) {
+        this.io.to(driverSocket).emit('hire:status:updated', payload);
+      } else {
+        this.io.to(`driver:${hire.driver_id}`).emit('hire:status:updated', payload);
+      }
+    }
+
+    logger.info(`hire:status:updated broadcasted for hire ${hireId} → ${statusData.status}`);
+  }
+
+  /**
+   * Notify all drivers that a hire request was cancelled by the customer
+   * (e.g. customer cancels while searching).
+   * Emits hire:request:cancelled to all drivers who had a pending request.
+   */
+  async broadcastHireCancelledToDrivers(hireId: string): Promise<void> {
+    const { data: requests } = await supabase
+      .from('hire_requests')
+      .select('driver_id')
+      .eq('hire_id', hireId)
+      .in('status', ['pending', 'accepted']);
+
+    for (const req of requests ?? []) {
+      const dId = (req as any).driver_id as string;
+      const socketId = this.driverSockets.get(dId);
+      if (socketId) {
+        this.io.to(socketId).emit('hire:request:cancelled', { hireId, reason: 'customer_cancelled' });
+      } else {
+        this.io.to(`driver:${dId}`).emit('hire:request:cancelled', { hireId, reason: 'customer_cancelled' });
+      }
     }
   }
 

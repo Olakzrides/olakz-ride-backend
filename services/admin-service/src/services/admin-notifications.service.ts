@@ -12,6 +12,7 @@ export type NotificationType =
   | 'new_food_order'
   | 'new_marketplace_order'
   | 'new_delivery'
+  | 'new_transport_hire'
   | 'airtime_data_purchase'
   | 'driver_application';
 
@@ -378,6 +379,37 @@ async function fetchAirtimeData(limit: number): Promise<AdminNotification[]> {
 
 // ─── All fetchers registry ────────────────────────────────────────────────────
 
+async function fetchTransportHires(limit: number): Promise<AdminNotification[]> {
+  const { data, error } = await supabase
+    .from('transport_hires')
+    .select('id, hire_number, customer_id, vehicle_category, vehicle_sub_type, amount, currency_code, status, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) { logger.warn('fetchTransportHires', { error: error.message }); return []; }
+  if (!data?.length) return [];
+
+  const userMap = await getUserMap(data.map((d) => (d as Record<string, unknown>).customer_id as string));
+
+  return data.map((d) => {
+    const r = d as Record<string, unknown>;
+    const user = userMap.get(r.customer_id as string) ?? {} as Record<string, unknown>;
+    const name = fullName(user) || 'Customer';
+    const vehicle = `${String(r.vehicle_category ?? '').replace('_', ' ')} (${String(r.vehicle_sub_type ?? '').replace('_', ' ')})`;
+    return {
+      id: `hire_${r.id}`,
+      type: 'new_transport_hire' as NotificationType,
+      message: `${name} booked a transport hire — ${vehicle}`,
+      actor_name: name,
+      actor_id: r.customer_id as string,
+      amount: r.amount ? Number(r.amount) : null,
+      currency: (r.currency_code as string) ?? 'NGN',
+      status: r.status as string,
+      created_at: r.created_at as string,
+      time_ago: timeAgo(r.created_at as string),
+    };
+  });
+}
+
 const ALL_FETCHERS: Record<NotificationType, (limit: number) => Promise<AdminNotification[]>> = {
   new_user: fetchNewUsers,
   new_driver: fetchNewDrivers,
@@ -390,6 +422,7 @@ const ALL_FETCHERS: Record<NotificationType, (limit: number) => Promise<AdminNot
   new_food_order: fetchFoodOrders,
   new_marketplace_order: fetchMarketplaceOrders,
   new_delivery: fetchDeliveries,
+  new_transport_hire: fetchTransportHires,
   airtime_data_purchase: fetchAirtimeData,
 };
 
@@ -414,6 +447,7 @@ export class AdminNotificationsService {
       fetchFoodOrders(perSource),
       fetchMarketplaceOrders(perSource),
       fetchDeliveries(perSource),
+      fetchTransportHires(perSource),
       fetchAirtimeData(perSource),
     ]);
 
@@ -461,6 +495,7 @@ export class AdminNotificationsService {
         fetchFoodOrders(fetchSize),
         fetchMarketplaceOrders(fetchSize),
         fetchDeliveries(fetchSize),
+        fetchTransportHires(fetchSize),
         fetchAirtimeData(fetchSize),
       ]);
 

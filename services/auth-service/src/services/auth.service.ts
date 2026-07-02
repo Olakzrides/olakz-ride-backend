@@ -334,8 +334,9 @@ class AuthService {
   /**
    * Login user
    */
-  async login(data: LoginData, ipAddress: string): Promise<any> {
+  async login(data: LoginData, ipAddress: string, clientType?: string): Promise<any> {
     const { email, password } = data;
+    const isAdminClient = clientType === 'admin';
 
     // Check login attempts
     await this.checkLoginAttempts(email, ipAddress);
@@ -364,6 +365,21 @@ class AuthService {
 
     if (user.status !== 'active') {
       throw new UnauthorizedError('Your account has been suspended. Please contact support.');
+    }
+
+    // ── Platform enforcement ────────────────────────────────────────────────
+    // Admin/super_admin accounts can ONLY log in via the admin dashboard.
+    // Detected via the X-Client-Type: admin header sent by the admin dashboard.
+    // The mobile app sends no such header — defaults to mobile.
+    const userRoles: string[] = user.roles ?? [];
+    const isAdminAccount = userRoles.includes('admin') || userRoles.includes('super_admin');
+
+    if (isAdminAccount && !isAdminClient) {
+      throw new UnauthorizedError('Admin accounts are not permitted to log in on the mobile app.');
+    }
+
+    if (!isAdminAccount && isAdminClient) {
+      throw new UnauthorizedError('You do not have permission to access the admin dashboard.');
     }
 
     // Verify password (only for emailpass provider)
