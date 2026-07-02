@@ -73,7 +73,7 @@ export class VendorPromoService {
   static async create(input: CreateVendorPromoInput) {
     const {
       vendorId, storeId, code, discountPercent, maxDiscountAmount,
-      minOrderAmount, totalUsesLimit, perUserLimit = 1, startsAt, endsAt,
+      minOrderAmount, totalUsesLimit, perUserLimit = null, startsAt, endsAt,
     } = input;
 
     if (!code?.trim())                                throw new Error('Promo code is required');
@@ -102,7 +102,7 @@ export class VendorPromoService {
         max_discount_amount: maxDiscountAmount ?? null,
         min_order_amount:    minOrderAmount ?? 0,
         total_uses_limit:    totalUsesLimit ?? null,
-        per_user_limit:      perUserLimit,
+        per_user_limit:      perUserLimit ?? null,
         uses_count:          0,
         status:              initialStatus,
         starts_at:           startsAt,
@@ -214,13 +214,16 @@ export class VendorPromoService {
       return { valid: false, message: `Minimum order of ₦${minOrder.toLocaleString('en-NG')} required to use this code.` };
     }
 
-    const perUserLimit = promo.per_user_limit ?? 1;
-    const { count: userUses } = await supabase
-      .from('vendor_promo_uses').select('id', { count: 'exact', head: true })
-      .eq('promo_id', promo.id).eq('user_id', customerId);
+    const perUserLimit = promo.per_user_limit ?? null;
 
-    if ((userUses ?? 0) >= perUserLimit) {
-      return { valid: false, message: perUserLimit === 1 ? 'You have already used this promo code.' : `You have reached the maximum of ${perUserLimit} uses for this promo.` };
+    if (perUserLimit !== null) {
+      const { count: userUses } = await supabase
+        .from('vendor_promo_uses').select('id', { count: 'exact', head: true })
+        .eq('promo_id', promo.id).eq('user_id', customerId);
+
+      if ((userUses ?? 0) >= perUserLimit) {
+        return { valid: false, message: perUserLimit === 1 ? 'You have already used this promo code.' : `You have reached the maximum of ${perUserLimit} uses for this promo.` };
+      }
     }
 
     const percent        = parseFloat(promo.discount_percent);

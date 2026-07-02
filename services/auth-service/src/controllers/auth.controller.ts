@@ -60,8 +60,9 @@ class AuthController {
    */
   async login(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const ipAddress = (req.ip || req.socket.remoteAddress || '').replace('::ffff:', '');
-      const result = await authService.login(req.body, ipAddress);
+      const ipAddress  = (req.ip || req.socket.remoteAddress || '').replace('::ffff:', '');
+      const clientType = (req.headers['x-client-type'] as string | undefined)?.toLowerCase();
+      const result     = await authService.login(req.body, ipAddress, clientType);
       ResponseUtil.success(res, result, 'Login successful');
     } catch (error) {
       next(error);
