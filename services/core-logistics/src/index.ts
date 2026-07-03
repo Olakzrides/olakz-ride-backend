@@ -7,6 +7,7 @@ import { RideMatchingService } from './services/ride-matching.service';
 import { ScheduledRideService } from './services/scheduled-ride.service';
 import { DeliverySchedulerService } from './modules/deliveries/services/delivery-scheduler.service';
 import { CacheService } from './shared/utils/cache.service';
+import { HireService } from './services/hire.service';
 import { createServer } from 'http';
 
 // Global services for real-time features
@@ -53,6 +54,10 @@ async function startServer() {
     // Initialize delivery scheduler service
     DeliverySchedulerService.start();
     logger.info('Delivery scheduler service started');
+
+    // Initialize hire watchdog — recovers stuck hires after redeploys/restarts
+    const hireService = new HireService(socketService);
+    hireService.startWatchdog();
 
     // ── 3-month broadcast notification cleanup ────────────────────────────────
     // Runs on startup then every 24 hours.

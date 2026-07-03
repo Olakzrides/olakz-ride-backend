@@ -36,12 +36,11 @@ export class CourierController {
       const driverId = await CourierController.getDriverId(req, res);
       if (!driverId) return res as any;
 
-      const { lat, lng, radius = '15' } = req.query;
-
       const { data: orders, error } = await supabase
         .from('food_orders')
         .select(`
           id, status, delivery_fee, total_amount, delivery_address, created_at,
+          customer_id,
           restaurant:food_restaurants(id, name, address, latitude, longitude)
         `)
         .eq('status', 'searching_courier')
@@ -49,7 +48,28 @@ export class CourierController {
 
       if (error) return ResponseUtil.serverError(res, error.message);
 
-      return ResponseUtil.success(res, { orders: orders || [] });
+      const orderList = orders || [];
+
+      // Enrich customer details
+      const customerIds = [...new Set(orderList.map((o: any) => o.customer_id).filter(Boolean))];
+      const customerMap = new Map<string, { name: string; phone: string | null }>();
+      if (customerIds.length > 0) {
+        const { data: users } = await supabase
+          .from('users').select('id, first_name, last_name, phone').in('id', customerIds);
+        for (const u of users ?? []) {
+          customerMap.set(u.id, {
+            name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Customer',
+            phone: u.phone ?? null,
+          });
+        }
+      }
+
+      const enriched = orderList.map((o: any) => ({
+        ...o,
+        customer: customerMap.get(o.customer_id) ?? null,
+      }));
+
+      return ResponseUtil.success(res, { orders: enriched });
     } catch (err: any) {
       return ResponseUtil.serverError(res, err.message);
     }
@@ -125,6 +145,7 @@ export class CourierController {
         .from('food_orders')
         .select(`
           id, status, delivery_fee, total_amount, delivery_address, created_at, accepted_at,
+          customer_id,
           restaurant:food_restaurants(id, name, address, latitude, longitude, phone)
         `)
         .eq('courier_id', driverId)
@@ -132,7 +153,28 @@ export class CourierController {
 
       if (error) return ResponseUtil.serverError(res, error.message);
 
-      return ResponseUtil.success(res, { orders: orders || [] });
+      const orderList = orders || [];
+
+      // Enrich customer details
+      const customerIds = [...new Set(orderList.map((o: any) => o.customer_id).filter(Boolean))];
+      const customerMap = new Map<string, { name: string; phone: string | null }>();
+      if (customerIds.length > 0) {
+        const { data: users } = await supabase
+          .from('users').select('id, first_name, last_name, phone').in('id', customerIds);
+        for (const u of users ?? []) {
+          customerMap.set(u.id, {
+            name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Customer',
+            phone: u.phone ?? null,
+          });
+        }
+      }
+
+      const enriched = orderList.map((o: any) => ({
+        ...o,
+        customer: customerMap.get(o.customer_id) ?? null,
+      }));
+
+      return ResponseUtil.success(res, { orders: enriched });
     } catch (err: any) {
       return ResponseUtil.serverError(res, err.message);
     }

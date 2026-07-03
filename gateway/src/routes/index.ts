@@ -120,6 +120,12 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.logistics.url))
   );
 
+  // Transport Hire routes
+  app.use(
+    '/api/hire',
+    createProxyMiddleware(createProxyOptions(config.services.logistics.url))
+  );
+
   // Public ride tracking (Phase 3.2 - Share Ride Details)
   app.use(
     '/api/rides',

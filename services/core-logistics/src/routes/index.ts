@@ -12,6 +12,7 @@ import paymentCardsRoutes from './payment-cards.routes';
 import supportRoutes from './support.routes';
 import locationsRoutes from './locations.routes';
 import deliveryRoutes from '../modules/deliveries/routes/deliveries.routes';
+import hireRoutes from './hire.routes';
 import { RideController } from '../controllers/ride.controller';
 
 const router = Router();
@@ -37,6 +38,7 @@ router.use('/api/payment/cards', paymentCardsRoutes); // Phase 2: Payment cards
 router.use('/api/support', supportRoutes); // Phase 3.3: WhatsApp support
 router.use('/api/locations', locationsRoutes); // Google Places API proxy
 router.use('/api/delivery', deliveryRoutes); // Phase 4: Delivery service
+router.use('/api', hireRoutes);             // Transport Hire
 
 // Health check
 router.get('/health', (_req, res) => {
