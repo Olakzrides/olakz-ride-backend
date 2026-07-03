@@ -8,6 +8,7 @@ import logger from '../utils/logger';
 export class VendorOrderService {
   /**
    * Get vendor orders with filters
+   * Enriched with customer name + phone and assigned courier details.
    */
   static async getOrders(params: {
     restaurantId: string;
@@ -26,7 +27,7 @@ export class VendorOrderService {
         id, status, payment_status, payment_method, subtotal, delivery_fee,
         service_fee, total_amount, special_instructions, estimated_prep_time_minutes,
         created_at, accepted_at, preparing_at, ready_at,
-        delivery_address,
+        delivery_address, customer_id, courier_id,
         order_items:food_order_items (id, item_name, quantity, item_price, selected_extras, special_instructions, subtotal)
       `, { count: 'exact' })
       .eq('restaurant_id', params.restaurantId)
@@ -40,8 +41,51 @@ export class VendorOrderService {
     const { data, error, count } = await query;
     if (error) throw new Error('Failed to fetch orders');
 
+    const orders = data || [];
+
+    // ── Enrich with customer details ────────────────────────────────────────
+    const customerIds = [...new Set(orders.map((o: any) => o.customer_id).filter(Boolean))];
+    const courierIds  = [...new Set(orders.map((o: any) => o.courier_id).filter(Boolean))];
+
+    const customerMap = new Map<string, { name: string; phone: string | null }>();
+    if (customerIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, phone')
+        .in('id', customerIds);
+      for (const u of users ?? []) {
+        customerMap.set(u.id, {
+          name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Customer',
+          phone: u.phone ?? null,
+        });
+      }
+    }
+
+    // ── Enrich with courier/driver details ────────────────────────────────
+    const courierMap = new Map<string, { name: string; phone: string | null; photo: string | null }>();
+    if (courierIds.length > 0) {
+      const { data: drivers } = await supabase
+        .from('drivers')
+        .select('id, user:users!drivers_user_id_fkey(first_name, last_name, phone, avatar_url)')
+        .in('id', courierIds);
+      for (const d of drivers ?? []) {
+        const u = (d as any).user;
+        courierMap.set(d.id, {
+          name:  u ? `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Courier' : 'Courier',
+          phone: u?.phone ?? null,
+          photo: u?.avatar_url ?? null,
+        });
+      }
+    }
+
+    const enriched = orders.map((o: any) => ({
+      ...o,
+      customer: customerMap.get(o.customer_id) ?? null,
+      courier:  o.courier_id ? (courierMap.get(o.courier_id) ?? null) : null,
+    }));
+
     return {
-      orders: data || [],
+      orders: enriched,
       total: count || 0,
       page: params.page || 1,
       limit,
@@ -50,7 +94,7 @@ export class VendorOrderService {
   }
 
   /**
-   * Get single order for vendor
+   * Get single order for vendor — enriched with customer + courier details
    */
   static async getOrder(orderId: string, restaurantId: string) {
     const { data, error } = await supabase
@@ -66,7 +110,61 @@ export class VendorOrderService {
       .single();
 
     if (error) return null;
-    return data;
+
+    const order = data as Record<string, any>;
+
+    // Enrich customer details
+    let customer = null;
+    if (order.customer_id) {
+      const { data: user } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, phone, avatar_url')
+        .eq('id', order.customer_id)
+        .maybeSingle();
+      if (user) {
+        customer = {
+          id:    user.id,
+          name:  `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || 'Customer',
+          phone: user.phone ?? null,
+          photo: user.avatar_url ?? null,
+        };
+      }
+    }
+
+    // Enrich courier/driver details
+    let courier = null;
+    if (order.courier_id) {
+      const { data: driver } = await supabase
+        .from('drivers')
+        .select(`
+          id, rating,
+          user:users!drivers_user_id_fkey(first_name, last_name, phone, avatar_url),
+          vehicles:driver_vehicles(manufacturer, model, color, plate_number, is_active)
+        `)
+        .eq('id', order.courier_id)
+        .maybeSingle();
+
+      if (driver) {
+        const d = driver as Record<string, any>;
+        const u = d.user as Record<string, any> | null;
+        const vehicles = (d.vehicles as any[]) || [];
+        const activeVehicle = vehicles.find(v => v.is_active) || vehicles[0] || null;
+        courier = {
+          id:     order.courier_id,
+          name:   u ? `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Courier' : 'Courier',
+          phone:  u?.phone ?? null,
+          photo:  u?.avatar_url ?? null,
+          rating: parseFloat(String(d.rating ?? 0)),
+          vehicle: activeVehicle ? {
+            model:        `${activeVehicle.manufacturer} ${activeVehicle.model}`,
+            color:        activeVehicle.color,
+            plate_number: activeVehicle.plate_number,
+          } : null,
+        };
+      }
+    }
+
+    return { ...order, customer, courier };
   }
 
   /**

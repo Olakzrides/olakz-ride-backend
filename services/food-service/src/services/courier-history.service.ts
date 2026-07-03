@@ -2,7 +2,7 @@ import { supabase } from '../config/database';
 
 export class CourierHistoryService {
   /**
-   * Courier delivery history
+   * Courier delivery history — enriched with customer details
    */
   static async getHistory(params: {
     driverId: string;
@@ -20,6 +20,7 @@ export class CourierHistoryService {
       .select(`
         id, status, delivery_fee, total_amount, delivery_address,
         created_at, accepted_at, picked_up_at, delivered_at,
+        customer_id,
         restaurant:food_restaurants(id, name, address)
       `, { count: 'exact' })
       .eq('courier_id', params.driverId)
@@ -33,8 +34,27 @@ export class CourierHistoryService {
     const { data, error, count } = await query;
     if (error) throw new Error('Failed to fetch delivery history');
 
+    const deliveries = data || [];
+
+    // Enrich customer details
+    const customerIds = [...new Set(deliveries.map((d: any) => d.customer_id).filter(Boolean))];
+    const customerMap = new Map<string, { name: string; phone: string | null }>();
+    if (customerIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users').select('id, first_name, last_name, phone').in('id', customerIds);
+      for (const u of users ?? []) {
+        customerMap.set(u.id, {
+          name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Customer',
+          phone: u.phone ?? null,
+        });
+      }
+    }
+
     return {
-      deliveries: data || [],
+      deliveries: deliveries.map((d: any) => ({
+        ...d,
+        customer: customerMap.get(d.customer_id) ?? null,
+      })),
       total: count || 0,
       page: params.page || 1,
       limit,

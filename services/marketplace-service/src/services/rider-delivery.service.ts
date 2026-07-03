@@ -214,16 +214,36 @@ export class RiderDeliveryService {
       .from('marketplace_orders')
       .select(`
         id, status, delivery_fee, total_amount, delivery_address, created_at,
+        customer_id,
         store:marketplace_stores(id, name, address, latitude, longitude)
       `)
       .eq('status', 'searching_rider')
       .not('excluded_rider_ids', 'cs', `{${driverId}}`);
 
-    return orders || [];
+    const orderList = orders || [];
+
+    // Enrich customer details
+    const customerIds = [...new Set(orderList.map((o: any) => o.customer_id).filter(Boolean))];
+    const customerMap = new Map<string, { name: string; phone: string | null }>();
+    if (customerIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users').select('id, first_name, last_name, phone').in('id', customerIds);
+      for (const u of users ?? []) {
+        customerMap.set(u.id, {
+          name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Customer',
+          phone: u.phone ?? null,
+        });
+      }
+    }
+
+    return orderList.map((o: any) => ({
+      ...o,
+      customer: customerMap.get(o.customer_id) ?? null,
+    }));
   }
 
   static async getActiveOrders(driverId: string) {
-    return prisma.marketplaceOrder.findMany({
+    const orders = await prisma.marketplaceOrder.findMany({
       where: {
         riderId: driverId,
         status: { in: ['rider_accepted', 'heading_to_store', 'shipped', 'heading_to_customer', 'arrived'] },
@@ -231,6 +251,27 @@ export class RiderDeliveryService {
       include: { store: { select: { id: true, name: true, address: true, phone: true, latitude: true, longitude: true } }, orderItems: true },
       orderBy: { updatedAt: 'desc' },
     });
+
+    if (orders.length === 0) return orders;
+
+    // Enrich customer details from Supabase users table
+    const customerIds = [...new Set(orders.map(o => o.customerId).filter(Boolean))];
+    const customerMap = new Map<string, { name: string; phone: string | null }>();
+    if (customerIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users').select('id, first_name, last_name, phone').in('id', customerIds);
+      for (const u of users ?? []) {
+        customerMap.set(u.id, {
+          name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Customer',
+          phone: u.phone ?? null,
+        });
+      }
+    }
+
+    return orders.map(o => ({
+      ...o,
+      customer: customerMap.get(o.customerId) ?? null,
+    }));
   }
 
   static async getTracking(orderId: string) {
