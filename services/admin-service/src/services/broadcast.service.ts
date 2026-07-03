@@ -57,7 +57,7 @@ export class BroadcastService {
         target_role:   targetRole,
         data,
         sent_by:       adminId,
-        status:        'sending',
+        status:        'pending',
         created_at:    new Date().toISOString(),
       })
       .select()
