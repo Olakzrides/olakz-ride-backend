@@ -4,6 +4,7 @@ import { PaymentService } from './payment.service';
 import { FareService } from './fare.service';
 import { MapsUtil } from '../utils/maps.util';
 import { SocketService } from './socket.service';
+import { PushNotificationService } from './push-notification.service';
 
 // ── Vehicle catalogue (static — driven by migration seed) ────────────────────
 
@@ -522,6 +523,49 @@ export class HireService {
 
     if (!req) return { success: false, message: 'No pending request found for this driver' };
 
+    // ── Collision check ───────────────────────────────────────────────────────
+    // Rule 1: Block if driver has any hire currently in_progress
+    const { data: activeHire } = await supabase
+      .from('transport_hires')
+      .select('id, hire_number, start_datetime, end_datetime, status')
+      .eq('driver_id', driverId)
+      .eq('status', 'in_progress')
+      .maybeSingle();
+
+    if (activeHire) {
+      return {
+        success: false,
+        message: `You have an active hire in progress (${activeHire.hire_number}). Complete it before accepting another.`,
+      };
+    }
+
+    // Rule 2: Block if date/time overlaps with an existing accepted hire
+    // A collision exists when: new.start < existing.end AND new.end > existing.start
+    const { data: scheduledHires } = await supabase
+      .from('transport_hires')
+      .select('id, hire_number, start_datetime, end_datetime')
+      .eq('driver_id', driverId)
+      .in('status', ['driver_assigned', 'confirmed']);
+
+    const newStart = new Date(hire.start_datetime).getTime();
+    const newEnd   = new Date(hire.end_datetime).getTime();
+
+    for (const existing of scheduledHires ?? []) {
+      const existStart = new Date(existing.start_datetime).getTime();
+      const existEnd   = new Date(existing.end_datetime).getTime();
+
+      const overlaps = newStart < existEnd && newEnd > existStart;
+      if (overlaps) {
+        const fmtStart = new Date(existing.start_datetime).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' });
+        const fmtEnd   = new Date(existing.end_datetime).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' });
+        return {
+          success: false,
+          message: `Date/time conflict with existing hire ${existing.hire_number} (${fmtStart} – ${fmtEnd}). Please check your schedule.`,
+        };
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     // Mark this request accepted, expire others
     await supabase
       .from('hire_requests')
@@ -555,6 +599,9 @@ export class HireService {
       );
     }
     logger.info('Hire driver assigned', { hireId, driverId });
+
+    // Schedule 1-hour reminder push notification for the driver
+    this.scheduleHireReminder(hireId, hire.start_datetime, driverId);
 
     // Audit log — notify customer that driver was assigned
     this.logHireNotification({
@@ -776,6 +823,25 @@ export class HireService {
   // ── Driver available requests ──────────────────────────────────────────────
 
   async getDriverAvailableRequests(driverId: string) {
+    const now = new Date().toISOString();
+
+    // First check: all requests for this driver regardless of status/expiry
+    const { data: allRequests } = await supabase
+      .from('hire_requests')
+      .select('id, status, expires_at, hire_id')
+      .eq('driver_id', driverId)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    logger.info('getDriverAvailableRequests: all recent requests for driver', {
+      driverId,
+      allRequests: allRequests?.map(r => ({
+        id: r.id, status: r.status,
+        expires_at: r.expires_at,
+        is_expired: new Date(r.expires_at) < new Date(),
+      })),
+    });
+
     const { data: requests, error } = await supabase
       .from('hire_requests')
       .select(`
@@ -789,13 +855,13 @@ export class HireService {
       `)
       .eq('driver_id', driverId)
       .eq('status', 'pending')
-      .gt('expires_at', new Date().toISOString());
+      .gt('expires_at', now);
 
     logger.info('getDriverAvailableRequests', {
       driverId,
       rowsFound: requests?.length ?? 0,
       error: error?.message ?? null,
-      now: new Date().toISOString(),
+      now,
     });
 
     if (!requests || requests.length === 0) return [];
@@ -885,7 +951,406 @@ export class HireService {
     }
   }
 
-  // ── Startup recovery + periodic watchdog ──────────────────────────────────
+  // ── Driver lifecycle actions ───────────────────────────────────────────────
+
+  /**
+   * Driver marks arrived at pickup location.
+   * Status: driver_assigned → confirmed
+   * Emits: hire:driver:arrived → customer
+   */
+  async driverMarkArrived(hireId: string, driverId: string): Promise<void> {
+    const { data: hire } = await supabase
+      .from('transport_hires')
+      .select('id, customer_id, hire_number, status')
+      .eq('id', hireId)
+      .eq('driver_id', driverId)
+      .maybeSingle();
+
+    if (!hire) throw new Error('Hire not found or not assigned to this driver');
+    if (!['driver_assigned', 'driver_arrived'].includes(hire.status)) {
+      throw new Error(`Cannot mark arrived from status: ${hire.status}`);
+    }
+
+    await supabase
+      .from('transport_hires')
+      .update({ status: 'driver_arrived', updated_at: new Date().toISOString() })
+      .eq('id', hireId);
+
+    // Notify customer via WebSocket
+    if (this.socketService) {
+      await this.socketService.broadcastHireStatusUpdate(hireId, {
+        status:  'driver_arrived',
+        message: 'Your driver has arrived at the pickup location. Please come outside.',
+      });
+    }
+
+    // Push + audit log
+    await this.logHireNotification({
+      userId:           hire.customer_id,
+      hireId,
+      notificationType: 'hire_driver_arrived',
+      title:            '📍 Driver Arrived',
+      body:             `Your driver has arrived at the pickup location for booking ${hire.hire_number}. Please come outside.`,
+      data:             { hire_number: hire.hire_number, status: 'confirmed' },
+    });
+
+    const pushService = PushNotificationService.getInstance();
+    await pushService.sendToUser({
+      userId: hire.customer_id,
+      notificationType: 'hire_driver_arrived',
+      payload: {
+        title: '📍 Driver Arrived',
+        body:  `Your driver has arrived at the pickup location for booking ${hire.hire_number}.`,
+        data:  { type: 'hire_driver_arrived', hire_id: hireId, hire_number: hire.hire_number },
+      },
+    });
+
+    logger.info('Hire driver marked arrived', { hireId, driverId });
+  }
+
+  /**
+   * Driver starts the hire trip.
+   * Status: confirmed → in_progress
+   * Emits: hire:trip:started → customer
+   */
+  async driverStartTrip(hireId: string, driverId: string): Promise<void> {
+    const { data: hire } = await supabase
+      .from('transport_hires')
+      .select('id, customer_id, hire_number, status')
+      .eq('id', hireId)
+      .eq('driver_id', driverId)
+      .maybeSingle();
+
+    if (!hire) throw new Error('Hire not found or not assigned to this driver');
+    // Allow starting from driver_assigned too (in case driver skipped arrived step)
+    if (!['driver_assigned', 'driver_arrived'].includes(hire.status)) {
+      throw new Error(`Cannot start trip from status: ${hire.status}`);
+    }
+
+    await supabase
+      .from('transport_hires')
+      .update({ status: 'in_progress', updated_at: new Date().toISOString() })
+      .eq('id', hireId);
+
+    // Notify customer via WebSocket
+    if (this.socketService) {
+      await this.socketService.broadcastHireStatusUpdate(hireId, {
+        status:  'in_progress',
+        message: 'Your hire trip has started.',
+      });
+    }
+
+    // Push + audit log
+    await this.logHireNotification({
+      userId:           hire.customer_id,
+      hireId,
+      notificationType: 'hire_trip_started',
+      title:            '🚗 Trip Started',
+      body:             `Your transport hire booking ${hire.hire_number} is now in progress.`,
+      data:             { hire_number: hire.hire_number, status: 'in_progress' },
+    });
+
+    const pushService = PushNotificationService.getInstance();
+    await pushService.sendToUser({
+      userId: hire.customer_id,
+      notificationType: 'hire_trip_started',
+      payload: {
+        title: '🚗 Trip Started',
+        body:  `Your transport hire booking ${hire.hire_number} is now in progress.`,
+        data:  { type: 'hire_trip_started', hire_id: hireId, hire_number: hire.hire_number },
+      },
+    });
+
+    logger.info('Hire trip started by driver', { hireId, driverId });
+  }
+
+  /**
+   * Driver marks hire as completed.
+   * Status: in_progress → completed
+   * Credits driver's wallet with driver_fare
+   * Emits: hire:trip:completed → customer + driver
+   */
+  async driverCompleteHire(hireId: string, driverId: string): Promise<void> {
+    const { data: hire } = await supabase
+      .from('transport_hires')
+      .select('*')
+      .eq('id', hireId)
+      .eq('driver_id', driverId)
+      .maybeSingle();
+
+    if (!hire) throw new Error('Hire not found or not assigned to this driver');
+    if (hire.status !== 'in_progress') {
+      throw new Error(`Cannot complete hire from status: ${hire.status}`);
+    }
+
+    // Mark completed + settle payment
+    await supabase
+      .from('transport_hires')
+      .update({
+        status:         'completed',
+        payment_status: 'paid',   // already held, now settled
+        updated_at:     new Date().toISOString(),
+      })
+      .eq('id', hireId);
+
+    // Convert payment hold → settled (release hold as completed payment)
+    if (hire.payment_hold_id) {
+      await this.paymentService.processRidePayment({
+        holdId:      hire.payment_hold_id,
+        rideId:      hireId,
+        finalAmount: Number(hire.amount),
+      });
+    }
+
+    // Credit driver's wallet with their fare
+    const driverFare = Number(hire.driver_fare ?? 0);
+    if (driverFare > 0) {
+      const { data: driverRow } = await supabase
+        .from('drivers').select('user_id').eq('id', driverId).single();
+
+      if (driverRow?.user_id) {
+        await this.paymentService.creditWallet({
+          userId:          driverRow.user_id,
+          amount:          driverFare,
+          currencyCode:    hire.currency_code ?? 'NGN',
+          reference:       `hire_earning_${hireId}_${Date.now()}`,
+          description:     `Transport hire earning — ${hire.hire_number}`,
+          transactionType: 'earning',
+        });
+        logger.info('Driver credited for completed hire', { hireId, driverId, driverFare });
+      }
+    }
+
+    // Notify both parties via WebSocket
+    if (this.socketService) {
+      await this.socketService.broadcastHireStatusUpdate(hireId, {
+        status:  'completed',
+        message: 'Transport hire completed successfully.',
+      });
+    }
+
+    // Push notifications to both customer and driver
+    const pushService = PushNotificationService.getInstance();
+
+    await pushService.sendToUser({
+      userId: hire.customer_id,
+      notificationType: 'hire_completed',
+      payload: {
+        title: '✅ Hire Completed',
+        body:  `Your transport hire booking ${hire.hire_number} is complete. Thank you for using Olakz Ride!`,
+        data:  { type: 'hire_completed', hire_id: hireId, hire_number: hire.hire_number },
+      },
+    });
+
+    const { data: driverRow2 } = await supabase
+      .from('drivers').select('user_id').eq('id', driverId).single();
+
+    if (driverRow2?.user_id) {
+      await pushService.sendToUser({
+        userId: driverRow2.user_id,
+        notificationType: 'hire_completed',
+        payload: {
+          title: '✅ Hire Completed',
+          body:  `Booking ${hire.hire_number} completed. ₦${driverFare.toLocaleString('en-NG')} has been credited to your wallet.`,
+          data:  { type: 'hire_completed', hire_id: hireId, hire_number: hire.hire_number },
+        },
+      });
+    }
+
+    // Audit logs for both
+    await this.logHireNotification({
+      userId: hire.customer_id, hireId,
+      notificationType: 'hire_completed',
+      title: '✅ Hire Completed',
+      body:  `Your transport hire booking ${hire.hire_number} has been completed.`,
+      data:  { hire_number: hire.hire_number, amount: hire.amount, status: 'completed' },
+    });
+
+    logger.info('Hire marked completed by driver', { hireId, driverId, driverFare });
+  }
+
+  /**
+   * Get all active hires assigned to a driver.
+   * Active = driver_assigned | confirmed | in_progress
+   */
+  async getDriverActiveHires(driverId: string) {
+    const { data: hires, error } = await supabase
+      .from('transport_hires')
+      .select('*')
+      .eq('driver_id', driverId)
+      .in('status', ['driver_assigned', 'confirmed', 'in_progress'])
+      .order('start_datetime', { ascending: true });
+
+    if (error) throw new Error(`Failed to fetch active hires: ${error.message}`);
+    if (!hires || hires.length === 0) return [];
+
+    // Enrich each hire with customer details
+    const customerIds = [...new Set(hires.map((h: any) => h.customer_id).filter(Boolean))];
+    const customerMap = new Map<string, { name: string; phone: string | null; photo: string | null }>();
+
+    if (customerIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, phone, avatar_url')
+        .in('id', customerIds);
+      for (const u of users ?? []) {
+        customerMap.set(u.id, {
+          name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Customer',
+          phone: u.phone ?? null,
+          photo: u.avatar_url ?? null,
+        });
+      }
+    }
+
+    return hires.map((h: any) => ({
+      ...h,
+      customer: customerMap.get(h.customer_id) ?? null,
+    }));
+  }
+
+  /**
+   * Get driver hire history (completed / cancelled).
+   */
+  async getDriverHireHistory(driverId: string, page = 1, limit = 10) {
+    const offset = (page - 1) * limit;
+
+    const { data, count, error } = await supabase
+      .from('transport_hires')
+      .select(
+        'id, hire_number, vehicle_category, vehicle_sub_type, pickup_address, destination_address, start_datetime, end_datetime, driver_fare, status, created_at',
+        { count: 'exact' }
+      )
+      .eq('driver_id', driverId)
+      .in('status', ['completed', 'cancelled'])
+      .order('start_datetime', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw new Error(`Failed to fetch hire history: ${error.message}`);
+    return { hires: data ?? [], total: count ?? 0, page, limit };
+  }
+
+  // ── 1-hour reminder notifications ─────────────────────────────────────────
+
+  /**
+   * Schedule a 1-hour-before reminder push notification for a hire.
+   * Called after driver accepts a hire so they're reminded before start_datetime.
+   * Uses setTimeout — survives within the current process lifetime.
+   * The watchdog reschedules on restart via rescheduleHireReminders().
+   */
+  scheduleHireReminder(hireId: string, startDatetime: string, driverId: string): void {
+    const startMs     = new Date(startDatetime).getTime();
+    const reminderMs  = startMs - 60 * 60 * 1000; // 1 hour before
+    const nowMs       = Date.now();
+    const delayMs     = reminderMs - nowMs;
+
+    if (delayMs <= 0) {
+      // Start time is already within 1 hour — send reminder immediately
+      this.sendHireReminderToDriver(hireId, driverId).catch(() => {});
+      return;
+    }
+
+    setTimeout(() => {
+      this.sendHireReminderToDriver(hireId, driverId).catch(() => {});
+    }, delayMs);
+
+    logger.info('Hire reminder scheduled', {
+      hireId, driverId,
+      reminderAt: new Date(reminderMs).toISOString(),
+      delayMinutes: Math.round(delayMs / 60000),
+    });
+  }
+
+  /**
+   * Send the actual 1-hour reminder push notification to the driver.
+   */
+  private async sendHireReminderToDriver(hireId: string, driverId: string): Promise<void> {
+    try {
+      const { data: hire } = await supabase
+        .from('transport_hires')
+        .select('hire_number, start_datetime, pickup_address, vehicle_sub_type, status')
+        .eq('id', hireId)
+        .single();
+
+      // Only send if still driver_assigned or confirmed
+      if (!hire || !['driver_assigned', 'confirmed'].includes(hire.status)) return;
+
+      // Get driver's user_id for push
+      const { data: driver } = await supabase
+        .from('drivers')
+        .select('user_id')
+        .eq('id', driverId)
+        .single();
+
+      if (!driver?.user_id) return;
+
+      const startTime = new Date(hire.start_datetime).toLocaleString('en-NG', {
+        dateStyle: 'medium', timeStyle: 'short',
+      });
+
+      // Send push notification
+      const pushService = PushNotificationService.getInstance();
+      await pushService.sendToUser({
+        userId:           driver.user_id,
+        notificationType: 'hire_reminder',
+        payload: {
+          title: '⏰ Transport Hire Reminder',
+          body:  `Your hire booking ${hire.hire_number} starts in 1 hour (${startTime}). Please head to: ${hire.pickup_address}`,
+          data: {
+            hire_id:    hireId,
+            type:       'hire_reminder',
+            hire_number: hire.hire_number,
+          },
+        },
+        priority: 'high',
+      });
+
+      // Also log to notification_history for audit
+      await this.logHireNotification({
+        userId:           driver.user_id,
+        hireId,
+        notificationType: 'hire_reminder',
+        title:            '⏰ Transport Hire Reminder',
+        body:             `Your hire booking ${hire.hire_number} starts in 1 hour. Please head to: ${hire.pickup_address}`,
+        data: { hire_number: hire.hire_number, start_datetime: hire.start_datetime },
+      });
+
+      logger.info('Hire 1-hour reminder sent to driver', { hireId, driverId, userId: driver.user_id });
+
+      // Also emit via WebSocket if driver is online with app open
+      if (this.socketService) {
+        this.socketService.broadcastHireStatusUpdate(hireId, {
+          status:  'hire_reminder',
+          message: `Your hire booking ${hire.hire_number} starts in 1 hour. Please head to: ${hire.pickup_address}`,
+        }).catch(() => {});
+      }
+    } catch (err: any) {
+      logger.error('sendHireReminderToDriver failed', { hireId, driverId, error: err.message });
+    }
+  }
+
+  /**
+   * On service startup, reschedule reminders for all confirmed hires
+   * whose start_datetime is in the future.
+   * Called once from startWatchdog().
+   */
+  async rescheduleHireReminders(): Promise<void> {
+    try {
+      const { data: hires } = await supabase
+        .from('transport_hires')
+        .select('id, start_datetime, driver_id')
+        .in('status', ['driver_assigned', 'confirmed'])
+        .gt('start_datetime', new Date().toISOString())
+        .not('driver_id', 'is', null);
+
+      for (const hire of hires ?? []) {
+        this.scheduleHireReminder(hire.id, hire.start_datetime, hire.driver_id);
+      }
+
+      logger.info(`Hire reminders rescheduled on startup`, { count: hires?.length ?? 0 });
+    } catch (err: any) {
+      logger.warn('rescheduleHireReminders failed (non-fatal)', { error: err.message });
+    }
+  }
 
   /**
    * Called on service startup and every 2 minutes.
@@ -939,6 +1404,9 @@ export class HireService {
   startWatchdog(): void {
     // Run immediately on startup to recover any hires stuck from before last deploy
     this.recoverStuckHires().catch(() => {});
+
+    // Reschedule 1-hour reminders for all confirmed hires after restart
+    this.rescheduleHireReminders().catch(() => {});
 
     // Then run every 2 minutes as a safety net
     setInterval(() => {
