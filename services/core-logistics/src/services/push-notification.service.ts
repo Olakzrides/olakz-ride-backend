@@ -224,14 +224,15 @@ export class PushNotificationService {
   }
 
   /**
-   * Register device token for user
+   * Register device token for user and subscribe to FCM topics
    */
   async registerDeviceToken(
     userId: string,
     deviceId: string,
     fcmToken: string,
     platform: 'android' | 'ios' | 'web',
-    deviceInfo?: Record<string, any>
+    deviceInfo?: Record<string, any>,
+    userRole?: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const { error } = await supabase
@@ -251,6 +252,34 @@ export class PushNotificationService {
       if (error) {
         logger.error('Error registering device token:', error);
         return { success: false, error: error.message };
+      }
+
+      // Subscribe to FCM topics (non-fatal if Firebase not initialized)
+      if (this.isInitialized) {
+        try {
+          const topicsToSubscribe = ['all_users'];
+
+          const roleTopicMap: Record<string, string> = {
+            customer: 'role_customer',
+            driver:   'role_driver',
+            vendor:   'role_vendor',
+          };
+
+          if (userRole && roleTopicMap[userRole]) {
+            topicsToSubscribe.push(roleTopicMap[userRole]);
+          }
+
+          await Promise.allSettled(
+            topicsToSubscribe.map(topic =>
+              admin.messaging().subscribeToTopic([fcmToken], topic)
+            )
+          );
+
+          logger.info(`FCM topic subscriptions set for user ${userId}`, { topics: topicsToSubscribe });
+        } catch (topicErr: any) {
+          // Non-fatal — token is saved, topic subscription failed
+          logger.warn('FCM topic subscription failed (non-fatal)', { userId, error: topicErr.message });
+        }
       }
 
       logger.info(`Device token registered for user ${userId} on ${platform}`);
