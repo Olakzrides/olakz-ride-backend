@@ -273,6 +273,52 @@ export class HireController {
   // ── Driver endpoints ───────────────────────────────────────────────────────
 
   /**
+   * GET /api/hire/driver/active
+   * Driver sees all their currently active transport hire bookings.
+   */
+  getDriverActiveHires = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return ResponseUtil.unauthorized(res);
+
+      const { data: driver } = await (await import('../config/database')).supabase
+        .from('drivers').select('id').eq('user_id', userId).maybeSingle();
+
+      if (!driver) return ResponseUtil.forbidden(res, 'Driver profile not found');
+
+      const hires = await this.hireService.getDriverActiveHires(driver.id);
+      return ResponseUtil.success(res, { hires });
+    } catch (err: any) {
+      logger.error('getDriverActiveHires error', { error: err.message });
+      return ResponseUtil.error(res, 'Failed to fetch active hires');
+    }
+  };
+
+  /**
+   * GET /api/hire/driver/history
+   * Driver's completed and cancelled hire history.
+   */
+  getDriverHireHistory = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return ResponseUtil.unauthorized(res);
+
+      const { data: driver } = await (await import('../config/database')).supabase
+        .from('drivers').select('id').eq('user_id', userId).maybeSingle();
+
+      if (!driver) return ResponseUtil.forbidden(res, 'Driver profile not found');
+
+      const page  = parseInt(req.query.page  as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 10;
+      const result = await this.hireService.getDriverHireHistory(driver.id, page, limit);
+      return ResponseUtil.success(res, result);
+    } catch (err: any) {
+      logger.error('getDriverHireHistory error', { error: err.message });
+      return ResponseUtil.error(res, 'Failed to fetch hire history');
+    }
+  };
+
+  /**
    * GET /api/hire/driver/requests
    * Available hire requests for the logged-in driver.
    */
@@ -296,6 +342,72 @@ export class HireController {
     } catch (err: any) {
       logger.error('getDriverRequests error', { error: err.message });
       return ResponseUtil.error(res, 'Failed to fetch hire requests');
+    }
+  };
+
+  /**
+   * POST /api/hire/driver/:hireId/arrived
+   * Driver marks they have arrived at the pickup location.
+   * Mirrors: POST /api/drivers/rides/:rideId/arrived
+   */
+  driverMarkArrived = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return ResponseUtil.unauthorized(res);
+      const { data: driver } = await (await import('../config/database')).supabase
+        .from('drivers').select('id').eq('user_id', userId).maybeSingle();
+      if (!driver) return ResponseUtil.forbidden(res, 'Driver profile not found');
+      await this.hireService.driverMarkArrived(req.params.hireId, driver.id);
+      return ResponseUtil.success(res, {}, 'Marked as arrived at pickup location');
+    } catch (err: any) {
+      logger.error('driverMarkArrived error', { error: err.message });
+      if (err.message.includes('not found')) return ResponseUtil.notFound(res, 'Hire');
+      if (err.message.includes('Cannot'))    return ResponseUtil.badRequest(res, err.message);
+      return ResponseUtil.error(res, 'Failed to mark arrived');
+    }
+  };
+
+  /**
+   * POST /api/hire/driver/:hireId/start
+   * Driver starts the hire trip.
+   * Mirrors: POST /api/drivers/rides/:rideId/start
+   */
+  driverStartTrip = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return ResponseUtil.unauthorized(res);
+      const { data: driver } = await (await import('../config/database')).supabase
+        .from('drivers').select('id').eq('user_id', userId).maybeSingle();
+      if (!driver) return ResponseUtil.forbidden(res, 'Driver profile not found');
+      await this.hireService.driverStartTrip(req.params.hireId, driver.id);
+      return ResponseUtil.success(res, {}, 'Hire trip started');
+    } catch (err: any) {
+      logger.error('driverStartTrip error', { error: err.message });
+      if (err.message.includes('not found')) return ResponseUtil.notFound(res, 'Hire');
+      if (err.message.includes('Cannot'))    return ResponseUtil.badRequest(res, err.message);
+      return ResponseUtil.error(res, 'Failed to start trip');
+    }
+  };
+
+  /**
+   * POST /api/hire/driver/:hireId/complete
+   * Driver marks the hire as completed. Credits driver wallet.
+   * Mirrors: POST /api/drivers/rides/:rideId/complete
+   */
+  driverCompleteHire = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return ResponseUtil.unauthorized(res);
+      const { data: driver } = await (await import('../config/database')).supabase
+        .from('drivers').select('id').eq('user_id', userId).maybeSingle();
+      if (!driver) return ResponseUtil.forbidden(res, 'Driver profile not found');
+      await this.hireService.driverCompleteHire(req.params.hireId, driver.id);
+      return ResponseUtil.success(res, {}, 'Hire completed. Payment credited to your wallet.');
+    } catch (err: any) {
+      logger.error('driverCompleteHire error', { error: err.message });
+      if (err.message.includes('not found')) return ResponseUtil.notFound(res, 'Hire');
+      if (err.message.includes('Cannot'))    return ResponseUtil.badRequest(res, err.message);
+      return ResponseUtil.error(res, 'Failed to complete hire');
     }
   };
 

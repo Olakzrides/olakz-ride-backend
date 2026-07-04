@@ -14,9 +14,16 @@ router.get('/hire/home',           ctrl.getHomeData);        // GET /api/hire/ho
 router.get('/hire/history',        ctrl.getHireHistory);     // GET /api/hire/history
 
 // ── Driver — requests (MUST be before :hireId routes) ────────────────────────
-router.get('/hire/driver/requests',                      ctrl.getDriverRequests);   // GET
-router.post('/hire/driver/requests/:hireId/accept',      ctrl.driverAcceptHire);    // POST
-router.post('/hire/driver/requests/:hireId/reject',      ctrl.driverRejectHire);    // POST
+router.get('/hire/driver/active',                        ctrl.getDriverActiveHires);    // GET
+router.get('/hire/driver/history',                       ctrl.getDriverHireHistory);    // GET
+router.get('/hire/driver/requests',                      ctrl.getDriverRequests);       // GET
+router.post('/hire/driver/requests/:hireId/accept',      ctrl.driverAcceptHire);        // POST
+router.post('/hire/driver/requests/:hireId/reject',      ctrl.driverRejectHire);        // POST
+
+// ── Driver — lifecycle actions (REST, same pattern as regular rides) ──────────
+router.post('/hire/driver/:hireId/arrived',  ctrl.driverMarkArrived);   // POST — driver arrived at pickup
+router.post('/hire/driver/:hireId/start',    ctrl.driverStartTrip);     // POST — driver starts trip
+router.post('/hire/driver/:hireId/complete', ctrl.driverCompleteHire);  // POST — driver completes hire
 
 // ── Customer — booking lifecycle ─────────────────────────────────────────────
 router.post('/hire',               ctrl.createHire);         // POST /api/hire

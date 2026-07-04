@@ -62,6 +62,11 @@ export class DriverAvailabilityService {
 
         logger.info(`Driver ${driverId} ${isOnline ? 'went online' : 'went offline'}`);
 
+        // When driver comes online, check for active hire searches they can join
+        if (isOnline) {
+          this.notifyDriverOfActiveHires(driverId).catch(() => {});
+        }
+
         return {
           success: true,
           availability: {
@@ -155,6 +160,77 @@ export class DriverAvailabilityService {
       }
     } catch (error: any) {
       logger.error('Set available error:', error);
+    }
+  }
+
+  /**
+   * When a driver comes online, check if there are any active hire searches
+   * that match their service tier and insert them into hire_requests so they
+   * can see and accept the hire.
+   */
+  private async notifyDriverOfActiveHires(driverId: string): Promise<void> {
+    try {
+      // Get driver's service_tier_id
+      const { data: driver } = await supabase
+        .from('drivers')
+        .select('id, service_tier_id')
+        .eq('id', driverId)
+        .single();
+
+      if (!driver) return;
+
+      const SERVICE_TIER_MAP: Record<string, string> = {
+        '00000000-0000-0000-0000-000000000011': 'standard',
+        '00000000-0000-0000-0000-000000000012': 'premium',
+        '00000000-0000-0000-0000-000000000013': 'vip',
+      };
+      const subType = SERVICE_TIER_MAP[driver.service_tier_id] ?? null;
+
+      // Find active hire searches for matching vehicle sub-types
+      // Car hires use service_tier_id; bus/truck use any available driver
+      let hiresQuery = supabase
+        .from('transport_hires')
+        .select('id, vehicle_sub_type, vehicle_category')
+        .eq('status', 'searching');
+
+      if (subType) {
+        // Match car tiers specifically
+        hiresQuery = hiresQuery.eq('vehicle_sub_type', subType);
+      }
+
+      const { data: activeHires } = await hiresQuery;
+      if (!activeHires || activeHires.length === 0) return;
+
+      // Check which ones this driver is NOT already in hire_requests for
+      const hireIds = activeHires.map(h => h.id);
+      const { data: existing } = await supabase
+        .from('hire_requests')
+        .select('hire_id')
+        .eq('driver_id', driverId)
+        .in('hire_id', hireIds);
+
+      const existingHireIds = new Set((existing ?? []).map(r => r.hire_id));
+      const newHireIds = hireIds.filter(id => !existingHireIds.has(id));
+
+      if (newHireIds.length === 0) return;
+
+      // Insert hire_requests for this driver for the active hires
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      const rows = newHireIds.map(hireId => ({
+        hire_id:    hireId,
+        driver_id:  driverId,
+        status:     'pending',
+        batch_number: 2, // batch 2 = late-joining driver
+        expires_at: expiresAt,
+      }));
+
+      await supabase.from('hire_requests').insert(rows);
+
+      logger.info('Driver joined active hire searches on coming online', {
+        driverId, newHireIds,
+      });
+    } catch (err: any) {
+      logger.warn('notifyDriverOfActiveHires failed (non-fatal)', { error: err.message });
     }
   }
 
