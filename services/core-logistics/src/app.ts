@@ -61,9 +61,6 @@ export function createApp(): Application {
         return res.status(400).json({ success: false, message: 'broadcast_id, title, body, target_role required' });
       }
 
-      // Count targeted devices for stats
-      const devicesTargeted = await pushService.countTargetedDevices(target_role);
-
       // Send via FCM topic
       const result = await pushService.sendBroadcast({
         title,
@@ -76,10 +73,9 @@ export function createApp(): Application {
       return res.json({
         success: result.success,
         data: {
-          fcm_message_id:   result.fcmMessageId ?? null,
-          topic:            result.topic,
-          devices_targeted: devicesTargeted,
-          error:            result.error ?? null,
+          fcm_message_id: result.fcmMessageId ?? null,
+          topic:          result.topic,
+          error:          result.error ?? null,
         },
       });
     } catch (err: any) {

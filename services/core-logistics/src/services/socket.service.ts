@@ -175,6 +175,11 @@ export class SocketService {
       this.handleHireRequestResponse(socket, data);
     });
 
+    // Hire lifecycle events from driver
+    socket.on('hire:mark:arrived',   (data) => this.handleHireMarkArrived(socket, data));
+    socket.on('hire:mark:started',   (data) => this.handleHireMarkStarted(socket, data));
+    socket.on('hire:mark:completed', (data) => this.handleHireMarkCompleted(socket, data));
+
     // Ride status updates
     socket.on('ride:status:update', (data) => {
       this.handleRideStatusUpdate(socket, data);
@@ -961,6 +966,67 @@ logger.info('Customer socket emit debug', {
     }
   }
 
+  /**
+   * Handle hire:mark:arrived from driver socket.
+   * Driver arrived at pickup — notifies customer in real time.
+   * Delegates to HireService to keep DB logic centralised.
+   */
+  private async handleHireMarkArrived(socket: AuthenticatedSocket, data: any): Promise<void> {
+    const { driverId } = socket;
+    if (!driverId || socket.userType !== 'driver') return;
+    try {
+      const { hireId } = data;
+      if (!hireId) return;
+      const { HireService } = await import('./hire.service');
+      const svc = new HireService(this);
+      await svc.driverMarkArrived(hireId, driverId);
+      socket.emit('hire:arrived:confirmed', { hireId, status: 'confirmed' });
+    } catch (err: any) {
+      logger.error('handleHireMarkArrived error', { error: err.message });
+      socket.emit('hire:error', { event: 'hire:mark:arrived', message: err.message });
+    }
+  }
+
+  /**
+   * Handle hire:mark:started from driver socket.
+   * Driver started the hire trip.
+   */
+  private async handleHireMarkStarted(socket: AuthenticatedSocket, data: any): Promise<void> {
+    const { driverId } = socket;
+    if (!driverId || socket.userType !== 'driver') return;
+    try {
+      const { hireId } = data;
+      if (!hireId) return;
+      const { HireService } = await import('./hire.service');
+      const svc = new HireService(this);
+      await svc.driverStartTrip(hireId, driverId);
+      socket.emit('hire:started:confirmed', { hireId, status: 'in_progress' });
+    } catch (err: any) {
+      logger.error('handleHireMarkStarted error', { error: err.message });
+      socket.emit('hire:error', { event: 'hire:mark:started', message: err.message });
+    }
+  }
+
+  /**
+   * Handle hire:mark:completed from driver socket.
+   * Driver marks the hire as completed.
+   */
+  private async handleHireMarkCompleted(socket: AuthenticatedSocket, data: any): Promise<void> {
+    const { driverId } = socket;
+    if (!driverId || socket.userType !== 'driver') return;
+    try {
+      const { hireId } = data;
+      if (!hireId) return;
+      const { HireService } = await import('./hire.service');
+      const svc = new HireService(this);
+      await svc.driverCompleteHire(hireId, driverId);
+      socket.emit('hire:completed:confirmed', { hireId, status: 'completed' });
+    } catch (err: any) {
+      logger.error('handleHireMarkCompleted error', { error: err.message });
+      socket.emit('hire:error', { event: 'hire:mark:completed', message: err.message });
+    }
+  }
+
   // ── Transport Hire WebSocket methods ──────────────────────────────────────
 
   /**
@@ -983,7 +1049,7 @@ logger.info('Customer socket emit debug', {
       // Check hire is still searching
       const { data: hire } = await supabase
         .from('transport_hires')
-        .select('id, status, customer_id')
+        .select('id, status, customer_id, start_datetime, end_datetime, hire_number')
         .eq('id', hireId)
         .single();
 
@@ -1019,6 +1085,44 @@ logger.info('Customer socket emit debug', {
         logger.info(`Driver ${driverId} declined hire ${hireId}`);
         return;
       }
+
+      // ── Collision check before accepting ─────────────────────────────────
+      const { data: activeHire } = await supabase
+        .from('transport_hires')
+        .select('id, hire_number, status')
+        .eq('driver_id', driverId)
+        .eq('status', 'in_progress')
+        .maybeSingle();
+
+      if (activeHire) {
+        socket.emit('hire:error', {
+          hireId,
+          message: `You have an active hire in progress (${activeHire.hire_number}). Complete it before accepting another.`,
+        });
+        return;
+      }
+
+      const { data: scheduled } = await supabase
+        .from('transport_hires')
+        .select('id, hire_number, start_datetime, end_datetime')
+        .eq('driver_id', driverId)
+        .in('status', ['driver_assigned', 'confirmed']);
+
+      const newStart = new Date(hire.start_datetime).getTime();
+      const newEnd   = new Date(hire.end_datetime).getTime();
+
+      for (const ex of scheduled ?? []) {
+        const s = new Date(ex.start_datetime).getTime();
+        const e = new Date(ex.end_datetime).getTime();
+        if (newStart < e && newEnd > s) {
+          socket.emit('hire:error', {
+            hireId,
+            message: `Date/time conflict with hire ${ex.hire_number}. Cannot accept.`,
+          });
+          return;
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────
 
       // ── Accept ────────────────────────────────────────────────────────────
       // Mark this request accepted

@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS transport_hires (
       'pending',          -- created, not yet confirmed/paid
       'searching',        -- payment done, searching for driver
       'driver_assigned',  -- driver accepted
-      'confirmed',        -- driver confirmed pick-up time
+      'driver_arrived',   -- driver arrived at pickup location
       'in_progress',      -- hire underway
       'completed',        -- hire finished
       'cancelled',        -- cancelled by customer or system

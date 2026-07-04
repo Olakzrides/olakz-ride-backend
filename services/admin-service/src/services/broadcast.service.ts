@@ -57,7 +57,7 @@ export class BroadcastService {
         target_role:   targetRole,
         data,
         sent_by:       adminId,
-        status:        'sending',
+        status:        'pending',
         created_at:    new Date().toISOString(),
       })
       .select()
@@ -85,7 +85,6 @@ export class BroadcastService {
 
       const fcmResult = fcmResponse.data?.data ?? {};
       const fcmMessageId = fcmResult.fcm_message_id ?? null;
-      const devicesTargeted = fcmResult.devices_targeted ?? 0;
 
       // ── 3. Create inbox entries for all targeted users ────────────────────
       let devicesReached = 0;
@@ -113,29 +112,27 @@ export class BroadcastService {
       await supabase
         .from('admin_broadcasts')
         .update({
-          status:           'completed',
-          fcm_message_id:   fcmMessageId,
-          devices_targeted: devicesTargeted,
-          devices_reached:  devicesReached,
-          completed_at:     new Date().toISOString(),
+          status:          'completed',
+          fcm_message_id:  fcmMessageId,
+          devices_reached: devicesReached,
+          completed_at:    new Date().toISOString(),
         })
         .eq('id', broadcastId);
 
       logger.info('Admin broadcast completed', {
-        broadcastId, targetRole, adminId, devicesTargeted, devicesReached,
+        broadcastId, targetRole, adminId, devicesReached,
       });
 
       return {
-        id:               broadcastId,
-        title:            title.trim(),
-        body:             body.trim(),
-        target_role:      targetRole,
-        status:           'completed',
-        fcm_message_id:   fcmMessageId,
-        devices_targeted: devicesTargeted,
-        devices_reached:  devicesReached,
-        created_at:       broadcast.created_at,
-        completed_at:     new Date().toISOString(),
+        id:              broadcastId,
+        title:           title.trim(),
+        body:            body.trim(),
+        target_role:     targetRole,
+        status:          'completed',
+        fcm_message_id:  fcmMessageId,
+        devices_reached: devicesReached,
+        created_at:      broadcast.created_at,
+        completed_at:    new Date().toISOString(),
       };
 
     } catch (err: any) {
@@ -274,7 +271,6 @@ export class BroadcastService {
 
       const fcmResult      = fcmResponse.data?.data ?? {};
       const fcmMessageId   = fcmResult.fcm_message_id ?? null;
-      const devicesTargeted = fcmResult.devices_targeted ?? 0;
 
       // 4. Create new inbox entries with corrected content
       let devicesReached = 0;
@@ -301,16 +297,15 @@ export class BroadcastService {
       await supabase
         .from('admin_broadcasts')
         .update({
-          status:           'completed',
-          fcm_message_id:   fcmMessageId,
-          devices_targeted: devicesTargeted,
-          devices_reached:  devicesReached,
-          completed_at:     new Date().toISOString(),
+          status:          'completed',
+          fcm_message_id:  fcmMessageId,
+          devices_reached: devicesReached,
+          completed_at:    new Date().toISOString(),
         })
         .eq('id', broadcastId);
 
       logger.info('Admin broadcast updated + resent', {
-        broadcastId, adminId, newTitle, devicesTargeted, devicesReached,
+        broadcastId, adminId, newTitle, devicesReached,
       });
 
       return await BroadcastService.getById(broadcastId);

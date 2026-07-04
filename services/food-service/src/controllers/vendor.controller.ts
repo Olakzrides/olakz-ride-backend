@@ -18,8 +18,6 @@ export class VendorController {
     return restaurant;
   }
 
-  // ─── Profile (4.1) ───────────────────────────────────────────────────────────
-
   getProfile = async (req: Request, res: Response): Promise<Response> => {
     try {
       const ownerId = (req as AuthRequest).user!.id;
