@@ -53,18 +53,43 @@ export class AdminDriverService {
   }
 
   async getDriverApplicationForReview(driverId: string): Promise<unknown | null> {
-    const { data: driver, error } = await supabase
+    // Try by drivers.id first, then fall back to user_id (frontend may pass either)
+    let { data: driver, error } = await supabase
       .from('drivers')
       .select(`
         *,
         vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(id, name, display_name),
         documents:driver_documents(id, document_type, document_url, file_path, file_name, status, created_at, file_size, mime_type, verified_by, verified_at, notes),
-        vehicles:driver_vehicles(id, plate_number, manufacturer, model, year, color, is_active, seating_capacity)
+        vehicles:driver_vehicles(id, plate_number, manufacturer, model, year, color, is_active)
       `)
       .eq('id', driverId)
-      .single();
+      .maybeSingle();
 
-    if (error || !driver) return null;
+    if (error) {
+      logger.error('getDriverApplicationForReview by id error', { driverId, error: error.message });
+    }
+
+    // Fallback: the ID might be the user_id instead of drivers.id
+    if (!driver) {
+      const { data: driverByUser, error: userError } = await supabase
+        .from('drivers')
+        .select(`
+          *,
+          vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(id, name, display_name),
+          documents:driver_documents(id, document_type, document_url, file_path, file_name, status, created_at, file_size, mime_type, verified_by, verified_at, notes),
+          vehicles:driver_vehicles(id, plate_number, manufacturer, model, year, color, is_active)
+        `)
+        .eq('user_id', driverId)
+        .maybeSingle();
+
+      if (userError) {
+        logger.error('getDriverApplicationForReview by user_id error', { driverId, error: userError.message });
+      }
+
+      driver = driverByUser;
+    }
+
+    if (!driver) return null;
 
     const row = driver as Record<string, unknown>;
 

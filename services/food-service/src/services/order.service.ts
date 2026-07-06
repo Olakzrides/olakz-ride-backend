@@ -355,6 +355,8 @@ export class OrderService {
 
   /**
    * Get order details (with ownership check)
+   * Courier role: enriched with customer name + phone + delivery address details
+   * Customer role: enriched with restaurant + order items
    */
   static async getOrder(orderId: string, requesterId: string, requesterRole: 'customer' | 'vendor' | 'courier') {
     const { data: order, error } = await supabase
@@ -372,7 +374,25 @@ export class OrderService {
     // Ownership check
     if (requesterRole === 'customer' && order.customer_id !== requesterId) return null;
     if (requesterRole === 'courier' && order.courier_id !== requesterId) return null;
-    // Vendor check happens via restaurant ownership in the controller
+
+    // Enrich customer details for courier — they need name + phone to contact customer
+    if (requesterRole === 'courier' && order.customer_id) {
+      const { data: user } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, phone, avatar_url')
+        .eq('id', order.customer_id)
+        .maybeSingle();
+
+      return {
+        ...order,
+        customer: user ? {
+          id:    user.id,
+          name:  `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || 'Customer',
+          phone: user.phone ?? null,
+          photo: user.avatar_url ?? null,
+        } : null,
+      };
+    }
 
     return order;
   }
