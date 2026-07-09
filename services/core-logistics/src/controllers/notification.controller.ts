@@ -37,7 +37,8 @@ export class NotificationController {
         deviceId,
         fcmToken,
         platform,
-        deviceInfo
+        deviceInfo,
+        (req as any).user?.role
       );
 
       if (!result.success) {
