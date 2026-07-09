@@ -12,18 +12,21 @@ router.use(authenticate);
 router.get('/hire/vehicle-types',  ctrl.getVehicleTypes);   // GET /api/hire/vehicle-types
 router.get('/hire/home',           ctrl.getHomeData);        // GET /api/hire/home
 router.get('/hire/history',        ctrl.getHireHistory);     // GET /api/hire/history
+router.get('/hire/wallet-balance', ctrl.getWalletBalance);  // GET /api/hire/wallet-balance
 
 // ── Driver — requests (MUST be before :hireId routes) ────────────────────────
-router.get('/hire/driver/active',                        ctrl.getDriverActiveHires);    // GET
+router.get('/hire/driver/active',                        ctrl.getDriverActiveHires);    // GET — in motion (driver_arrived | in_progress)
+router.get('/hire/driver/scheduled',                     ctrl.getDriverScheduledHires); // GET — upcoming assignments (driver_assigned)
 router.get('/hire/driver/history',                       ctrl.getDriverHireHistory);    // GET
 router.get('/hire/driver/requests',                      ctrl.getDriverRequests);       // GET
 router.post('/hire/driver/requests/:hireId/accept',      ctrl.driverAcceptHire);        // POST
 router.post('/hire/driver/requests/:hireId/reject',      ctrl.driverRejectHire);        // POST
 
 // ── Driver — lifecycle actions (REST, same pattern as regular rides) ──────────
-router.post('/hire/driver/:hireId/arrived',  ctrl.driverMarkArrived);   // POST — driver arrived at pickup
-router.post('/hire/driver/:hireId/start',    ctrl.driverStartTrip);     // POST — driver starts trip
-router.post('/hire/driver/:hireId/complete', ctrl.driverCompleteHire);  // POST — driver completes hire
+router.post('/hire/driver/:hireId/arrived',          ctrl.driverMarkArrived);          // POST — driver arrived at pickup
+router.post('/hire/driver/:hireId/start',            ctrl.driverStartTrip);            // POST — driver starts trip
+router.post('/hire/driver/:hireId/complete',         ctrl.driverCompleteHire);         // POST — driver completes hire
+router.post('/hire/driver/:hireId/confirm-cash',     ctrl.confirmCashPayment);         // POST — driver confirms cash received
 
 // ── Customer — booking lifecycle ─────────────────────────────────────────────
 router.post('/hire',               ctrl.createHire);         // POST /api/hire

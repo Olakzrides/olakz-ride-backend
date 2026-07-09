@@ -242,34 +242,32 @@ export class DriverAvailabilityService {
     reason?: string;
   }> {
     try {
-      // Check driver status
       const { data: driver, error } = await supabase
         .from('drivers')
-        .select('status')
+        .select('status, remittance_blocked, pending_remittance_amount')
         .eq('id', driverId)
         .single();
 
       if (error || !driver) {
-        return {
-          canGoOnline: false,
-          reason: 'Driver not found',
-        };
+        return { canGoOnline: false, reason: 'Driver not found' };
       }
 
       if (driver.status !== 'approved') {
+        return { canGoOnline: false, reason: 'DRIVER_NOT_APPROVED' };
+      }
+
+      if (driver.remittance_blocked) {
+        const amount = Number(driver.pending_remittance_amount ?? 0);
         return {
           canGoOnline: false,
-          reason: 'DRIVER_NOT_APPROVED',
+          reason: `REMITTANCE_BLOCKED: You have ₦${amount.toLocaleString('en-NG')} outstanding platform remittance. Please top up your wallet to settle before going online.`,
         };
       }
 
       return { canGoOnline: true };
     } catch (error: any) {
       logger.error('Can go online check error:', error);
-      return {
-        canGoOnline: false,
-        reason: 'Failed to check driver status',
-      };
+      return { canGoOnline: false, reason: 'Failed to check driver status' };
     }
   }
 }
