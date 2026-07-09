@@ -72,7 +72,7 @@ router.get('/register/:id/status',
   driverRegistrationController.getRegistrationStatus
 );
 
-router.post('/register/resume', 
+router.get('/register/resume', 
   authenticate, 
   driverRegistrationController.resumeRegistration
 );
