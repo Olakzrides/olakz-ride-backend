@@ -1106,7 +1106,7 @@ logger.info('Customer socket emit debug', {
         .from('transport_hires')
         .select('id, hire_number, start_datetime, end_datetime')
         .eq('driver_id', driverId)
-        .in('status', ['driver_assigned', 'confirmed']);
+        .in('status', ['driver_arrived', 'in_progress']);
 
       const newStart = new Date(hire.start_datetime).getTime();
       const newEnd   = new Date(hire.end_datetime).getTime();

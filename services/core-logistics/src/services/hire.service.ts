@@ -5,6 +5,7 @@ import { FareService } from './fare.service';
 import { MapsUtil } from '../utils/maps.util';
 import { SocketService } from './socket.service';
 import { PushNotificationService } from './push-notification.service';
+import { RemittanceService } from './remittance.service';
 
 // ── Vehicle catalogue (static — driven by migration seed) ────────────────────
 
@@ -298,7 +299,7 @@ export class HireService {
     return updated;
   }
 
-  // ── Proceed (confirm + pay from wallet) ───────────────────────────────────
+  // ── Proceed (confirm + pay — wallet or cash) ──────────────────────────────
 
   async proceedHire(hireId: string, customerId: string) {
     const { data: hire, error: fetchErr } = await supabase
@@ -311,20 +312,49 @@ export class HireService {
     if (fetchErr || !hire) throw new Error('Hire booking not found');
     if (hire.status !== 'pending') throw new Error(`Hire is already ${hire.status}`);
 
-    // Deduct wallet payment (only wallet supported for now)
+    // ── Cash payment flow ─────────────────────────────────────────────────────
+    if (hire.payment_method === 'cash') {
+      const { data: updated, error: updateErr } = await supabase
+        .from('transport_hires')
+        .update({
+          status:         'searching',
+          payment_status: 'pending',
+          updated_at:     new Date().toISOString(),
+        })
+        .eq('id', hireId)
+        .select()
+        .single();
+
+      if (updateErr || !updated) throw new Error('Failed to confirm hire');
+
+      logger.info('Transport hire cash — searching for driver', { hireId });
+
+      this.logHireNotification({
+        userId:           customerId,
+        hireId,
+        notificationType: 'hire_searching',
+        title:            'Searching for Driver',
+        body:             `Your transport hire booking ${hire.hire_number} is confirmed. Searching for an available driver. Payment will be collected in cash.`,
+        data:             { hire_number: hire.hire_number, payment_method: 'cash', status: 'searching' },
+      });
+
+      await this.searchForDriver(hireId);
+      return updated;
+    }
+
+    // ── Wallet payment flow ───────────────────────────────────────────────────
     if (hire.payment_method === 'wallet') {
       const hold = await this.paymentService.createRidePaymentHold({
-        userId:      customerId,
-        amount:      Number(hire.amount),
+        userId:       customerId,
+        amount:       Number(hire.amount),
         currencyCode: hire.currency_code,
-        description: `Transport hire payment - ${hire.hire_number}`,
+        description:  `Transport hire payment - ${hire.hire_number}`,
       });
 
       if (hold.status !== 'hold_created') {
         throw new Error(hold.message || 'Insufficient wallet balance');
       }
 
-      // Update hire: paid, searching, store hold id
       const { data: updated, error: updateErr } = await supabase
         .from('transport_hires')
         .update({
@@ -339,9 +369,8 @@ export class HireService {
 
       if (updateErr || !updated) throw new Error('Failed to confirm hire payment');
 
-      logger.info('Transport hire payment confirmed', { hireId, amount: hire.amount });
+      logger.info('Transport hire wallet payment confirmed', { hireId, amount: hire.amount });
 
-      // Audit log — payment confirmed, searching for driver
       this.logHireNotification({
         userId:           customerId,
         hireId,
@@ -351,13 +380,95 @@ export class HireService {
         data:             { hire_number: hire.hire_number, amount: hire.amount, status: 'searching' },
       });
 
-      // Start driver search
       await this.searchForDriver(hireId);
-
       return updated;
     }
 
-    throw new Error('Only wallet payment is currently supported');
+    throw new Error('Only wallet and cash payment are currently supported');
+  }
+
+  /**
+   * Get customer wallet balance for payment method selection screen.
+   */
+  async getCustomerWalletBalance(customerId: string): Promise<{
+    balance: number; formatted: string; currency: string;
+  }> {
+    const balance = await this.paymentService.getUserWalletBalance(customerId, 'NGN');
+    return {
+      balance,
+      formatted: `₦${balance.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`,
+      currency:  'NGN',
+    };
+  }
+
+  /**
+   * Driver confirms they received cash from the customer.
+   * Triggers remittance — same as cash ride flow.
+   */
+  async confirmCashPayment(hireId: string, driverId: string): Promise<{
+    success: boolean;
+    remittanceStatus?: {
+      status: 'auto_deducted' | 'pending' | 'settled';
+      blocked: boolean; pendingAmount: number; pendingCount: number;
+    };
+    error?: string;
+  }> {
+    const { data: hire, error: fetchErr } = await supabase
+      .from('transport_hires')
+      .select('id, driver_id, status, payment_method, cash_payment_confirmed, service_fee, rounding_fee, hire_number')
+      .eq('id', hireId)
+      .maybeSingle();
+
+    if (fetchErr) {
+      logger.error('confirmCashPayment (hire) fetch error', { hireId, driverId, error: fetchErr.message });
+    }
+
+    if (!hire)                           return { success: false, error: 'Hire not found' };
+    if (hire.driver_id !== driverId)     return { success: false, error: 'Unauthorized' };
+    if (hire.payment_method !== 'cash')  return { success: false, error: 'This endpoint is only for cash hires' };
+    if (hire.cash_payment_confirmed)     return { success: false, error: 'Cash payment already confirmed for this hire' };
+
+    // Status guard — hire must be completed before cash can be confirmed.
+    // This is the expected response when tested mid-trip.
+    if (hire.status !== 'completed') {
+      return {
+        success: false,
+        error: `Hire must be completed before confirming cash payment (current status: ${hire.status})`,
+      };
+    }
+
+    const { error: updateErr } = await supabase
+      .from('transport_hires')
+      .update({
+        cash_payment_confirmed:    true,
+        cash_payment_confirmed_at: new Date().toISOString(),
+        payment_status:            'completed',
+        updated_at:                new Date().toISOString(),
+      })
+      .eq('id', hireId);
+
+    if (updateErr) return { success: false, error: 'Failed to confirm cash payment' };
+
+    const platformRemittance = Number(hire.service_fee ?? 0) + Number(hire.rounding_fee ?? 0);
+
+    const remittanceResult = await RemittanceService.handleCashHireRemittance({
+      driverId,
+      hireId,
+      platformRemittance,
+    });
+
+    logger.info(`Driver ${driverId} confirmed cash for hire ${hireId}. Remittance:`, remittanceResult);
+
+    await this.logHireNotification({
+      userId:           driverId,
+      hireId,
+      notificationType: 'hire_cash_confirmed',
+      title:            'Cash Payment Confirmed',
+      body:             `Cash confirmed for hire ${hire.hire_number}. Platform remittance of ₦${platformRemittance.toLocaleString('en-NG')} ${remittanceResult.status === 'auto_deducted' ? 'deducted from your wallet.' : 'is pending settlement.'}`,
+      data:             { hire_number: hire.hire_number, remittance_status: remittanceResult.status },
+    });
+
+    return { success: true, remittanceStatus: remittanceResult };
   }
 
   // ── Driver search ──────────────────────────────────────────────────────────
@@ -384,31 +495,79 @@ export class HireService {
 
     const serviceTierId = SERVICE_TIER_MAP[hire.vehicle_sub_type] ?? null;
 
-    // Step 1: Get approved drivers with active vehicles
-    let baseQuery = supabase
-      .from('drivers')
-      .select(`
-        id, user_id, rating,
-        vehicles:driver_vehicles!inner(plate_number, manufacturer, model, color, is_active)
-      `)
-      .eq('status', 'approved')
-      .eq('vehicles.is_active', true);
+    // ── Step 1: Get approved drivers with active vehicles ─────────────────────
+    // We do TWO passes:
+    //   Pass A — drivers whose service_tier_id matches exactly
+    //   Pass B — drivers whose service_tier_id is NULL (not yet assigned, treat as standard)
+    // Both passes are combined and de-duplicated before the availability check.
+    const baseSelect = `
+      id, user_id, rating, service_tier_id,
+      vehicles:driver_vehicles!inner(plate_number, manufacturer, model, color, is_active)
+    `;
+
+    let allBaseDrivers: any[] = [];
 
     if (serviceTierId) {
-      baseQuery = baseQuery.eq('service_tier_id', serviceTierId);
+      // Pass A — exact tier match
+      const { data: tierDrivers, error: tierError } = await supabase
+        .from('drivers')
+        .select(baseSelect)
+        .eq('status', 'approved')
+        .eq('vehicles.is_active', true)
+        .eq('service_tier_id', serviceTierId);
+
+      if (tierError) {
+        logger.error('searchForDriver tier query error', { hireId, error: tierError.message });
+      }
+
+      // Pass B — NULL tier (drivers registered before tier assignment migration)
+      const { data: nullTierDrivers, error: nullTierError } = await supabase
+        .from('drivers')
+        .select(baseSelect)
+        .eq('status', 'approved')
+        .eq('vehicles.is_active', true)
+        .is('service_tier_id', null);
+
+      if (nullTierError) {
+        logger.error('searchForDriver null-tier query error', { hireId, error: nullTierError.message });
+      }
+
+      // Combine + de-duplicate by driver id
+      const seen = new Set<string>();
+      for (const d of [...(tierDrivers ?? []), ...(nullTierDrivers ?? [])]) {
+        if (!seen.has(d.id)) { seen.add(d.id); allBaseDrivers.push(d); }
+      }
+
+      logger.info('searchForDriver step1 — approved drivers with vehicles', {
+        hireId,
+        serviceTierId,
+        tierMatch:  tierDrivers?.length  ?? 0,
+        nullTier:   nullTierDrivers?.length ?? 0,
+        combined:   allBaseDrivers.length,
+      });
+    } else {
+      // Non-car category (bus/truck) — no service tier filter, just approved + active vehicle
+      const { data: allDrivers, error: allError } = await supabase
+        .from('drivers')
+        .select(baseSelect)
+        .eq('status', 'approved')
+        .eq('vehicles.is_active', true);
+
+      if (allError) {
+        logger.error('searchForDriver all-drivers query error', { hireId, error: allError.message });
+      }
+
+      allBaseDrivers = allDrivers ?? [];
+
+      logger.info('searchForDriver step1 — approved drivers with vehicles (no tier filter)', {
+        hireId, count: allBaseDrivers.length,
+      });
     }
 
-    const { data: baseDrivers, error: baseError } = await baseQuery;
-
-    if (baseError) {
-      logger.error('searchForDriver base query error', { hireId, error: baseError.message });
-    }
-
-    logger.info('searchForDriver step1 — approved drivers with vehicles', {
-      hireId, count: baseDrivers?.length ?? 0, serviceTierId,
-    });
+    const baseDrivers = allBaseDrivers;
 
     if (!baseDrivers || baseDrivers.length === 0) {
+      logger.warn('searchForDriver — no approved drivers with active vehicles found', { hireId, serviceTierId: SERVICE_TIER_MAP[hire.vehicle_sub_type] ?? null });
       setTimeout(() => this.handleSearchTimeout(hireId), 10 * 60 * 1000);
       return { driversNotified: 0 };
     }
@@ -419,14 +578,27 @@ export class HireService {
     // when they last sent a heartbeat.
     const driverIds = baseDrivers.map((d: any) => d.id);
 
-    const { data: onlineAvailability } = await supabase
+    const { data: onlineAvailability, error: availError } = await supabase
       .from('driver_availability')
-      .select('driver_id')
-      .in('driver_id', driverIds)
-      .eq('is_online', true)
-      .eq('is_available', true);
+      .select('driver_id, is_online, is_available')
+      .in('driver_id', driverIds);
 
-    const onlineDriverIdSet = new Set((onlineAvailability ?? []).map((a: any) => a.driver_id));
+    logger.info('searchForDriver step2 — availability rows fetched', {
+      hireId,
+      driverIdsChecked: driverIds,
+      availabilityRows: (onlineAvailability ?? []).map((a: any) => ({
+        driver_id:    a.driver_id,
+        is_online:    a.is_online,
+        is_available: a.is_available,
+      })),
+      availError: availError?.message ?? null,
+    });
+
+    const onlineDriverIdSet = new Set(
+      (onlineAvailability ?? [])
+        .filter((a: any) => a.is_online && a.is_available)
+        .map((a: any) => a.driver_id)
+    );
 
     logger.info('searchForDriver availability check', {
       hireId,
@@ -523,6 +695,21 @@ export class HireService {
 
     if (!req) return { success: false, message: 'No pending request found for this driver' };
 
+    // ── Remittance block check ────────────────────────────────────────────────
+    const { data: driverRecord } = await supabase
+      .from('drivers')
+      .select('remittance_blocked, pending_remittance_amount')
+      .eq('id', driverId)
+      .single();
+
+    if (driverRecord?.remittance_blocked) {
+      const amount = Number(driverRecord.pending_remittance_amount ?? 0);
+      return {
+        success: false,
+        message: `You cannot accept rides. You have ₦${amount.toLocaleString('en-NG')} outstanding platform remittance. Top up your wallet to unblock.`,
+      };
+    }
+
     // ── Collision check ───────────────────────────────────────────────────────
     // Rule 1: Block if driver has any hire currently in_progress
     const { data: activeHire } = await supabase
@@ -539,13 +726,15 @@ export class HireService {
       };
     }
 
-    // Rule 2: Block if date/time overlaps with an existing accepted hire
-    // A collision exists when: new.start < existing.end AND new.end > existing.start
+    // Rule 2: Block if date/time overlaps with a hire that is already in motion
+    // (driver_arrived or in_progress). driver_assigned alone is NOT a block —
+    // the driver can hold multiple scheduled assignments; only when they have
+    // physically arrived or started a trip does it conflict with new requests.
     const { data: scheduledHires } = await supabase
       .from('transport_hires')
       .select('id, hire_number, start_datetime, end_datetime')
       .eq('driver_id', driverId)
-      .in('status', ['driver_assigned', 'confirmed']);
+      .in('status', ['driver_arrived', 'in_progress']);
 
     const newStart = new Date(hire.start_datetime).getTime();
     const newEnd   = new Date(hire.end_datetime).getTime();
@@ -645,7 +834,26 @@ export class HireService {
 
   // ── Cancel hire ────────────────────────────────────────────────────────────
 
-  async cancelHire(hireId: string, customerId: string, reason?: string) {
+  /**
+   * Cancel a transport hire.
+   *
+   * Rules by status:
+   *
+   *  pending / searching / driver_assigned / driver_arrived
+   *    → Full cancel. Wallet hold (if any) released in full.
+   *
+   *  in_progress (driver has started the journey)
+   *    → Partial charge: customer pays for distance already covered.
+   *    → Charge = (distance_covered × billing_unit_per_km) + service_fee + rounding_fee
+   *    → If wallet payment: charge the covered-distance fee, refund the rest.
+   *    → If cash payment: no wallet action — driver collects the calculated
+   *      in-progress fare in cash; hire is marked cancelled_mid_trip.
+   *    → Driver is credited their proportional driver_fare for distance covered.
+   *
+   *  completed / cancelled
+   *    → Cannot cancel.
+   */
+  async cancelHire(hireId: string, customerId: string, reason?: string, distanceCoveredKm?: number) {
     const { data: hire } = await supabase
       .from('transport_hires')
       .select('*')
@@ -655,12 +863,19 @@ export class HireService {
 
     if (!hire) throw new Error('Hire booking not found');
 
-    const cancellableStatuses = ['pending', 'searching', 'driver_assigned', 'confirmed'];
+    const cancellableStatuses = ['pending', 'searching', 'driver_assigned', 'driver_arrived', 'in_progress'];
     if (!cancellableStatuses.includes(hire.status)) {
       throw new Error(`Cannot cancel hire in ${hire.status} status`);
     }
 
-    // Refund wallet if already paid
+    const now = new Date().toISOString();
+
+    // ── In-progress cancellation — partial charge ─────────────────────────
+    if (hire.status === 'in_progress') {
+      return this._cancelInProgress(hire, customerId, reason, distanceCoveredKm, now);
+    }
+
+    // ── Pre-trip cancellation — full refund ───────────────────────────────
     if (hire.payment_status === 'paid' && hire.payment_hold_id) {
       await this.paymentService.releasePaymentHold({
         holdId: hire.payment_hold_id,
@@ -671,23 +886,22 @@ export class HireService {
     await supabase
       .from('transport_hires')
       .update({
-        status:               'cancelled',
-        payment_status:       hire.payment_status === 'paid' ? 'refunded' : hire.payment_status,
-        cancellation_reason:  reason ?? null,
-        updated_at:           new Date().toISOString(),
+        status:              'cancelled',
+        payment_status:      hire.payment_status === 'paid' ? 'refunded' : hire.payment_status,
+        cancellation_reason: reason ?? null,
+        updated_at:          now,
       })
       .eq('id', hireId);
 
-    // Notify drivers via WebSocket that hire was cancelled
+    // Notify drivers via WebSocket
     if (this.socketService) {
       this.socketService.broadcastHireCancelledToDrivers(hireId).catch(() => {});
     }
 
-    logger.info('Transport hire cancelled', { hireId, customerId, reason });
+    logger.info('Transport hire cancelled (pre-trip)', { hireId, customerId, reason });
 
     const refunded = hire.payment_status === 'paid';
 
-    // Audit log — cancellation
     this.logHireNotification({
       userId:           customerId,
       hireId,
@@ -698,6 +912,220 @@ export class HireService {
     });
 
     return { cancelled: true, refunded };
+  }
+
+  /**
+   * Handle cancellation while the trip is already in_progress.
+   * Charges the customer for distance already covered and refunds the rest (wallet).
+   */
+  private async _cancelInProgress(
+    hire: any,
+    customerId: string,
+    reason: string | undefined,
+    distanceCoveredKm: number | undefined,
+    now: string,
+  ) {
+    const hireId = hire.id;
+
+    // ── 1. Calculate the fee for distance already covered ──────────────────
+    // Use the fare config's billing_unit so the rate is always consistent.
+    const cfg = FARE_CONFIG_MAP[hire.vehicle_sub_type];
+    let chargedAmount = 0;
+    let driverEarning = 0;
+
+    if (cfg && distanceCoveredKm != null && distanceCoveredKm > 0) {
+      const fareConfig = await this.fareService.getFareConfig(
+        cfg.vehicle_category,
+        cfg.service_tier,
+        undefined,
+      );
+
+      if (fareConfig) {
+        const billingUnit  = Number(fareConfig.estimated_billing_unit);
+        const serviceFee   = Number(hire.service_fee   ?? fareConfig.service_fee   ?? 0);
+        const roundingFee  = Number(hire.rounding_fee  ?? fareConfig.rounding_fee  ?? 0);
+        const originalRate = Number(hire.amount)        > 0 ? Number(hire.driver_fare) / Number(hire.distance_km) : billingUnit;
+
+        // Distance charge = billing_unit × km covered (min = 3 km min-fare equivalent)
+        const distanceCharge = distanceCoveredKm <= 3
+          ? Number(fareConfig.min_amount_less_than_3km)
+          : Math.round(billingUnit * distanceCoveredKm);
+
+        chargedAmount = distanceCharge + serviceFee + roundingFee;
+        driverEarning = Math.round(originalRate * distanceCoveredKm);
+      }
+    } else {
+      // No distance provided — charge minimum (service + rounding fees only)
+      chargedAmount = Number(hire.service_fee ?? 0) + Number(hire.rounding_fee ?? 0);
+      driverEarning = 0;
+    }
+
+    // Never charge more than the original booking amount
+    chargedAmount = Math.min(chargedAmount, Number(hire.amount));
+    driverEarning = Math.min(driverEarning, Number(hire.driver_fare));
+
+    const refundAmount = Math.max(0, Number(hire.amount) - chargedAmount);
+
+    // ── 2. Handle wallet payment — charge covered fee, refund remainder ────
+    let walletSettled = false;
+    if (hire.payment_method === 'wallet' && hire.payment_status === 'paid' && hire.payment_hold_id) {
+      // convertHoldToPayment charges actualAmount and auto-refunds the rest
+      // but doesn't split promo/cash correctly on the refund portion.
+      // So we do it manually: charge via a debit transaction, refund via releasePaymentHold
+      // with a reduced amount by updating the hold metadata first.
+
+      if (chargedAmount > 0) {
+        // Debit the charge for distance covered
+        await supabase.from('wallet_transactions').insert({
+          user_id:          customerId,
+          transaction_type: 'debit',
+          amount:           chargedAmount,
+          currency_code:    hire.currency_code ?? 'NGN',
+          status:           'completed',
+          description:      `Transport hire ${hire.hire_number} — partial charge (${distanceCoveredKm?.toFixed(1) ?? '?'} km covered)`,
+          reference:        `hire_partial_${hireId}_${Date.now()}`,
+          metadata: {
+            hire_id:             hireId,
+            hire_number:         hire.hire_number,
+            distance_covered_km: distanceCoveredKm ?? 0,
+            original_amount:     hire.amount,
+            charge_type:         'mid_trip_cancellation',
+          },
+        });
+      }
+
+      if (refundAmount > 0) {
+        // Refund the remainder proportionally across cash/promo buckets
+        await this.paymentService.releasePaymentHold({
+          holdId: hire.payment_hold_id,
+          reason: `Mid-trip cancellation refund — ₦${chargedAmount} charged for ${distanceCoveredKm?.toFixed(1) ?? '?'} km covered`,
+          metadata: {
+            partial_charge:     chargedAmount,
+            refund_amount:      refundAmount,
+            distance_covered_km: distanceCoveredKm ?? 0,
+          },
+        });
+      } else {
+        // Fully consumed — mark hold as used (insert a zero-refund debit to close the hold)
+        await supabase
+          .from('wallet_transactions')
+          .update({ status: 'used', metadata: { closed_reason: 'mid_trip_full_charge', updated_at: now } })
+          .eq('id', hire.payment_hold_id);
+      }
+
+      walletSettled = true;
+    }
+
+    // ── 3. Credit driver for distance covered ─────────────────────────────
+    if (driverEarning > 0 && hire.driver_id) {
+      const { data: driverRow } = await supabase
+        .from('drivers').select('user_id').eq('id', hire.driver_id).single();
+
+      if (driverRow?.user_id) {
+        await this.paymentService.creditWallet({
+          userId:          driverRow.user_id,
+          amount:          driverEarning,
+          currencyCode:    hire.currency_code ?? 'NGN',
+          reference:       `hire_partial_earning_${hireId}_${Date.now()}`,
+          description:     `Transport hire ${hire.hire_number} — partial earning (${distanceCoveredKm?.toFixed(1) ?? '?'} km)`,
+          transactionType: 'earning',
+        });
+        logger.info('Driver credited partial earning for mid-trip cancellation', { hireId, driverId: hire.driver_id, driverEarning });
+      }
+    }
+
+    // ── 4. Update hire record ─────────────────────────────────────────────
+    await supabase
+      .from('transport_hires')
+      .update({
+        status:               'cancelled',
+        payment_status:       walletSettled ? 'refunded' : hire.payment_status,
+        cancellation_reason:  reason ?? null,
+        distance_covered_km:  distanceCoveredKm ?? null,
+        charged_amount:       chargedAmount,
+        refund_amount:        refundAmount,
+        updated_at:           now,
+      })
+      .eq('id', hireId);
+
+    // ── 5. Notify both parties ────────────────────────────────────────────
+    if (this.socketService) {
+      this.socketService.broadcastHireStatusUpdate(hireId, {
+        status:  'cancelled',
+        message: `Hire cancelled mid-trip. ₦${chargedAmount.toLocaleString('en-NG')} charged for distance covered.`,
+      }).catch(() => {});
+    }
+
+    const pushService = PushNotificationService.getInstance();
+
+    // Customer notification
+    this.logHireNotification({
+      userId:           customerId,
+      hireId,
+      notificationType: 'hire_cancelled_mid_trip',
+      title:            'Hire Cancelled Mid-Trip',
+      body:             hire.payment_method === 'wallet'
+        ? `Your booking ${hire.hire_number} was cancelled. ₦${chargedAmount.toLocaleString('en-NG')} charged for distance covered.${refundAmount > 0 ? ` ₦${refundAmount.toLocaleString('en-NG')} refunded to your wallet.` : ''}`
+        : `Your booking ${hire.hire_number} was cancelled. Please pay ₦${chargedAmount.toLocaleString('en-NG')} to the driver for distance covered.`,
+      data: { hire_number: hire.hire_number, charged_amount: chargedAmount, refund_amount: refundAmount, distance_covered_km: distanceCoveredKm ?? 0 },
+    });
+
+    await pushService.sendToUser({
+      userId: customerId,
+      notificationType: 'hire_cancelled_mid_trip',
+      payload: {
+        title: 'Hire Cancelled Mid-Trip',
+        body:  hire.payment_method === 'wallet'
+          ? `₦${chargedAmount.toLocaleString('en-NG')} charged. ${refundAmount > 0 ? `₦${refundAmount.toLocaleString('en-NG')} refunded.` : ''}`
+          : `Please pay ₦${chargedAmount.toLocaleString('en-NG')} to the driver.`,
+        data: { type: 'hire_cancelled_mid_trip', hire_id: hireId },
+      },
+    });
+
+    // Driver notification
+    if (hire.driver_id) {
+      const { data: driverUser } = await supabase
+        .from('drivers').select('user_id').eq('id', hire.driver_id).single();
+
+      if (driverUser?.user_id) {
+        this.logHireNotification({
+          userId:           driverUser.user_id,
+          hireId,
+          notificationType: 'hire_cancelled_mid_trip',
+          title:            'Hire Cancelled by Customer',
+          body:             driverEarning > 0
+            ? `Booking ${hire.hire_number} cancelled mid-trip. ₦${driverEarning.toLocaleString('en-NG')} credited for distance covered.`
+            : `Booking ${hire.hire_number} cancelled mid-trip.`,
+          data: { hire_number: hire.hire_number, driver_earning: driverEarning },
+        });
+
+        await pushService.sendToUser({
+          userId: driverUser.user_id,
+          notificationType: 'hire_cancelled_mid_trip',
+          payload: {
+            title: 'Hire Cancelled by Customer',
+            body:  driverEarning > 0
+              ? `₦${driverEarning.toLocaleString('en-NG')} credited to your wallet for distance covered.`
+              : `Booking ${hire.hire_number} cancelled mid-trip.`,
+            data: { type: 'hire_cancelled_mid_trip', hire_id: hireId },
+          },
+        });
+      }
+    }
+
+    logger.info('Transport hire cancelled mid-trip', {
+      hireId, customerId, distanceCoveredKm, chargedAmount, driverEarning, refundAmount,
+    });
+
+    return {
+      cancelled:           true,
+      charged_amount:      chargedAmount,
+      refund_amount:       refundAmount,
+      driver_earning:      driverEarning,
+      distance_covered_km: distanceCoveredKm ?? 0,
+      payment_method:      hire.payment_method,
+      refunded:            walletSettled && refundAmount > 0,
+    };
   }
 
   // ── Get hire details ───────────────────────────────────────────────────────
@@ -1070,7 +1498,7 @@ export class HireService {
    * Credits driver's wallet with driver_fare
    * Emits: hire:trip:completed → customer + driver
    */
-  async driverCompleteHire(hireId: string, driverId: string): Promise<void> {
+  async driverCompleteHire(hireId: string, driverId: string): Promise<{ payment_method: string }> {
     const { data: hire } = await supabase
       .from('transport_hires')
       .select('*')
@@ -1083,12 +1511,13 @@ export class HireService {
       throw new Error(`Cannot complete hire from status: ${hire.status}`);
     }
 
-    // Mark completed + settle payment
+    // Mark completed — for wallet: payment_status → paid (hold already settled below)
+    // For cash: payment_status stays 'pending' until driver confirms cash received
     await supabase
       .from('transport_hires')
       .update({
         status:         'completed',
-        payment_status: 'paid',   // already held, now settled
+        payment_status: hire.payment_method === 'cash' ? 'pending' : 'paid',
         updated_at:     new Date().toISOString(),
       })
       .eq('id', hireId);
@@ -1167,24 +1596,66 @@ export class HireService {
     });
 
     logger.info('Hire marked completed by driver', { hireId, driverId, driverFare });
+
+    return { payment_method: hire.payment_method };
   }
 
   /**
    * Get all active hires assigned to a driver.
-   * Active = driver_assigned | confirmed | in_progress
+   * Active = driver_arrived | in_progress
+   * (driver_assigned is a scheduled commitment, not yet an active ride)
    */
   async getDriverActiveHires(driverId: string) {
     const { data: hires, error } = await supabase
       .from('transport_hires')
       .select('*')
       .eq('driver_id', driverId)
-      .in('status', ['driver_assigned', 'confirmed', 'in_progress'])
+      .in('status', ['driver_arrived', 'in_progress'])
       .order('start_datetime', { ascending: true });
 
     if (error) throw new Error(`Failed to fetch active hires: ${error.message}`);
     if (!hires || hires.length === 0) return [];
 
     // Enrich each hire with customer details
+    const customerIds = [...new Set(hires.map((h: any) => h.customer_id).filter(Boolean))];
+    const customerMap = new Map<string, { name: string; phone: string | null; photo: string | null }>();
+
+    if (customerIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, phone, avatar_url')
+        .in('id', customerIds);
+      for (const u of users ?? []) {
+        customerMap.set(u.id, {
+          name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Customer',
+          phone: u.phone ?? null,
+          photo: u.avatar_url ?? null,
+        });
+      }
+    }
+
+    return hires.map((h: any) => ({
+      ...h,
+      customer: customerMap.get(h.customer_id) ?? null,
+    }));
+  }
+
+  /**
+   * Get all upcoming (scheduled) hires assigned to a driver.
+   * Scheduled = driver_assigned (accepted but not yet started)
+   * These are future bookings the driver has committed to.
+   */
+  async getDriverScheduledHires(driverId: string) {
+    const { data: hires, error } = await supabase
+      .from('transport_hires')
+      .select('*')
+      .eq('driver_id', driverId)
+      .eq('status', 'driver_assigned')
+      .order('start_datetime', { ascending: true });
+
+    if (error) throw new Error(`Failed to fetch scheduled hires: ${error.message}`);
+    if (!hires || hires.length === 0) return [];
+
     const customerIds = [...new Set(hires.map((h: any) => h.customer_id).filter(Boolean))];
     const customerMap = new Map<string, { name: string; phone: string | null; photo: string | null }>();
 

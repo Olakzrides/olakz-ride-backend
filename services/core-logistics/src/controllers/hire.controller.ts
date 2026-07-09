@@ -231,21 +231,37 @@ export class HireController {
   /**
    * POST /api/hire/:hireId/cancel
    * Cancel hire and refund wallet if already paid.
+   * Body: { reason: string, distance_covered_km?: number }
+   * distance_covered_km is required when cancelling an in_progress hire.
    */
   cancelHire = async (req: Request, res: Response): Promise<Response> => {
     try {
       const customerId = (req as any).user?.id;
       if (!customerId) return ResponseUtil.unauthorized(res);
 
-      const { reason } = req.body;
-      const result = await this.hireService.cancelHire(req.params.hireId, customerId, reason);
-      const msg = result.refunded
-        ? 'Hire cancelled and payment refunded to your wallet'
-        : 'Hire cancelled successfully';
+      const { reason, distance_covered_km } = req.body;
+      const result = await this.hireService.cancelHire(
+        req.params.hireId,
+        customerId,
+        reason,
+        distance_covered_km != null ? Number(distance_covered_km) : undefined,
+      );
+
+      let msg: string;
+      if ('charged_amount' in result && result.charged_amount > 0) {
+        msg = result.payment_method === 'wallet'
+          ? `Hire cancelled. ₦${result.charged_amount.toLocaleString('en-NG')} charged for distance covered.${result.refund_amount > 0 ? ` ₦${result.refund_amount.toLocaleString('en-NG')} refunded to your wallet.` : ''}`
+          : `Hire cancelled. Please pay ₦${result.charged_amount.toLocaleString('en-NG')} to the driver for distance covered.`;
+      } else {
+        msg = result.refunded
+          ? 'Hire cancelled and payment refunded to your wallet'
+          : 'Hire cancelled successfully';
+      }
+
       return ResponseUtil.success(res, result, msg);
     } catch (err: any) {
       logger.error('cancelHire error', { error: err.message });
-      if (err.message.includes('not found'))   return ResponseUtil.notFound(res, 'Hire booking');
+      if (err.message.includes('not found'))     return ResponseUtil.notFound(res, 'Hire booking');
       if (err.message.includes('Cannot cancel')) return ResponseUtil.badRequest(res, err.message);
       return ResponseUtil.error(res, 'Failed to cancel hire booking');
     }
@@ -274,7 +290,7 @@ export class HireController {
 
   /**
    * GET /api/hire/driver/active
-   * Driver sees all their currently active transport hire bookings.
+   * Driver sees hires currently in motion (driver_arrived or in_progress only).
    */
   getDriverActiveHires = async (req: Request, res: Response): Promise<Response> => {
     try {
@@ -291,6 +307,28 @@ export class HireController {
     } catch (err: any) {
       logger.error('getDriverActiveHires error', { error: err.message });
       return ResponseUtil.error(res, 'Failed to fetch active hires');
+    }
+  };
+
+  /**
+   * GET /api/hire/driver/scheduled
+   * Driver sees upcoming hires they have accepted but not yet started (driver_assigned).
+   */
+  getDriverScheduledHires = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return ResponseUtil.unauthorized(res);
+
+      const { data: driver } = await (await import('../config/database')).supabase
+        .from('drivers').select('id').eq('user_id', userId).maybeSingle();
+
+      if (!driver) return ResponseUtil.forbidden(res, 'Driver profile not found');
+
+      const hires = await this.hireService.getDriverScheduledHires(driver.id);
+      return ResponseUtil.success(res, { hires });
+    } catch (err: any) {
+      logger.error('getDriverScheduledHires error', { error: err.message });
+      return ResponseUtil.error(res, 'Failed to fetch scheduled hires');
     }
   };
 
@@ -401,8 +439,11 @@ export class HireController {
       const { data: driver } = await (await import('../config/database')).supabase
         .from('drivers').select('id').eq('user_id', userId).maybeSingle();
       if (!driver) return ResponseUtil.forbidden(res, 'Driver profile not found');
-      await this.hireService.driverCompleteHire(req.params.hireId, driver.id);
-      return ResponseUtil.success(res, {}, 'Hire completed. Payment credited to your wallet.');
+      const result = await this.hireService.driverCompleteHire(req.params.hireId, driver.id);
+      const msg = result.payment_method === 'cash'
+        ? 'Hire completed. Please confirm cash payment received from customer.'
+        : 'Hire completed. Payment credited to your wallet.';
+      return ResponseUtil.success(res, {}, msg);
     } catch (err: any) {
       logger.error('driverCompleteHire error', { error: err.message });
       if (err.message.includes('not found')) return ResponseUtil.notFound(res, 'Hire');
@@ -463,6 +504,67 @@ export class HireController {
     } catch (err: any) {
       logger.error('driverRejectHire error', { error: err.message });
       return ResponseUtil.error(res, 'Failed to decline hire request');
+    }
+  };
+
+  /**
+   * POST /api/hire/driver/:hireId/confirm-cash-payment
+   * Driver confirms they received cash from the customer.
+   * Triggers platform remittance deduction / pending logic.
+   */
+  confirmCashPayment = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return ResponseUtil.unauthorized(res);
+
+      const { data: driver } = await (await import('../config/database')).supabase
+        .from('drivers').select('id').eq('user_id', userId).maybeSingle();
+
+      if (!driver) return ResponseUtil.forbidden(res, 'Driver profile not found');
+
+      const result = await this.hireService.confirmCashPayment(req.params.hireId, driver.id);
+
+      if (!result.success) {
+        if (result.error === 'Unauthorized')   return ResponseUtil.forbidden(res, result.error);
+        if (result.error === 'Hire not found') return ResponseUtil.notFound(res, 'Hire booking');
+        return ResponseUtil.badRequest(res, result.error ?? 'Failed to confirm cash payment');
+      }
+
+      return ResponseUtil.success(res, {
+        message: 'Cash payment confirmed successfully',
+        ...(result.remittanceStatus ? {
+          remittance: {
+            status: result.remittanceStatus.status,
+            ...(result.remittanceStatus.status === 'pending' ? {
+              warning: result.remittanceStatus.blocked
+                ? `You have been blocked from accepting rides due to ${result.remittanceStatus.pendingCount} unpaid remittances totalling ₦${result.remittanceStatus.pendingAmount.toLocaleString()}. Top up your wallet to unblock.`
+                : `Platform remittance is pending. Please top up your wallet to settle ₦${result.remittanceStatus.pendingAmount.toLocaleString()}.`,
+              outstanding_amount: result.remittanceStatus.pendingAmount,
+              blocked:            result.remittanceStatus.blocked,
+            } : {}),
+          },
+        } : {}),
+      });
+    } catch (err: any) {
+      logger.error('confirmCashPayment (hire) error', { error: err.message });
+      return ResponseUtil.error(res, 'Failed to confirm cash payment');
+    }
+  };
+
+  /**
+   * GET /api/hire/wallet-balance
+   * Returns the customer's wallet balance for the payment method selection screen.
+   */
+  getWalletBalance = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const customerId = (req as any).user?.id;
+      if (!customerId) return ResponseUtil.unauthorized(res);
+
+      const balance = await this.hireService.getCustomerWalletBalance(customerId);
+      return ResponseUtil.success(res, { wallet: balance });
+    } catch (err: any) {
+      logger.error('getWalletBalance (hire) error', { error: err.message });
+      return ResponseUtil.error(res, 'Failed to fetch wallet balance');
     }
   };
 }

@@ -5,6 +5,30 @@ const REMITTANCE_BLOCK_THRESHOLD = 10000; // block driver after 3 consecutive fa
 
 export class RemittanceService {
   /**
+   * Called after a cash hire completes and driver confirms cash received.
+   * Identical logic to handleCashRideRemittance — reuses same blocked counter.
+   * Platform remittance = service_fee + rounding_fee on the hire.
+   */
+  static async handleCashHireRemittance(params: {
+    driverId: string;
+    hireId:   string;
+    platformRemittance: number;
+  }): Promise<{
+    status:       'auto_deducted' | 'pending' | 'settled';
+    blocked:      boolean;
+    pendingCount: number;
+    pendingAmount: number;
+  }> {
+    // Delegate to the same logic — just substitute hireId for rideId in logs
+    const { driverId, hireId, platformRemittance } = params;
+    return this.handleCashRideRemittance({
+      driverId,
+      rideId: hireId,
+      platformRemittance,
+    });
+  }
+
+  /**
    * Called after a cash ride completes.
    * Tries to auto-deduct platform_remittance from the driver's wallet.
    * If wallet is insufficient, marks as pending and increments the failure counter.
