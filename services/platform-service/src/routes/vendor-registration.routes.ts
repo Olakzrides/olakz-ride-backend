@@ -11,6 +11,7 @@ const ctrl = new VendorRegistrationController();
 // Vendor self-service routes (authenticated)
 router.post('/register', authenticate, ctrl.register);
 router.put('/register/documents', authenticate, ctrl.submitDocuments);
+router.get('/register/resume', authenticate, ctrl.resumeRegistration);
 router.get('/register/status', authenticate, ctrl.getStatus);
 router.get('/register/upload-url', authenticate, ctrl.getUploadUrl);
 

@@ -72,6 +72,22 @@ export class VendorRegistrationController {
   };
 
   /**
+   * GET /api/vendor/register/resume
+   */
+  resumeRegistration = async (req: AuthRequest, res: Response): Promise<Response> => {
+    try {
+      const result = await VendorRegistrationService.resumeRegistration(req.user!.id);
+      if (!result) {
+        return ResponseUtil.notFound(res, 'No vendor registration found. Start a new registration.');
+      }
+      return ResponseUtil.success(res, 'Registration progress retrieved', { registration: result });
+    } catch (err: any) {
+      logger.error('Vendor resume error:', err);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  /**
    * GET /api/vendor/register/upload-url?file_type=logo&file_name=logo.jpg
    */
   getUploadUrl = async (req: AuthRequest, res: Response): Promise<Response> => {
