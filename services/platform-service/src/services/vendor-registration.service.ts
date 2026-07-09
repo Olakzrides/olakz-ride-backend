@@ -301,6 +301,68 @@ export class VendorRegistrationService {
   }
 
   /**
+   * Resume vendor registration — returns current step and what to do next
+   */
+  static async resumeRegistration(userId: string) {
+    const vendor = await this.getByUserId(userId);
+
+    if (!vendor) {
+      return null; // No registration started
+    }
+
+    // Determine which step is complete and what comes next
+    const hasBusinessInfo = !!(
+      vendor.business_name &&
+      vendor.business_type &&
+      vendor.email &&
+      vendor.phone
+    );
+
+    const hasDocuments = !!(
+      vendor.logo_url ||
+      vendor.nin_number ||
+      vendor.cac_document_url
+    );
+
+    let current_step: string;
+    let next_action: { step: string; endpoint: string; method: string } | null;
+
+    if (!hasBusinessInfo) {
+      current_step = 'business_info';
+      next_action = {
+        step: 'business_info',
+        endpoint: '/api/vendor/register',
+        method: 'POST',
+      };
+    } else if (!hasDocuments) {
+      current_step = 'documents';
+      next_action = {
+        step: 'documents',
+        endpoint: '/api/vendor/register/documents',
+        method: 'PUT',
+      };
+    } else {
+      current_step = 'completed';
+      next_action = null;
+    }
+
+    return {
+      vendor_id: vendor.id,
+      verification_status: vendor.verification_status,
+      business_name: vendor.business_name,
+      business_type: vendor.business_type,
+      current_step,
+      steps_completed: {
+        business_info: hasBusinessInfo,
+        documents: hasDocuments,
+      },
+      next_action,
+      created_at: vendor.created_at,
+      updated_at: vendor.updated_at,
+    };
+  }
+
+  /**
    * Check if vendor is approved (used by food-service middleware)
    */
   static async isApproved(userId: string): Promise<boolean> {
