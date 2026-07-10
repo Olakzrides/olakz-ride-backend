@@ -149,7 +149,6 @@ export class FareService {
     config: RideFareConfig,
     distance: number,
     isSharedRide: boolean,
-    isHighTraffic: boolean = false
   ): {
     rideFare: number;
     sharedDiscount: number;
@@ -159,9 +158,13 @@ export class FareService {
     bookingFee: number;
     totalFare: number;
   } {
-    const billingUnit = isHighTraffic
-      ? Number(config.high_traffic_estimated_billing_unit)
-      : Number(config.estimated_billing_unit);
+    // Effective billing unit = base rate + high-traffic surcharge.
+    // high_traffic_estimated_billing_unit defaults to 0, so when admin hasn't
+    // set a surcharge the formula is identical to the old base-only rate.
+    // When admin sets a surcharge (e.g. 200) it is immediately added to every
+    // fare for that specific vehicle / tier / city-tier config row.
+    const billingUnit = Number(config.estimated_billing_unit)
+                      + Number(config.high_traffic_estimated_billing_unit ?? 0);
 
     let rideFare: number;
     let sharedDiscount = 0;
