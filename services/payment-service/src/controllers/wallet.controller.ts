@@ -13,13 +13,20 @@ export class WalletController {
     try {
       const userId = (req as AuthRequest).user!.id;
       const currencyCode = (req.query.currency as string) || 'NGN';
-      const balances = await WalletService.getWalletBalances(userId, currencyCode);
+      const [balances, earnedBalance] = await Promise.all([
+        WalletService.getWalletBalances(userId, currencyCode),
+        WalletService.getEarnedBalance(userId, currencyCode),
+      ]);
+      // Withdrawable = min(earned, cash) — driver can't withdraw more than is physically in wallet
+      const withdrawableBalance = Math.min(earnedBalance, balances.cashBalance);
       return ResponseUtil.success(res, {
         wallet: {
-          cash_balance:  balances.cashBalance,
-          promo_balance: balances.promoBalance,
-          total_balance: balances.totalBalance,
-          currency_code: currencyCode,
+          cash_balance:         balances.cashBalance,
+          promo_balance:        balances.promoBalance,
+          total_balance:        balances.totalBalance,
+          earned_balance:       earnedBalance,        // lifetime earnings eligibility ceiling
+          withdrawable_balance: withdrawableBalance,  // what can actually be withdrawn right now
+          currency_code:        currencyCode,
         },
       });
     } catch (err: unknown) {

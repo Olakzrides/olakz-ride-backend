@@ -54,10 +54,24 @@ export class WithdrawalsController {
       // Check earned balance — only platform earnings (driver/vendor payouts) can be withdrawn.
       // Card top-ups, refunds, and promo credits are NOT withdrawable.
       const earnedBalance = await WalletService.getEarnedBalance(userId);
-      if (earnedBalance < totalDeduction) {
+
+      // Also check the actual cash balance — the driver may have spent some of their earnings
+      // on airtime, food orders, or other in-app purchases. The wallet balance is the physical
+      // money present; earned_balance is just the lifetime eligibility ceiling.
+      // Withdrawal limit = min(earned_balance, cash_balance) to prevent over-withdrawal.
+      const { cashBalance } = await WalletService.getWalletBalances(userId);
+      const withdrawableBalance = Math.min(earnedBalance, cashBalance);
+
+      if (withdrawableBalance < totalDeduction) {
+        // Build a clear message explaining which limit was hit
+        const limitedByEarnings = earnedBalance < cashBalance;
+        const limitMsg = limitedByEarnings
+          ? `Only platform earnings can be withdrawn. Earned balance: ₦${earnedBalance.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`
+          : `Insufficient wallet balance. Cash available: ₦${cashBalance.toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
+
         return ResponseUtil.badRequest(
           res,
-          `Insufficient earned balance. Available to withdraw: ₦${earnedBalance.toLocaleString('en-NG', { minimumFractionDigits: 2 })}${fee > 0 ? ` (includes ₦${fee} transfer fee)` : ''}. Only platform earnings can be withdrawn.`
+          `Insufficient withdrawable balance. Available to withdraw: ₦${withdrawableBalance.toLocaleString('en-NG', { minimumFractionDigits: 2 })}${fee > 0 ? ` (includes ₦${fee} transfer fee)` : ''}. ${limitMsg}.`
         );
       }
 
@@ -183,8 +197,13 @@ export class WithdrawalsController {
         return ResponseUtil.serverError(res, 'Failed to fetch withdrawals');
       }
 
-      // Return earned balance — only platform earnings are withdrawable
+      // Return withdrawable balance — lower of earned_balance and cash_balance.
+      // earned_balance = lifetime platform earnings minus past withdrawals (eligibility ceiling).
+      // cash_balance   = physical money currently in wallet (spending may have reduced it).
+      // A driver who earned ₦4,000 but spent ₦2,000 can only withdraw ₦2,000.
       const earnedBalance = await WalletService.getEarnedBalance(userId);
+      const { cashBalance } = await WalletService.getWalletBalances(userId);
+      const withdrawableBalance = Math.min(earnedBalance, cashBalance);
 
       return ResponseUtil.success(res, {
         withdrawals: withdrawals || [],
@@ -194,7 +213,7 @@ export class WithdrawalsController {
           total: count || 0,
           totalPages: Math.ceil((count || 0) / limit),
         },
-        earned_balance: earnedBalance,
+        earned_balance: withdrawableBalance,
       });
     } catch (err: unknown) {
       return ResponseUtil.serverError(res, toMessage(err));
