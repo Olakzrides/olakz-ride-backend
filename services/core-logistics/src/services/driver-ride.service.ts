@@ -905,7 +905,12 @@ export class DriverRideService {
             dropoff_address,
             estimated_fare,
             estimated_distance,
-            estimated_duration
+            estimated_duration,
+            payment_method,
+            driver_fare,
+            service_fee,
+            rounding_fee,
+            booking_fee
           )
         `)
         .eq('driver_id', driverId)
@@ -938,7 +943,7 @@ export class DriverRideService {
       // Fetch customer details in one query
       const { data: users } = await supabase
         .from('users')
-        .select('id, first_name, last_name, email, phone')
+        .select('id, first_name, last_name, email, phone, avatar_url')
         .in('id', userIds);
 
       const userMap = new Map<string, any>();
@@ -979,6 +984,7 @@ export class DriverRideService {
           customer: {
             name: customerName,
             phone: user?.phone ?? null,
+            photo: user?.avatar_url ?? null,
           },
           payment_method: r.ride?.payment_method ?? null,
           fare: {
