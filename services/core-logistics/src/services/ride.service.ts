@@ -181,6 +181,19 @@ export class RideService {
       paymentHoldId: rideResult.payment_hold_id,
     });
 
+    // The RPC doesn't accept fare breakdown params — patch them now.
+    // driver_fare, service_fee, rounding_fee, shared_discount are not in the
+    // stored procedure signature, so we write them in a follow-up UPDATE.
+    await supabase
+      .from('rides')
+      .update({
+        driver_fare:     data.driver_fare     ?? data.estimated_fare,
+        service_fee:     data.service_fee     ?? 0,
+        rounding_fee:    data.rounding_fee    ?? 0,
+        shared_discount: data.shared_discount ?? 0,
+      })
+      .eq('id', rideResult.ride_id);
+
     return await this.finalizeRideCreation(rideResult.ride_id, data);
   }
 
