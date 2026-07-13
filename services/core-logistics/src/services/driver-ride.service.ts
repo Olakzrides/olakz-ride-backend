@@ -909,8 +909,7 @@ export class DriverRideService {
             payment_method,
             driver_fare,
             service_fee,
-            rounding_fee,
-            booking_fee
+            rounding_fee
           )
         `)
         .eq('driver_id', driverId)
@@ -966,8 +965,8 @@ export class DriverRideService {
         const isCash = r.ride?.payment_method === 'cash';
         const serviceFee         = Number(r.ride?.service_fee  ?? 0);
         const roundingFee        = Number(r.ride?.rounding_fee ?? 0);
-        const bookingFee         = Number(r.ride?.booking_fee  ?? 0);
-        const platformRemittance = serviceFee + roundingFee + bookingFee;
+        // booking_fee is not a column on rides — remittance is service_fee + rounding_fee only
+        const platformRemittance = serviceFee + roundingFee;
 
         // Strip raw fare/identity fields from ride — driver should not see them directly
         const { service_fee, rounding_fee, driver_fare, estimated_fare, payment_method, user_id, ...ridePublic } = r.ride ?? {};
