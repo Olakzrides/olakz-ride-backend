@@ -1099,12 +1099,94 @@ export class DeliveriesController {
         return ResponseUtil.error(res, 'Failed to reject delivery');
       }
 
+      // Check if all couriers in the current batch have responded (no more pending)
+      // If so, immediately try the next batch instead of waiting for the timeout
+      const { data: pendingRequests } = await supabase
+        .from('delivery_requests')
+        .select('id')
+        .eq('delivery_id', id)
+        .eq('status', 'pending');
+
+      const allRespondedInBatch = !pendingRequests || pendingRequests.length === 0;
+
+      if (allRespondedInBatch) {
+        // Check that the delivery is still searching (not accepted/cancelled)
+        const { data: delivery } = await supabase
+          .from('deliveries')
+          .select('status')
+          .eq('id', id)
+          .single();
+
+        if (delivery?.status === 'searching') {
+          // Trigger next batch immediately — fire and forget
+          this.triggerNextBatchIfAvailable(id).catch(err =>
+            logger.error('Error triggering next batch after all declines:', err)
+          );
+        }
+      }
+
       return ResponseUtil.success(res, {
         message: 'Delivery rejected successfully',
       });
     } catch (error: any) {
       logger.error('Reject delivery error:', error);
       return ResponseUtil.error(res, error.message || 'Failed to reject delivery');
+    }
+  };
+
+  /**
+   * Trigger the next batch of couriers when all in the current batch have declined.
+   * Mirrors what handleRequestTimeout does in DeliveryMatchingService.
+   */
+  private triggerNextBatchIfAvailable = async (deliveryId: string): Promise<void> => {
+    try {
+      const { socketService } = await import('../../../index');
+      const { DeliveryMatchingService } = await import('../services/delivery-matching.service');
+
+      if (!socketService) return;
+
+      // Get delivery pickup details for re-matching
+      const { data: delivery } = await supabase
+        .from('deliveries')
+        .select('pickup_latitude, pickup_longitude, vehicle_type_id, region_id, status')
+        .eq('id', deliveryId)
+        .single();
+
+      if (!delivery || delivery.status !== 'searching') return;
+
+      // Get all courier IDs already contacted (used by matchingService internally for deduplication)
+      await supabase
+        .from('delivery_requests')
+        .select('courier_id')
+        .eq('delivery_id', deliveryId);
+
+      const matchingService = new DeliveryMatchingService(socketService);
+
+      // Use the public method which will find new couriers, excluding those already contacted
+      // We pass a narrow search — matchingService will skip already-used couriers internally
+      // via the batch logic. Re-invoking findAndNotifyCouriersForDelivery handles deduplication.
+      const result = await matchingService.findAndNotifyCouriersForDelivery(deliveryId, {
+        pickupLatitude: parseFloat(delivery.pickup_latitude),
+        pickupLongitude: parseFloat(delivery.pickup_longitude),
+        vehicleTypeId: delivery.vehicle_type_id,
+        regionId: delivery.region_id,
+        maxDistance: 15,
+        maxCouriers: 10,
+      });
+
+      if (result.success) {
+        logger.info(`Next batch triggered for delivery ${deliveryId}: notified ${result.couriersNotified} new couriers`);
+      } else {
+        logger.warn(`No more couriers available for delivery ${deliveryId} after all declines`);
+        // Flip to no_couriers_available
+        await supabase
+          .from('deliveries')
+          .update({ status: 'no_couriers_available', updated_at: new Date().toISOString() })
+          .eq('id', deliveryId)
+          .eq('status', 'searching');
+      }
+    } catch (err) {
+      logger.error('triggerNextBatchIfAvailable error:', err);
     }
   };
 
