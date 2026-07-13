@@ -141,6 +141,50 @@ export class DriverRideController {
   };
 
   /**
+   * Cancel ride (driver cancels before trip starts)
+   * POST /api/drivers/rides/:rideId/cancel
+   */
+  cancelRide = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      const userRole = (req as any).user?.role;
+
+      if (!userId || userRole !== 'driver') {
+        return ResponseUtil.unauthorized(res, 'Driver access required');
+      }
+
+      const { rideId } = req.params;
+      const { reason } = req.body;
+
+      const driverId = await this.getDriverIdFromUserId(userId);
+      if (!driverId) {
+        return ResponseUtil.notFound(res, 'Driver profile not found');
+      }
+
+      const result = await this.rideService.cancelRide(driverId, rideId, reason);
+
+      if (!result.success) {
+        if (result.errorCode === 'INVALID_STATUS') {
+          return ResponseUtil.badRequest(res, result.error!);
+        }
+        if (result.errorCode === 'UNAUTHORIZED') {
+          return ResponseUtil.forbidden(res, result.error!);
+        }
+        return ResponseUtil.error(res, result.error!);
+      }
+
+      logger.info(`Driver ${driverId} cancelled ride ${rideId}`);
+
+      return ResponseUtil.success(res, {
+        message: 'Ride cancelled. We are finding a new driver for the customer.',
+      });
+    } catch (error: any) {
+      logger.error('Cancel ride error:', error);
+      return ResponseUtil.error(res, 'Failed to cancel ride');
+    }
+  };
+
+  /**
    * Mark arrived at pickup
    * POST /api/drivers/rides/:rideId/arrived
    */
