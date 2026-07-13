@@ -13,7 +13,7 @@ export class RestaurantController {
       const result = await RestaurantService.listRestaurants({
         lat: lat ? parseFloat(lat as string) : undefined,
         lng: lng ? parseFloat(lng as string) : undefined,
-        radiusKm: radius ? parseFloat(radius as string) : 10,
+        radiusKm: radius ? parseFloat(radius as string) : 15,
         cuisineType: cuisine_type as string | undefined,
         ratingMin: rating_min ? parseFloat(rating_min as string) : undefined,
         isOpen: is_open !== undefined ? is_open === 'true' : undefined,

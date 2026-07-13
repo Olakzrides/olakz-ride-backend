@@ -1,7 +1,6 @@
 import { supabase } from '../config/database';
 import { MapsUtil } from '../utils/maps';
 import { FareService } from './fare.service';
-import logger from '../utils/logger';
 
 export class RestaurantService {
   /**
@@ -18,6 +17,10 @@ export class RestaurantService {
     limit?: number;
     offset?: number;
   }) {
+    const limit = params.limit || 20;
+    const offset = params.offset || 0;
+    const hasLocation = !!(params.lat && params.lng);
+
     let query = supabase
       .from('food_restaurants')
       .select('*')
@@ -29,40 +32,44 @@ export class RestaurantService {
     if (params.cuisineType) query = query.contains('cuisine_types', [params.cuisineType]);
     if (params.search) query = query.ilike('name', `%${params.search}%`);
 
-    query = query
-      .order('average_rating', { ascending: false })
-      .range(params.offset || 0, (params.offset || 0) + (params.limit || 20) - 1);
+    // When location is provided, fetch ALL matching restaurants first so distance
+    // filtering happens on the full set, not just the first paginated page.
+    // Without this, nearby restaurants beyond the first 20 (sorted by rating) are silently dropped.
+    if (!hasLocation) {
+      query = query
+        .order('average_rating', { ascending: false })
+        .range(offset, offset + limit - 1);
+    } else {
+      query = query.order('average_rating', { ascending: false });
+    }
 
     const { data, error, count } = await query;
     if (error) throw new Error('Failed to fetch restaurants');
 
     let restaurants = data || [];
 
-    // Filter by radius if coordinates provided
-    if (params.lat && params.lng && params.radiusKm) {
-      restaurants = restaurants.filter((r) => {
-        const dist = MapsUtil.calculateDistance(
-          params.lat!,
-          params.lng!,
-          parseFloat(r.latitude),
-          parseFloat(r.longitude)
-        );
-        return dist <= params.radiusKm!;
-      });
+    if (hasLocation) {
+      const radius = params.radiusKm ?? 15;
 
-      // Add distance to each restaurant
-      restaurants = restaurants.map((r) => ({
-        ...r,
-        distance_km: MapsUtil.calculateDistance(
-          params.lat!,
-          params.lng!,
-          parseFloat(r.latitude),
-          parseFloat(r.longitude)
-        ),
-      }));
+      // Filter by distance across the full result set
+      restaurants = restaurants
+        .map((r) => ({
+          ...r,
+          distance_km: MapsUtil.calculateDistance(
+            params.lat!,
+            params.lng!,
+            parseFloat(r.latitude),
+            parseFloat(r.longitude)
+          ),
+        }))
+        .filter((r) => r.distance_km <= radius)
+        .sort((a, b) => a.distance_km - b.distance_km);
 
-      // Sort by distance
-      restaurants.sort((a: any, b: any) => a.distance_km - b.distance_km);
+      // Apply pagination after distance filtering
+      const total = restaurants.length;
+      restaurants = restaurants.slice(offset, offset + limit);
+
+      return { restaurants, total };
     }
 
     return { restaurants, total: count || restaurants.length };
