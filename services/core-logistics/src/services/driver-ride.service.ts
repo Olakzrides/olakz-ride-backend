@@ -327,7 +327,7 @@ export class DriverRideService {
       );
 
       // ── 7. Re-trigger matching ───────────────────────────────────────────────
-      this.retriggerMatching(rideId, ride).catch((err) =>
+      this.retriggerMatching(rideId, ride, driverId).catch((err) =>
         logger.error(`Re-matching after driver cancel failed for ride ${rideId}:`, err)
       );
 
@@ -343,8 +343,9 @@ export class DriverRideService {
   /**
    * Re-trigger driver matching after a driver cancels.
    * Resolves serviceTierId from variant title the same way ride.service.ts does.
+   * Excludes the cancelling driver from the new broadcast.
    */
-  private async retriggerMatching(rideId: string, ride: any): Promise<void> {
+  private async retriggerMatching(rideId: string, ride: any, excludeDriverId: string): Promise<void> {
     try {
       const { rideMatchingService } = await import('../index');
       if (!rideMatchingService) {
@@ -360,13 +361,17 @@ export class DriverRideService {
       };
       const serviceTierId = serviceTierMap[variantTitle] || serviceTierMap['standard'];
 
-      const result = await rideMatchingService.findAndNotifyDriversForRide(rideId, {
-        pickupLatitude:  parseFloat(ride.pickup_latitude),
-        pickupLongitude: parseFloat(ride.pickup_longitude),
-        serviceTierId,
-        maxDistance: 30,
-        maxDrivers:  10,
-      });
+      const result = await rideMatchingService.findAndNotifyDriversForRide(
+        rideId,
+        {
+          pickupLatitude:  parseFloat(ride.pickup_latitude),
+          pickupLongitude: parseFloat(ride.pickup_longitude),
+          serviceTierId,
+          maxDistance: 30,
+          maxDrivers:  10,
+        },
+        [excludeDriverId]   // exclude the cancelling driver
+      );
 
       logger.info(`Re-matching after driver cancel: notified ${result.driversNotified} drivers for ride ${rideId}`);
     } catch (err) {
