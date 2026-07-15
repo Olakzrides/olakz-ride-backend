@@ -41,13 +41,20 @@ export class RideMatchingService {
    */
   async findAndNotifyDriversForRide(
     rideId: string,
-    criteria: RideMatchingCriteria
+    criteria: RideMatchingCriteria,
+    excludeDriverIds: string[] = []
   ): Promise<{ success: boolean; driversNotified: number; batchNumber: number }> {
     try {
 
       // Find available drivers
-      const availableDrivers = await this.findAvailableDrivers(criteria);
+      let availableDrivers = await this.findAvailableDrivers(criteria);
 
+      // Exclude specified drivers (e.g. the one who just cancelled)
+      if (excludeDriverIds.length > 0) {
+        availableDrivers = availableDrivers.filter(
+          d => !excludeDriverIds.includes(d.driverId)
+        );
+      }
       // logger.info(`📊 Found ${availableDrivers.length} available drivers`, {
       //   rideId,
       //   driversFound: availableDrivers.length,
