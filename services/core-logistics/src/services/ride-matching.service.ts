@@ -478,7 +478,10 @@ export class RideMatchingService {
 
     const { error } = await supabase
       .from('ride_requests')
-      .insert(rideRequests);
+      .upsert(rideRequests, {
+        onConflict: 'ride_id,driver_id',
+        ignoreDuplicates: false,  // update the row — reset status to pending with new expiry
+      });
 
     if (error) {
       logger.error('Error creating ride requests:', error);
