@@ -271,10 +271,9 @@ export class DriverRideService {
       const { error: updateError } = await supabase
         .from('rides')
         .update({
-          status:      RideStatus.SEARCHING,
-          driver_id:   null,
-          assigned_at: null,
-          updated_at:  new Date().toISOString(),
+          status:     RideStatus.SEARCHING,
+          driver_id:  null,
+          updated_at: new Date().toISOString(),
         })
         .eq('id', rideId);
 
