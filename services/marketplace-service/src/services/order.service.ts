@@ -302,12 +302,35 @@ export class OrderService {
     if (!order) return null;
     if (requesterRole === 'customer' && order.customerId !== requesterId) return null;
 
+    const { supabase: supabaseClient } = await import('../config/database');
+
+    // Fetch product images for order items
+    const productIds = order.orderItems.map((i: any) => i.productId).filter(Boolean);
+    let productImageMap: Record<string, string | null> = {};
+
+    if (productIds.length > 0) {
+      const { data: products } = await supabaseClient
+        .from('marketplace_products')
+        .select('id, images')
+        .in('id', productIds);
+
+      if (products) {
+        for (const p of products) {
+          const firstImage = Array.isArray(p.images) && p.images.length > 0 ? p.images[0] : null;
+          productImageMap[p.id] = firstImage;
+        }
+      }
+    }
+
+    const enrichedOrderItems = order.orderItems.map((item: any) => ({
+      ...item,
+      productImage: productImageMap[item.productId] ?? null,
+    }));
+
     // Enrich with rider details when a rider has been assigned
     let riderInfo: { name: string; phone: string | null; photo: string | null; rating: number | null; vehicle: { plateNumber: string; make: string; model: string; color: string } | null } | null = null;
 
     if (order.riderId) {
-      const { supabase: supabaseClient } = await import('../config/database');
-
       const { data: driverRow } = await supabaseClient
         .from('drivers')
         .select('user_id, rating, vehicles:driver_vehicles(plate_number, manufacturer, model, color, is_active)')
@@ -341,7 +364,7 @@ export class OrderService {
       }
     }
 
-    return { ...order, rider: riderInfo };
+    return { ...order, orderItems: enrichedOrderItems, rider: riderInfo };
   }
 
   static async getCustomerHistory(params: { customerId: string; status?: string; limit?: number; page?: number }) {
