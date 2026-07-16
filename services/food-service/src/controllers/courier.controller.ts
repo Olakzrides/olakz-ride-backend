@@ -147,7 +147,7 @@ export class CourierController {
         .select(`
           id, status, delivery_fee, total_amount, delivery_address, created_at, accepted_at,
           customer_id,
-          restaurant:food_restaurants(id, name, address, latitude, longitude, phone)
+          restaurant:food_restaurants(id, name, address, latitude, longitude, phone, logo_url)
         `)
         .eq('courier_id', driverId)
         .in('status', ['accepted', 'preparing', 'ready_for_pickup', 'arrived_vendor', 'picked_up']);
