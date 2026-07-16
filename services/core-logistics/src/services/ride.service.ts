@@ -462,6 +462,144 @@ export class RideService {
   }
 
   /**
+   * Get paginated ride history for a customer with full details.
+   */
+  async getCustomerRideHistory(userId: string, options: {
+    page?:       number;
+    limit?:      number;
+    status?:     string;
+    dateFrom?:   string;
+    dateTo?:     string;
+  } = {}): Promise<{
+    rides:      any[];
+    total:      number;
+    page:       number;
+    limit:      number;
+    totalPages: number;
+  }> {
+    const page   = Math.max(1, options.page  ?? 1);
+    const limit  = Math.min(50, options.limit ?? 10);
+    const offset = (page - 1) * limit;
+
+    try {
+      let query = supabase
+        .from('rides')
+        .select(`
+          id, status, booking_type, payment_method, payment_status,
+          pickup_address,  pickup_latitude,  pickup_longitude,
+          dropoff_address, dropoff_latitude, dropoff_longitude,
+          estimated_fare, driver_fare, service_fee, rounding_fee, final_fare,
+          currency_code,
+          driver_id,
+          created_at, updated_at, scheduled_at,
+          recipient_name, recipient_phone,
+          ride_variants (title, vehicle_types (name, display_name))
+        `, { count: 'exact' })
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (options.status)   query = query.eq('status', options.status);
+      if (options.dateFrom) query = query.gte('created_at', options.dateFrom);
+      if (options.dateTo)   query = query.lte('created_at', options.dateTo);
+
+      const { data: rides, count, error } = await query;
+
+      if (error) {
+        logger.error('getCustomerRideHistory query error:', error);
+        return { rides: [], total: 0, page, limit, totalPages: 0 };
+      }
+
+      const rideList = rides ?? [];
+
+      // Enrich with driver details for completed/in-progress rides
+      const driverIds = [...new Set(
+        rideList.map((r: any) => r.driver_id).filter(Boolean)
+      )];
+
+      const driverMap = new Map<string, {
+        name: string; phone: string | null; photo: string | null; rating: number;
+        vehicle: { model: string; color: string; plate_number: string } | null;
+      }>();
+
+      if (driverIds.length > 0) {
+        const { data: drivers } = await supabase
+          .from('drivers')
+          .select(`
+            id, rating,
+            user:users!drivers_user_id_fkey(first_name, last_name, phone, avatar_url),
+            vehicles:driver_vehicles(manufacturer, model, color, plate_number, is_active)
+          `)
+          .in('id', driverIds);
+
+        for (const d of drivers ?? []) {
+          const dr = d as Record<string, any>;
+          const u  = dr.user as Record<string, any> | null;
+          const vehicles = (dr.vehicles as any[]) ?? [];
+          const active   = vehicles.find(v => v.is_active) ?? vehicles[0] ?? null;
+          driverMap.set(dr.id, {
+            name:    u ? `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Driver' : 'Driver',
+            phone:   u?.phone   ?? null,
+            photo:   u?.avatar_url ?? null,
+            rating:  parseFloat(String(dr.rating ?? 0)),
+            vehicle: active ? {
+              model:        `${active.manufacturer} ${active.model}`,
+              color:        active.color,
+              plate_number: active.plate_number,
+            } : null,
+          });
+        }
+      }
+
+      const enriched = rideList.map((ride: any) => ({
+        id:               ride.id,
+        status:           ride.status,
+        booking_type:     ride.booking_type,
+        payment_method:   ride.payment_method,
+        payment_status:   ride.payment_status,
+        pickup: {
+          address:   ride.pickup_address,
+          latitude:  ride.pickup_latitude,
+          longitude: ride.pickup_longitude,
+        },
+        dropoff: {
+          address:   ride.dropoff_address,
+          latitude:  ride.dropoff_latitude,
+          longitude: ride.dropoff_longitude,
+        },
+        fare: {
+          estimated:    ride.estimated_fare,
+          final:        ride.final_fare   ?? ride.estimated_fare,
+          driver_fare:  ride.driver_fare  ?? null,
+          service_fee:  ride.service_fee  ?? null,
+          rounding_fee: ride.rounding_fee ?? null,
+          currency:     ride.currency_code ?? 'NGN',
+        },
+        vehicle:       ride.ride_variants ?? null,
+        driver:        ride.driver_id ? (driverMap.get(ride.driver_id) ?? null) : null,
+        recipient:     ride.booking_type === 'for_someone' ? {
+          name:  ride.recipient_name  ?? null,
+          phone: ride.recipient_phone ?? null,
+        } : null,
+        scheduled_at:  ride.scheduled_at  ?? null,
+        created_at:    ride.created_at,
+        updated_at:    ride.updated_at,
+      }));
+
+      return {
+        rides:      enriched,
+        total:      count ?? 0,
+        page,
+        limit,
+        totalPages: Math.ceil((count ?? 0) / limit),
+      };
+    } catch (error: any) {
+      logger.error('getCustomerRideHistory error:', error);
+      return { rides: [], total: 0, page, limit, totalPages: 0 };
+    }
+  }
+
+  /**
    * Get ride by ID
    */
   async getRideById(rideId: string): Promise<any | null> {

@@ -405,31 +405,24 @@ export class RideController {
 
   /**
    * Get user ride history
-   * GET /api/ride/history
+   * GET /api/ride/history?page=1&limit=10&status=completed&dateFrom=...&dateTo=...
    */
   getRideHistory = async (req: Request, res: Response): Promise<Response> => {
     try {
       const userId = (req as any).user?.id;
-      if (!userId) {
-        return ResponseUtil.unauthorized(res);
-      }
+      if (!userId) return ResponseUtil.unauthorized(res);
 
-      const limit = parseInt(req.query.limit as string) || 10;
+      const page     = parseInt(req.query.page     as string) || 1;
+      const limit    = parseInt(req.query.limit    as string) || 10;
+      const status   = req.query.status   as string | undefined;
+      const dateFrom = req.query.dateFrom as string | undefined;
+      const dateTo   = req.query.dateTo   as string | undefined;
 
-      const rides = await this.rideService.getUserRecentRides(userId, limit);
-
-      return ResponseUtil.success(res, {
-        rides: rides.map(ride => ({
-          id: ride.id,
-          status: ride.status,
-          pickup_address: ride.pickup_address,
-          dropoff_address: ride.dropoff_address,
-          estimated_fare: ride.estimated_fare,
-          created_at: ride.created_at,
-          variant: ride.ride_variants,
-        })),
-        total: rides.length,
+      const result = await this.rideService.getCustomerRideHistory(userId, {
+        page, limit, status, dateFrom, dateTo,
       });
+
+      return ResponseUtil.success(res, result);
     } catch (error: any) {
       logger.error('Get ride history error:', error);
       return ResponseUtil.error(res, 'Failed to get ride history');
