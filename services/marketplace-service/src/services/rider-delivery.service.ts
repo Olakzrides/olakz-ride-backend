@@ -224,14 +224,15 @@ export class RiderDeliveryService {
 
     // Enrich customer details
     const customerIds = [...new Set(orderList.map((o: any) => o.customer_id).filter(Boolean))];
-    const customerMap = new Map<string, { name: string; phone: string | null }>();
+    const customerMap = new Map<string, { name: string; phone: string | null; photo: string | null }>();
     if (customerIds.length > 0) {
       const { data: users } = await supabase
-        .from('users').select('id, first_name, last_name, phone').in('id', customerIds);
+        .from('users').select('id, first_name, last_name, phone, avatar_url').in('id', customerIds);
       for (const u of users ?? []) {
         customerMap.set(u.id, {
           name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Customer',
           phone: u.phone ?? null,
+          photo: u.avatar_url ?? null,
         });
       }
     }
@@ -256,14 +257,15 @@ export class RiderDeliveryService {
 
     // Enrich customer details from Supabase users table
     const customerIds = [...new Set(orders.map(o => o.customerId).filter(Boolean))];
-    const customerMap = new Map<string, { name: string; phone: string | null }>();
+    const customerMap = new Map<string, { name: string; phone: string | null; photo: string | null }>();
     if (customerIds.length > 0) {
       const { data: users } = await supabase
-        .from('users').select('id, first_name, last_name, phone').in('id', customerIds);
+        .from('users').select('id, first_name, last_name, phone, avatar_url').in('id', customerIds);
       for (const u of users ?? []) {
         customerMap.set(u.id, {
           name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Customer',
           phone: u.phone ?? null,
+          photo: u.avatar_url ?? null,
         });
       }
     }
