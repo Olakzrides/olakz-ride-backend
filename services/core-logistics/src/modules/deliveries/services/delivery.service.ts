@@ -628,6 +628,40 @@ export class DeliveryService {
       updatedBy: cancelledBy,
     });
 
+    // ── Notify all couriers with pending requests so the card disappears immediately ──
+    try {
+      const { data: pendingRequests } = await supabase
+        .from('delivery_requests')
+        .select('courier_id')
+        .eq('delivery_id', deliveryId)
+        .eq('status', 'pending');
+
+      if (pendingRequests && pendingRequests.length > 0) {
+        // Mark them expired so the batch timeout loop ignores them
+        await supabase
+          .from('delivery_requests')
+          .update({ status: 'expired', responded_at: new Date().toISOString() })
+          .eq('delivery_id', deliveryId)
+          .eq('status', 'pending');
+
+        // Emit socket event to each courier — delivery:request:cancelled
+        const { socketService } = await import('../../../index');
+        if (socketService) {
+          const courierIds = pendingRequests.map((r: any) => r.courier_id as string);
+          for (const courierId of courierIds) {
+            socketService.emitToDriver(courierId, 'delivery:request:cancelled', {
+              deliveryId,
+              reason: 'customer_cancelled',
+            });
+          }
+          logger.info(`Notified ${courierIds.length} couriers of delivery cancellation: ${deliveryId}`);
+        }
+      }
+    } catch (notifyErr) {
+      // Non-fatal — delivery is still cancelled
+      logger.error('Error notifying couriers of delivery cancellation:', notifyErr);
+    }
+
     // ── Refund wallet payment if applicable ──────────────────────────────────
     // delivery.payment_method and delivery.payment_status come from getDelivery above
     if (

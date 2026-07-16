@@ -26,6 +26,7 @@ router.get('/rides/pending', rideController.getPendingRequests);
 router.get('/remittance/status', rideController.getRemittanceStatus);
 
 // Driver Ride Lifecycle
+router.post('/rides/:rideId/cancel', rideController.cancelRide);
 router.post('/rides/:rideId/arrived', rideController.markArrived);
 router.post('/rides/:rideId/start', rideController.startTrip);
 router.post('/rides/:rideId/complete', rideController.completeTrip);

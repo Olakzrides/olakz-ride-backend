@@ -594,6 +594,89 @@ export class SocketService {
   }
 
   /**
+   * Emit an event to a customer (passenger) by their userId.
+   * Used for targeted events like ride:driver:cancelled.
+   * Follows the same 3-level fallback as emitToDriver.
+   */
+  async emitToCustomer(userId: string, event: string, data: any): Promise<void> {
+    // 1. Try in-memory map
+    const socketId = this.customerSockets.get(userId);
+    if (socketId) {
+      this.io.to(socketId).emit(event, data);
+      return;
+    }
+
+    // 2. Room fallback (user joins user:{userId} room on connect)
+    this.io.to(`user:${userId}`).emit(event, data);
+
+    // 3. DB fallback to repair the in-memory map for future calls
+    try {
+      const { data: conn } = await supabase
+        .from('socket_connections')
+        .select('socket_id')
+        .eq('user_id', userId)
+        .eq('is_connected', true)
+        .eq('user_type', 'customer')
+        .order('connected_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (conn?.socket_id) {
+        this.io.to(conn.socket_id).emit(event, data);
+        this.customerSockets.set(userId, conn.socket_id); // repair map
+      }
+    } catch (err) {
+      logger.error(`emitToCustomer DB fallback error for user ${userId}:`, err);
+    }
+  }
+
+  /**
+   * Emit an event to a specific driver/courier by their driverId.
+   * Used for targeted events like delivery:request:cancelled.
+   * Falls back to DB socket lookup and room emit if not in memory.
+   */
+  async emitToDriver(driverId: string, event: string, data: any): Promise<void> {
+    // 1. Try in-memory map
+    const socketId = this.driverSockets.get(driverId);
+    if (socketId) {
+      this.io.to(socketId).emit(event, data);
+      return;
+    }
+
+    // 2. DB fallback
+    try {
+      const { data: driver } = await supabase
+        .from('drivers')
+        .select('user_id')
+        .eq('id', driverId)
+        .single();
+
+      if (driver) {
+        const { data: conn } = await supabase
+          .from('socket_connections')
+          .select('socket_id')
+          .eq('user_id', driver.user_id)
+          .eq('is_connected', true)
+          .eq('user_type', 'driver')
+          .order('connected_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (conn?.socket_id) {
+          this.io.to(conn.socket_id).emit(event, data);
+          this.driverSockets.set(driverId, conn.socket_id); // repair map
+          return;
+        }
+      }
+    } catch (err) {
+      logger.error(`emitToDriver DB fallback error for driver ${driverId}:`, err);
+    }
+
+    // 3. Room fallback
+    this.io.to(`driver:${driverId}`).emit(event, data);
+  }
+
+  /**
    * Broadcast delivery status update to relevant users
    */
   async broadcastDeliveryStatusUpdate(deliveryId: string, statusData: any): Promise<void> {

@@ -210,6 +210,176 @@ export class DriverRideService {
   }
 
   /**
+   * Cancel a ride — only allowed from driver_assigned or driver_arrived (not in_progress).
+   * Full refund to customer. Ride goes back to searching and re-triggers matching.
+   * driver_cancellation_count on the driver record is incremented for tracking.
+   */
+  async cancelRide(
+    driverId: string,
+    rideId: string,
+    reason?: string
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    errorCode?: string;
+  }> {
+    try {
+      // Fetch full ride details
+      const { data: ride, error: fetchError } = await supabase
+        .from('rides')
+        .select(`
+          id, status, driver_id, user_id, payment_hold_id, payment_method,
+          pickup_latitude, pickup_longitude, variant_id,
+          variant:ride_variants(title)
+        `)
+        .eq('id', rideId)
+        .single();
+
+      if (fetchError || !ride) {
+        return { success: false, error: 'Ride not found', errorCode: 'RIDE_NOT_FOUND' };
+      }
+
+      if (ride.driver_id !== driverId) {
+        return { success: false, error: 'Unauthorized', errorCode: 'UNAUTHORIZED' };
+      }
+
+      // Only allow cancel from driver_assigned or driver_arrived — not in_progress
+      const allowedStatuses = [RideStatus.DRIVER_ASSIGNED, RideStatus.DRIVER_ARRIVED];
+      if (!allowedStatuses.includes(ride.status as RideStatus)) {
+        return {
+          success: false,
+          error: `Cannot cancel ride with status '${ride.status}'. Cancellation is only allowed before the trip starts.`,
+          errorCode: 'INVALID_STATUS',
+        };
+      }
+
+      // ── 1. Release payment hold (full refund) ────────────────────────────────
+      // Only wallet rides have a payment hold to release
+      if (ride.payment_method === 'wallet' && ride.payment_hold_id) {
+        try {
+          await this.paymentService.releasePaymentHold({
+            holdId: ride.payment_hold_id,
+            reason: reason || 'Driver cancelled before trip started',
+          });
+        } catch (holdErr: any) {
+          logger.error(`Failed to release payment hold for ride ${rideId}:`, holdErr);
+          // Non-fatal — continue so the ride still transitions to re-matching
+        }
+      }
+
+      // ── 2. Unassign driver, put ride back to searching ───────────────────────
+      const { error: updateError } = await supabase
+        .from('rides')
+        .update({
+          status:     RideStatus.SEARCHING,
+          driver_id:  null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', rideId);
+
+      if (updateError) {
+        logger.error('Error resetting ride to searching after driver cancel:', updateError);
+        return { success: false, error: 'Failed to cancel ride', errorCode: 'UPDATE_FAILED' };
+      }
+
+      // ── 3. Record status history ─────────────────────────────────────────────
+      await supabase.from('ride_status_updates').insert({
+        ride_id:         rideId,
+        status:          RideStatus.SEARCHING,
+        previous_status: ride.status,
+        updated_by:      driverId,
+        updated_by_type: 'driver',
+        message:         reason || 'Driver cancelled — searching for new driver',
+      });
+
+      // ── 4. Set driver back to available ─────────────────────────────────────
+      await this.availabilityService.setAvailable(driverId, true);
+
+      // ── 5. Track driver_cancellation_count (no blocking, just tracking) ──────
+      await supabase.rpc('increment_driver_cancellation_count', { p_driver_id: driverId })
+        .then(({ error: rpcErr }) => {
+          if (rpcErr) {
+            // Non-fatal — column may not exist yet; log and continue
+            logger.warn(`increment_driver_cancellation_count failed for driver ${driverId}:`, rpcErr.message);
+          }
+        });
+
+      // ── 6. Notify customer via socket ────────────────────────────────────────
+      try {
+        const { socketService } = await import('../index');
+        if (socketService) {
+          await socketService.emitToCustomer(ride.user_id, 'ride:driver:cancelled', {
+            rideId,
+            reason: 'driver_cancelled',
+            message: 'Your driver cancelled. We are finding you a new driver.',
+          });
+        }
+      } catch (socketErr) {
+        logger.warn('Socket notify on driver cancel failed (non-fatal):', socketErr);
+      }
+
+      // Send push notification to customer
+      await this.pushService.sendRideNotification(
+        ride.user_id,
+        rideId,
+        'ride_cancelled',
+        { reason: 'Your driver cancelled. We are searching for a new driver.' }
+      );
+
+      // ── 7. Re-trigger matching ───────────────────────────────────────────────
+      this.retriggerMatching(rideId, ride, driverId).catch((err) =>
+        logger.error(`Re-matching after driver cancel failed for ride ${rideId}:`, err)
+      );
+
+      logger.info(`Driver ${driverId} cancelled ride ${rideId} — ride back to searching`);
+
+      return { success: true };
+    } catch (error: any) {
+      logger.error('Cancel ride error:', error);
+      return { success: false, error: 'Failed to cancel ride', errorCode: 'INTERNAL_ERROR' };
+    }
+  }
+
+  /**
+   * Re-trigger driver matching after a driver cancels.
+   * Resolves serviceTierId from variant title the same way ride.service.ts does.
+   * Excludes the cancelling driver from the new broadcast.
+   */
+  private async retriggerMatching(rideId: string, ride: any, excludeDriverId: string): Promise<void> {
+    try {
+      const { rideMatchingService } = await import('../index');
+      if (!rideMatchingService) {
+        logger.warn(`RideMatchingService not available — ride ${rideId} stays in searching`);
+        return;
+      }
+
+      const variantTitle = (ride.variant?.title || '').toLowerCase();
+      const serviceTierMap: Record<string, string> = {
+        standard: '00000000-0000-0000-0000-000000000011',
+        premium:  '00000000-0000-0000-0000-000000000012',
+        vip:      '00000000-0000-0000-0000-000000000013',
+      };
+      const serviceTierId = serviceTierMap[variantTitle] || serviceTierMap['standard'];
+
+      const result = await rideMatchingService.findAndNotifyDriversForRide(
+        rideId,
+        {
+          pickupLatitude:  parseFloat(ride.pickup_latitude),
+          pickupLongitude: parseFloat(ride.pickup_longitude),
+          serviceTierId,
+          maxDistance: 30,
+          maxDrivers:  10,
+        },
+        [excludeDriverId]   // exclude the cancelling driver
+      );
+
+      logger.info(`Re-matching after driver cancel: notified ${result.driversNotified} drivers for ride ${rideId}`);
+    } catch (err) {
+      logger.error(`retriggerMatching error for ride ${rideId}:`, err);
+    }
+  }
+
+  /**
    * Decline a ride request
    */
   async declineRideRequest(
@@ -905,7 +1075,11 @@ export class DriverRideService {
             dropoff_address,
             estimated_fare,
             estimated_distance,
-            estimated_duration
+            estimated_duration,
+            payment_method,
+            driver_fare,
+            service_fee,
+            rounding_fee
           )
         `)
         .eq('driver_id', driverId)
@@ -938,7 +1112,7 @@ export class DriverRideService {
       // Fetch customer details in one query
       const { data: users } = await supabase
         .from('users')
-        .select('id, first_name, last_name, email, phone')
+        .select('id, first_name, last_name, email, phone, avatar_url')
         .in('id', userIds);
 
       const userMap = new Map<string, any>();
@@ -961,8 +1135,8 @@ export class DriverRideService {
         const isCash = r.ride?.payment_method === 'cash';
         const serviceFee         = Number(r.ride?.service_fee  ?? 0);
         const roundingFee        = Number(r.ride?.rounding_fee ?? 0);
-        const bookingFee         = Number(r.ride?.booking_fee  ?? 0);
-        const platformRemittance = serviceFee + roundingFee + bookingFee;
+        // booking_fee is not a column on rides — remittance is service_fee + rounding_fee only
+        const platformRemittance = serviceFee + roundingFee;
 
         // Strip raw fare/identity fields from ride — driver should not see them directly
         const { service_fee, rounding_fee, driver_fare, estimated_fare, payment_method, user_id, ...ridePublic } = r.ride ?? {};
@@ -979,6 +1153,7 @@ export class DriverRideService {
           customer: {
             name: customerName,
             phone: user?.phone ?? null,
+            photo: user?.avatar_url ?? null,
           },
           payment_method: r.ride?.payment_method ?? null,
           fare: {

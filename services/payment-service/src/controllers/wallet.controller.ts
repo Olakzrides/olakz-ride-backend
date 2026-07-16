@@ -10,14 +10,15 @@ function toMessage(err: unknown): string {
 }
 
 export class WalletController {
-  getBalance = async (req: Request, res: Response): Promise<Response> => {
+getBalance = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const userId = (req as AuthRequest).user!.id;
+      const userId       = (req as AuthRequest).user!.id;
       const currencyCode = (req.query.currency as string) || 'NGN';
-
-      // Fetch balance + user identity in parallel
-      const [balances, userRow] = await Promise.all([
+ 
+      // Fetch balances, earned balance, and user identity all in parallel
+      const [balances, earnedBalance, userRow] = await Promise.all([
         WalletService.getWalletBalances(userId, currencyCode),
+        WalletService.getEarnedBalance(userId, currencyCode),
         supabase
           .from('users')
           .select('first_name, last_name, phone')
@@ -25,22 +26,27 @@ export class WalletController {
           .maybeSingle()
           .then(r => r.data),
       ]);
-
+ 
       const firstName = (userRow as any)?.first_name ?? '';
       const lastName  = (userRow as any)?.last_name  ?? '';
       const fullName  = `${firstName} ${lastName}`.trim().toUpperCase() || 'USER';
       const phone     = (userRow as any)?.phone ?? null;
-
+ 
+      // Withdrawable = min(earned, cash) — driver can't withdraw more than is physically in wallet
+      const withdrawableBalance = Math.min(earnedBalance, balances.cashBalance);
+ 
       return ResponseUtil.success(res, {
         wallet: {
           owner: {
             name:  fullName,
             phone, // wallet ID — full number, no masking
           },
-          cash_balance:  balances.cashBalance,
-          promo_balance: balances.promoBalance,
-          total_balance: balances.totalBalance,
-          currency_code: currencyCode,
+          cash_balance:         balances.cashBalance,
+          promo_balance:        balances.promoBalance,
+          total_balance:        balances.totalBalance,
+          earned_balance:       earnedBalance,        // lifetime earnings eligibility ceiling
+          withdrawable_balance: withdrawableBalance,  // what can actually be withdrawn right now
+          currency_code:        currencyCode,
         },
       });
     } catch (err: unknown) {
