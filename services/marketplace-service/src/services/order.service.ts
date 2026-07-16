@@ -172,7 +172,7 @@ export class OrderService {
         walletCashPortion:   cashPortion,
         walletPromoPortion:  promoPortion,
         orderItems: { create: orderItemsData },
-      },
+      } as any,
       include: { orderItems: true },
     }) as any;
 
@@ -301,7 +301,47 @@ export class OrderService {
     });
     if (!order) return null;
     if (requesterRole === 'customer' && order.customerId !== requesterId) return null;
-    return order;
+
+    // Enrich with rider details when a rider has been assigned
+    let riderInfo: { name: string; phone: string | null; photo: string | null; rating: number | null; vehicle: { plateNumber: string; make: string; model: string; color: string } | null } | null = null;
+
+    if (order.riderId) {
+      const { supabase: supabaseClient } = await import('../config/database');
+
+      const { data: driverRow } = await supabaseClient
+        .from('drivers')
+        .select('user_id, rating, vehicles:driver_vehicles(plate_number, manufacturer, model, color, is_active)')
+        .eq('id', order.riderId)
+        .single();
+
+      if (driverRow) {
+        const { data: riderUser } = await supabaseClient
+          .from('users')
+          .select('first_name, last_name, phone, avatar_url')
+          .eq('id', driverRow.user_id)
+          .single();
+
+        const vehicles = (driverRow.vehicles as any[]) || [];
+        const activeVehicle = vehicles.find((v: any) => v.is_active) || vehicles[0] || null;
+
+        riderInfo = {
+          name:   riderUser ? `${riderUser.first_name ?? ''} ${riderUser.last_name ?? ''}`.trim() || 'Your rider' : 'Your rider',
+          phone:  riderUser?.phone ?? null,
+          photo:  riderUser?.avatar_url ?? null,
+          rating: driverRow.rating ? parseFloat(driverRow.rating) : null,
+          vehicle: activeVehicle
+            ? {
+                plateNumber: activeVehicle.plate_number,
+                make:        activeVehicle.manufacturer,
+                model:       activeVehicle.model,
+                color:       activeVehicle.color,
+              }
+            : null,
+        };
+      }
+    }
+
+    return { ...order, rider: riderInfo };
   }
 
   static async getCustomerHistory(params: { customerId: string; status?: string; limit?: number; page?: number }) {
