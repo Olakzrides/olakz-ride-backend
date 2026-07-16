@@ -394,6 +394,41 @@ export class OrderService {
       };
     }
 
+    // Enrich courier details for customer — they need name + phone + vehicle to track their delivery
+    if (requesterRole === 'customer' && order.courier_id) {
+      const { data: driver } = await supabase
+        .from('drivers')
+        .select(`
+          id, rating,
+          user:users!drivers_user_id_fkey(first_name, last_name, phone, avatar_url),
+          vehicles:driver_vehicles(manufacturer, model, color, plate_number, is_active)
+        `)
+        .eq('id', order.courier_id)
+        .maybeSingle();
+
+      let courier = null;
+      if (driver) {
+        const d = driver as Record<string, any>;
+        const u = d.user as Record<string, any> | null;
+        const vehicles = (d.vehicles as any[]) ?? [];
+        const activeVehicle = vehicles.find(v => v.is_active) ?? vehicles[0] ?? null;
+        courier = {
+          id:     order.courier_id,
+          name:   u ? `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Courier' : 'Courier',
+          phone:  u?.phone   ?? null,
+          photo:  u?.avatar_url ?? null,
+          rating: parseFloat(String(d.rating ?? 0)),
+          vehicle: activeVehicle ? {
+            model:        `${activeVehicle.manufacturer} ${activeVehicle.model}`.trim(),
+            color:        activeVehicle.color,
+            plate_number: activeVehicle.plate_number,
+          } : null,
+        };
+      }
+
+      return { ...order, courier };
+    }
+
     return order;
   }
 

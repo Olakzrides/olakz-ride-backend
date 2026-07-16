@@ -373,27 +373,100 @@ export class PromoAdminService {
   }
 
   /**
+   * PATCH /api/admin/promos/:promoId/activate
+   * Manually activate a scheduled promo immediately — goes live right now
+   * regardless of starts_at. Sets starts_at = now so computeEffectiveStatus
+   * returns 'active' instantly.
+   * Valid when stored status is 'scheduled'.
+   */
+  static async activate(promoId: string, adminId: string) {
+    const { data: existing, error } = await supabase
+      .from('signup_promos')
+      .select('id, status, ends_at, promo_amount, claims_count')
+      .eq('id', promoId)
+      .single();
+
+    if (error || !existing) throw new Error('Promo not found');
+    if (existing.status !== 'scheduled') {
+      throw new Error(`Only a scheduled promo can be manually activated. Current status: ${existing.status}`);
+    }
+    if (new Date(existing.ends_at) < new Date()) {
+      throw new Error('Cannot activate an expired promo — the end date has already passed');
+    }
+
+    const now = new Date().toISOString();
+
+    const { data, error: updateError } = await supabase
+      .from('signup_promos')
+      .update({ starts_at: now, updated_at: now })
+      .eq('id', promoId)
+      .select()
+      .single();
+
+    if (updateError) throw new Error(`Failed to activate promo: ${updateError.message}`);
+
+    const disbursed = parseFloat(existing.promo_amount) * (existing.claims_count ?? 0);
+    logger.info('Admin manually activated promo', { promoId, adminId });
+    return enrichPromo(data, disbursed);
+  }
+
+  /**
+   * PATCH /api/admin/promos/:promoId/reactivate
+   * Restore a deactivated promo back to 'scheduled' so it can run again.
+   * Only valid when status is 'deactivated' and ends_at is still in the future.
+   */
+  static async reactivate(promoId: string, adminId: string) {
+    const { data: existing, error } = await supabase
+      .from('signup_promos')
+      .select('id, status, starts_at, ends_at, promo_amount, claims_count')
+      .eq('id', promoId)
+      .single();
+
+    if (error || !existing) throw new Error('Promo not found');
+    if (existing.status !== 'deactivated') throw new Error('Only a deactivated promo can be reactivated');
+    if (new Date(existing.ends_at) < new Date()) throw new Error('Cannot reactivate an expired promo — the end date has already passed');
+
+    const { data, error: updateError } = await supabase
+      .from('signup_promos')
+      .update({ status: 'scheduled', updated_at: new Date().toISOString() })
+      .eq('id', promoId)
+      .select()
+      .single();
+
+    if (updateError) throw new Error(`Failed to reactivate promo: ${updateError.message}`);
+
+    const disbursed = parseFloat(existing.promo_amount) * (existing.claims_count ?? 0);
+    logger.info('Admin reactivated deactivated promo', { promoId, adminId });
+    return enrichPromo(data, disbursed);
+  }
+
+  /**
    * PATCH /api/admin/promos/:promoId/deactivate
-   * Cancel a scheduled (not yet started) promo.
-   * Only valid before the promo has started (effective_status = 'scheduled' + future date).
+   * Cancel a promo that never actually ran (zero claims).
+   * Valid when stored status is 'scheduled' regardless of whether starts_at has passed,
+   * as long as no claims have been made against it.
    */
   static async deactivate(promoId: string, adminId: string) {
     const { data: existing, error } = await supabase
       .from('signup_promos')
-      .select('id, status, starts_at, ends_at, promo_amount, total_budget_cap')
+      .select('id, status, starts_at, ends_at, promo_amount, total_budget_cap, claims_count')
       .eq('id', promoId)
       .single();
 
     if (error || !existing) throw new Error('Promo not found');
 
-    const effectiveStatus = computeEffectiveStatus(
-      existing.status, existing.starts_at, existing.ends_at,
-      parseFloat(existing.promo_amount), Infinity
-    );
-
-    if (effectiveStatus !== 'scheduled') {
+    // Only allow deactivating if the stored status is 'scheduled'
+    // (i.e. admin never explicitly paused/ended it) and no claims were made.
+    // This covers both future-scheduled AND past-date promos that were never used.
+    if (existing.status !== 'scheduled') {
       throw new Error(
-        `Only a scheduled (not-yet-started) promo can be deactivated. Current status: ${effectiveStatus}. Use 'pause' or 'end' instead.`
+        `Cannot deactivate a promo with status: ${existing.status}. Use 'pause' or 'end' instead.`
+      );
+    }
+
+    if (Number(existing.claims_count ?? 0) > 0) {
+      throw new Error(
+        `Cannot deactivate a promo that already has ${existing.claims_count} claim(s). Use 'end' to stop it instead.`
       );
     }
 
@@ -412,28 +485,17 @@ export class PromoAdminService {
 
   /**
    * DELETE /api/admin/promos/:promoId
-   * Hard-delete. Only allowed when deactivated or scheduled with zero claims.
+   * Hard-delete a promo. Allowed for any status.
+   * If the promo has claims, those claim records are also deleted (cascade).
    */
   static async delete(promoId: string, adminId: string) {
     const { data: existing, error } = await supabase
       .from('signup_promos')
-      .select('id, status, claims_count, starts_at, ends_at, promo_amount, total_budget_cap')
+      .select('id, status, name, claims_count')
       .eq('id', promoId)
       .single();
 
     if (error || !existing) throw new Error('Promo not found');
-    if (existing.claims_count > 0) {
-      throw new Error('Cannot delete a promo that has been claimed. Use "end" instead.');
-    }
-
-    const effectiveStatus = computeEffectiveStatus(
-      existing.status, existing.starts_at, existing.ends_at,
-      parseFloat(existing.promo_amount), Infinity
-    );
-
-    if (!['scheduled', 'deactivated'].includes(effectiveStatus)) {
-      throw new Error(`Cannot delete a promo with status: ${effectiveStatus}. Deactivate or end it first.`);
-    }
 
     const { error: deleteError } = await supabase
       .from('signup_promos')
@@ -442,7 +504,7 @@ export class PromoAdminService {
 
     if (deleteError) throw new Error(`Failed to delete promo: ${deleteError.message}`);
 
-    logger.warn('Admin deleted signup promo', { promoId, adminId });
+    logger.warn('Admin deleted signup promo', { promoId, adminId, status: existing.status, name: existing.name });
     return { deleted: true };
   }
 

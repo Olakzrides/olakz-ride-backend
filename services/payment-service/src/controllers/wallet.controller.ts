@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { WalletService } from '../services/wallet.service';
 import { ResponseUtil } from '../utils/response';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { supabase } from '../config/database';
 import logger from '../utils/logger';
 
 function toMessage(err: unknown): string {
@@ -13,9 +14,29 @@ export class WalletController {
     try {
       const userId = (req as AuthRequest).user!.id;
       const currencyCode = (req.query.currency as string) || 'NGN';
-      const balances = await WalletService.getWalletBalances(userId, currencyCode);
+
+      // Fetch balance + user identity in parallel
+      const [balances, userRow] = await Promise.all([
+        WalletService.getWalletBalances(userId, currencyCode),
+        supabase
+          .from('users')
+          .select('first_name, last_name, phone')
+          .eq('id', userId)
+          .maybeSingle()
+          .then(r => r.data),
+      ]);
+
+      const firstName = (userRow as any)?.first_name ?? '';
+      const lastName  = (userRow as any)?.last_name  ?? '';
+      const fullName  = `${firstName} ${lastName}`.trim().toUpperCase() || 'USER';
+      const phone     = (userRow as any)?.phone ?? null;
+
       return ResponseUtil.success(res, {
         wallet: {
+          owner: {
+            name:  fullName,
+            phone, // wallet ID — full number, no masking
+          },
           cash_balance:  balances.cashBalance,
           promo_balance: balances.promoBalance,
           total_balance: balances.totalBalance,

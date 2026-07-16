@@ -213,31 +213,49 @@ export class FoodMatchingService {
       status: 'assigned',
     });
 
-    // Get courier user_id for notifications
+    // Get courier user_id and full details for notifications
     const { data: driver } = await supabase
       .from('drivers')
-      .select('user_id, rating, vehicles:driver_vehicles(manufacturer, model, color, plate_number)')
+      .select(`
+        user_id, rating,
+        user:users!drivers_user_id_fkey(first_name, last_name, phone, avatar_url),
+        vehicles:driver_vehicles(manufacturer, model, color, plate_number, is_active)
+      `)
       .eq('id', driverId)
       .single();
 
+    const driverUser  = (driver as any)?.user as Record<string, any> | null;
+    const vehicles    = ((driver as any)?.vehicles as any[]) ?? [];
+    const activeVehicle = vehicles.find((v: any) => v.is_active) ?? vehicles[0] ?? null;
+
+    const courierPayload = {
+      id:     driverId,
+      name:   driverUser ? `${driverUser.first_name ?? ''} ${driverUser.last_name ?? ''}`.trim() || 'Courier' : 'Courier',
+      phone:  driverUser?.phone   ?? null,
+      photo:  driverUser?.avatar_url ?? null,
+      rating: parseFloat(String((driver as any)?.rating ?? 0)),
+      vehicle: activeVehicle ? {
+        model:        `${activeVehicle.manufacturer} ${activeVehicle.model}`.trim(),
+        color:        activeVehicle.color,
+        plate_number: activeVehicle.plate_number,
+      } : null,
+    };
+
     const socketSvc = getFoodSocketService();
 
-    // Notify customer
+    // Notify customer with full courier details
     if (socketSvc) {
       socketSvc.emitToCustomer(order.customer_id, 'food:order:courier_assigned', {
-        order_id: orderId,
-        courier_id: driverId,
+        order_id:                  orderId,
+        courier_id:                driverId,
         estimated_arrival_minutes: estimatedArrivalMinutes,
-        courier: {
-          rating: driver?.rating,
-          vehicle: (driver as any)?.vehicles?.[0],
-        },
+        courier:                   courierPayload,
       });
 
       // Notify vendor
       socketSvc.emitToVendor(order.restaurant_id, 'food:order:courier_assigned', {
-        order_id: orderId,
-        courier_id: driverId,
+        order_id:                  orderId,
+        courier_id:                driverId,
         estimated_arrival_minutes: estimatedArrivalMinutes,
       });
     }
