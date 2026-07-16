@@ -113,6 +113,29 @@ export class VendorOrderService {
 
     const order = data as Record<string, any>;
 
+    // Fetch product images for order items
+    const itemIds = (order.order_items as any[]).map((i: any) => i.item_id).filter(Boolean);
+    let itemImageMap: Record<string, string | null> = {};
+
+    if (itemIds.length > 0) {
+      const { data: menuItems } = await supabase
+        .from('food_menu_items')
+        .select('id, images')
+        .in('id', itemIds);
+
+      if (menuItems) {
+        for (const m of menuItems) {
+          const firstImage = Array.isArray(m.images) && m.images.length > 0 ? m.images[0] : null;
+          itemImageMap[m.id] = firstImage;
+        }
+      }
+    }
+
+    const enrichedOrderItems = (order.order_items as any[]).map((item: any) => ({
+      ...item,
+      item_image: itemImageMap[item.item_id] ?? null,
+    }));
+
     // Enrich customer details
     let customer = null;
     if (order.customer_id) {
@@ -164,7 +187,7 @@ export class VendorOrderService {
       }
     }
 
-    return { ...order, customer, courier };
+    return { ...order, order_items: enrichedOrderItems, customer, courier };
   }
 
   /**
