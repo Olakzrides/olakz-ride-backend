@@ -114,16 +114,12 @@ export class DeliveryFareService {
 
     const distanceKm = routeInfo.distance;
 
-    // Strictly use admin-configured values — no hardcoded fallbacks.
-    // If admin hasn't set a value, it will be 0 (from the seeded row).
+    // Effective billing unit = base rate + high-traffic surcharge (0 when not set by admin).
+    // This is uniform regardless of city tier — the admin configures each
+    // vehicle + tier + city-tier row independently.
     const baseRate = parseFloat(fareConfig.estimated_billing_unit ?? 0);
     const highRate = parseFloat(fareConfig.high_traffic_estimated_billing_unit ?? 0);
-
-    const ratePerKm = cityTier === 'high'
-      ? (highRate > 0 ? highRate : baseRate)
-      : cityTier === 'middle'
-        ? (baseRate + (highRate - baseRate) * 0.5)
-        : baseRate;
+    const ratePerKm = baseRate + highRate;
 
     const minAmount3km   = parseFloat(fareConfig.min_amount_less_than_3km ?? 0);
     const serviceFeeRaw  = parseFloat(fareConfig.service_fee  ?? 0);

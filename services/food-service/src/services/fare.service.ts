@@ -60,7 +60,9 @@ export class FareService {
       ),
     ]);
 
-    const ratePerKm      = parseFloat(fareConfig.estimated_billing_unit);
+    // Effective billing unit = base rate + high-traffic surcharge (0 when not set by admin)
+    const ratePerKm      = parseFloat(fareConfig.estimated_billing_unit)
+                         + parseFloat(fareConfig.high_traffic_estimated_billing_unit ?? 0);
     const minimumFee     = parseFloat(fareConfig.min_amount_less_than_3km);
     const serviceFeeRaw  = parseFloat(fareConfig.service_fee);
     const roundingFeeRaw = parseFloat(fareConfig.rounding_fee);

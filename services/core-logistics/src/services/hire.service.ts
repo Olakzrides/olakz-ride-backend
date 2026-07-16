@@ -103,7 +103,9 @@ export class HireService {
 
     if (!fareConfig) throw new Error('Fare configuration not found for selected vehicle type');
 
-    const billingUnit   = Number(fareConfig.estimated_billing_unit);
+    // Effective billing unit = base rate + high-traffic surcharge (0 when not set)
+    const billingUnit   = Number(fareConfig.estimated_billing_unit)
+                        + Number(fareConfig.high_traffic_estimated_billing_unit ?? 0);
     const distance      = route.distance;
     const rideFare      = distance <= 3
       ? Number(fareConfig.min_amount_less_than_3km)

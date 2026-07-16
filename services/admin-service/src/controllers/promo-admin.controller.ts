@@ -197,6 +197,46 @@ export class PromoAdminController {
   };
 
   /**
+   * PATCH /api/admin/promos/:promoId/activate
+   * Manually activate a scheduled promo immediately — goes live right now.
+   */
+  activate = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const adminId = req.user?.id;
+      if (!adminId) { ResponseUtil.unauthorized(res, 'Admin authentication required'); return; }
+
+      const promo = await PromoAdminService.activate(req.params.promoId, adminId);
+      ResponseUtil.success(res, { promo }, 'Promo is now live. New signups will receive the credit immediately.');
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      if (msg === 'Promo not found') { ResponseUtil.notFound(res, 'Promo'); return; }
+      if (isValidationError(msg)) { ResponseUtil.badRequest(res, msg, 'PROMO_ACTIVATE_ERROR'); return; }
+      logger.error('activate promo error', { error: msg });
+      ResponseUtil.serverError(res, 'Failed to activate promo', 'PROMO_ACTIVATE_ERROR');
+    }
+  };
+
+  /**
+   * PATCH /api/admin/promos/:promoId/reactivate
+   * Restore a deactivated promo back to scheduled so it can run again.
+   */
+  reactivate = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const adminId = req.user?.id;
+      if (!adminId) { ResponseUtil.unauthorized(res, 'Admin authentication required'); return; }
+
+      const promo = await PromoAdminService.reactivate(req.params.promoId, adminId);
+      ResponseUtil.success(res, { promo }, 'Promo campaign reactivated. It will auto-activate when its start date is reached.');
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      if (msg === 'Promo not found') { ResponseUtil.notFound(res, 'Promo'); return; }
+      if (isValidationError(msg)) { ResponseUtil.badRequest(res, msg, 'PROMO_REACTIVATE_ERROR'); return; }
+      logger.error('reactivate promo error', { error: msg });
+      ResponseUtil.serverError(res, 'Failed to reactivate promo', 'PROMO_REACTIVATE_ERROR');
+    }
+  };
+
+  /**
    * PATCH /api/admin/promos/:promoId/deactivate
    * Cancel a scheduled (not-yet-started) promo.
    * Use this before the promo starts. After it starts, use pause or end.
