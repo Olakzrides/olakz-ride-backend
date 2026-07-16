@@ -294,7 +294,22 @@ export class RiderDeliveryService {
         .select('id, user_id, rating, vehicles:driver_vehicles(manufacturer, model, color, plate_number)')
         .eq('id', order.riderId)
         .single();
-      riderInfo = driver;
+
+      if (driver) {
+        // Fetch rider's profile from users table
+        const { data: riderUser } = await supabase
+          .from('users')
+          .select('first_name, last_name, phone, avatar_url')
+          .eq('id', driver.user_id)
+          .single();
+
+        riderInfo = {
+          ...driver,
+          name:  riderUser ? `${riderUser.first_name ?? ''} ${riderUser.last_name ?? ''}`.trim() || 'Rider' : null,
+          phone: riderUser?.phone ?? null,
+          photo: riderUser?.avatar_url ?? null,
+        };
+      }
     }
 
     const latestLocation = order.riderLocations[0];
