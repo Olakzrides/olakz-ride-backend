@@ -329,8 +329,8 @@ export class VendorOrderService {
     };
     if (estimatedPrepTime) updateData.estimated_prep_time_minutes = estimatedPrepTime;
 
-    // Generate pickup code now so we can write it to food_orders immediately
-    const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate 4-digit pickup code — vendor reads it to courier at handover
+    const pickupCode = Math.floor(1000 + Math.random() * 9000).toString();
     updateData.pickup_code = pickupCode;
 
     await supabase.from('food_orders').update(updateData).eq('id', orderId);

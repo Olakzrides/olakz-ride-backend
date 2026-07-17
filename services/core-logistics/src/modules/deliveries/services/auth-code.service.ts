@@ -3,29 +3,20 @@ import { logger } from '../../../config/logger';
 
 /**
  * AuthCodeService
- * Generates and validates unique authentication codes for delivery pickups and deliveries
- * Format: GB1-A12-123 (3 segments, alphanumeric)
+ * Generates and validates unique authentication codes for delivery pickups and deliveries.
+ * Format: 4-digit numeric code (e.g. 3847)
  */
 export class AuthCodeService {
-  private static readonly CODE_LENGTH = 11; // Including dashes
-  private static readonly SEGMENT_LENGTHS = [3, 3, 3];
-  private static readonly CHARACTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Excluding confusing chars (0, O, 1, I)
 
   /**
-   * Generate a random segment of specified length
+   * Generate a 4-digit numeric code
    */
-  private static generateSegment(length: number): string {
-    let segment = '';
-    for (let i = 0; i < length; i++) {
-      const randomIndex = Math.floor(Math.random() * this.CHARACTERS.length);
-      segment += this.CHARACTERS[randomIndex];
-    }
-    return segment;
+  private static generateRawCode(): string {
+    return Math.floor(1000 + Math.random() * 9000).toString();
   }
 
   /**
-   * Generate a unique authentication code
-   * Format: GB1-A12-123
+   * Generate a unique 4-digit code for pickup or delivery
    */
   public static async generateUniqueCode(type: 'pickup' | 'delivery'): Promise<string> {
     let code: string;
@@ -34,13 +25,11 @@ export class AuthCodeService {
     const maxAttempts = 10;
 
     while (!isUnique && attempts < maxAttempts) {
-      // Generate code with 3 segments
-      const segments = this.SEGMENT_LENGTHS.map(length => this.generateSegment(length));
-      code = segments.join('-');
+      code = this.generateRawCode();
 
       // Check uniqueness in database
       const columnName = type === 'pickup' ? 'pickup_code' : 'delivery_code';
-      
+
       const { data, error } = await supabase
         .from('deliveries')
         .select('id')
@@ -52,7 +41,7 @@ export class AuthCodeService {
         throw new Error('Failed to generate unique code');
       }
 
-      isUnique = !data; // Code is unique if no record found
+      isUnique = !data;
       attempts++;
 
       if (!isUnique) {
@@ -84,35 +73,10 @@ export class AuthCodeService {
   }
 
   /**
-   * Validate code format
+   * Validate code format — must be exactly 4 numeric digits
    */
   public static validateCodeFormat(code: string): boolean {
-    // Check length
-    if (code.length !== this.CODE_LENGTH) {
-      return false;
-    }
-
-    // Check format: XXX-XXX-XXX
-    const segments = code.split('-');
-    if (segments.length !== 3) {
-      return false;
-    }
-
-    // Check each segment length
-    for (let i = 0; i < segments.length; i++) {
-      if (segments[i].length !== this.SEGMENT_LENGTHS[i]) {
-        return false;
-      }
-
-      // Check if all characters are valid
-      for (const char of segments[i]) {
-        if (!this.CHARACTERS.includes(char)) {
-          return false;
-        }
-      }
-    }
-
-    return true;
+    return /^\d{4}$/.test(code);
   }
 
   /**
