@@ -106,6 +106,88 @@ export function createApp(): Application {
     }
   });
 
+  /**
+   * POST /api/internal/push/resubscribe-all-tokens
+   * One-time backfill: subscribes every active device token to the correct FCM topics.
+   * Call this once after deploy to fix existing users who registered before topic
+   * subscription was added to registerDeviceToken.
+   *
+   * FCM subscribeToTopic accepts up to 1000 tokens per call.
+   */
+  app.post('/api/internal/push/resubscribe-all-tokens', internalApiAuth, async (req, res) => {
+    try {
+      const admin = await import('firebase-admin');
+      if (admin.apps.length === 0) {
+        return res.status(503).json({ success: false, message: 'Firebase not initialized' });
+      }
+
+      const { supabase: db } = await import('./config/database');
+      const BATCH = 500; // FCM max is 1000; use 500 to be safe
+      let offset = 0;
+      let totalSubscribed = 0;
+      let totalFailed = 0;
+
+      while (true) {
+        // Fetch a batch of active tokens with their user's role
+        const { data: tokens, error } = await db
+          .from('device_tokens')
+          .select('fcm_token, user_id')
+          .eq('is_active', true)
+          .range(offset, offset + BATCH - 1);
+
+        if (error || !tokens || tokens.length === 0) break;
+
+        // Get roles for these users
+        const userIds = [...new Set(tokens.map((t: any) => t.user_id))];
+        const { data: users } = await db
+          .from('users')
+          .select('id, roles')
+          .in('id', userIds);
+
+        const roleMap = new Map<string, string[]>((users ?? []).map((u: any) => [u.id, u.roles ?? []]));
+
+        const fcmTokens = tokens.map((t: any) => t.fcm_token);
+
+        // Everyone subscribes to all_users
+        const allResult = await admin.messaging().subscribeToTopic(fcmTokens, 'all_users').catch(() => null);
+        if (allResult) {
+          totalSubscribed += allResult.successCount ?? 0;
+          totalFailed     += allResult.failureCount ?? 0;
+        }
+
+        // Subscribe to role-specific topics
+        const roleTopicMap: Record<string, string> = {
+          customer: 'role_customer',
+          driver:   'role_driver',
+          vendor:   'role_vendor',
+        };
+
+        for (const [role, topic] of Object.entries(roleTopicMap)) {
+          const roleTokens = tokens
+            .filter((t: any) => (roleMap.get(t.user_id) ?? []).includes(role))
+            .map((t: any) => t.fcm_token);
+
+          if (roleTokens.length > 0) {
+            const roleResult = await admin.messaging().subscribeToTopic(roleTokens, topic).catch(() => null);
+            if (roleResult) {
+              totalSubscribed += roleResult.successCount ?? 0;
+              totalFailed     += roleResult.failureCount ?? 0;
+            }
+          }
+        }
+
+        offset += BATCH;
+        if (tokens.length < BATCH) break;
+      }
+
+      logger.info('FCM topic resubscription completed', { totalSubscribed, totalFailed });
+      return res.json({ success: true, data: { totalSubscribed, totalFailed } });
+    } catch (err: any) {
+      logger.error('resubscribe-all-tokens error', { error: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   // Mount routes
   app.use(routes);
 
