@@ -278,12 +278,11 @@ export class DriverService {
       );
     }
 
-    // Persist — also sync can_do_deliveries so it mirrors service_types
+    // Persist
     const { data: updated, error: updateError } = await supabase
       .from('drivers')
       .update({
         service_types: requestedServiceTypes,
-        can_do_deliveries: requestedServiceTypes.includes('delivery'),
         updated_at: new Date().toISOString(),
       })
       .eq('id', driver.id)

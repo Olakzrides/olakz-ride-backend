@@ -106,6 +106,60 @@ export function createApp(): Application {
     }
   });
 
+  // ── Internal support socket emit endpoints (called by admin-service) ────────
+  // POST /api/internal/support/emit/message         → push new admin message to customer
+  // POST /api/internal/support/emit/dispute-status  → push dispute status change to customer
+  app.post('/api/internal/support/emit/message', internalApiAuth, async (req, res) => {
+    try {
+      const { customer_id, chat_id, chat_type, dispute_id, message } = req.body;
+      if (!customer_id || !chat_id || !chat_type || !message) {
+        return res.status(400).json({ success: false, message: 'customer_id, chat_id, chat_type, message required' });
+      }
+
+      const socketService: import('./services/socket.service').SocketService = app.get('socketService');
+      if (!socketService) {
+        return res.status(503).json({ success: false, message: 'Socket service not available' });
+      }
+
+      await socketService.emitSupportMessage(customer_id, {
+        chatId:     chat_id,
+        chatType:   chat_type,
+        disputeId:  dispute_id ?? undefined,
+        message,
+      });
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      logger.error('Internal support/emit/message error', { error: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post('/api/internal/support/emit/dispute-status', internalApiAuth, async (req, res) => {
+    try {
+      const { customer_id, dispute_id, status, resolution_note } = req.body;
+      if (!customer_id || !dispute_id || !status) {
+        return res.status(400).json({ success: false, message: 'customer_id, dispute_id, status required' });
+      }
+
+      const socketService: import('./services/socket.service').SocketService = app.get('socketService');
+      if (!socketService) {
+        return res.status(503).json({ success: false, message: 'Socket service not available' });
+      }
+
+      await socketService.emitDisputeStatusChanged(customer_id, {
+        disputeId:      dispute_id,
+        status,
+        resolutionNote: resolution_note,
+      });
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      logger.error('Internal support/emit/dispute-status error', { error: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   // Mount routes
   app.use(routes);
 
