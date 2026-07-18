@@ -25,6 +25,8 @@ import promosRoutes from './routes/promos.routes';
 import broadcastRoutes from './routes/broadcast.routes';
 import subAdminRoutes from './routes/sub-admin.routes';
 
+import supportRoutes from './routes/support.routes';
+
 const app = express();
 
 app.use(helmet());
@@ -100,6 +102,9 @@ app.use('/api/admin/notifications', broadcastRoutes);
 
 // Step 19: super-admin → sub-admin account management
 app.use('/api/admin/administrators', subAdminRoutes);
+
+// Step 20: support, disputes, live chat, FAQ
+app.use('/api/admin/support', supportRoutes);
 
 // 404
 app.use((req, res) => {

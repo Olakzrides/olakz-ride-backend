@@ -18,6 +18,10 @@ router.post('/documents', authenticate, upload.single('file'), driverController.
 router.put('/status', authenticate, driverController.updateStatus);
 router.post('/location', authenticate, driverController.updateLocation);
 
+// Service type management — car drivers can toggle ride/delivery/both
+router.get('/service-type/options', authenticate, driverController.getServiceTypeOptions);
+router.patch('/service-type', authenticate, driverController.updateServiceType);
+
 // Admin routes (require authentication + admin role)
 router.get('/', authenticate, driverController.getAllDrivers);
 router.get('/:driverId', authenticate, driverController.getDriverById);

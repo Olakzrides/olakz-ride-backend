@@ -17,7 +17,7 @@ export class VendorPickupService {
 
     if (existing) return existing;
 
-    const pickupCode = preGeneratedCode || Math.floor(100000 + Math.random() * 900000).toString();
+    const pickupCode = preGeneratedCode || Math.floor(1000 + Math.random() * 9000).toString();
 
     const { data, error } = await supabase
       .from('food_vendor_pickups')
