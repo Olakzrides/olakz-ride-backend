@@ -192,6 +192,74 @@ export class DriverController {
   };
 
   /**
+   * Get available service type options for the authenticated driver
+   * GET /api/drivers/service-type/options
+   */
+  getServiceTypeOptions = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        ResponseUtil.unauthorized(res, 'User not authenticated');
+        return;
+      }
+
+      const result = await this.driverService.getServiceTypeOptions(userId);
+      ResponseUtil.success(res, result);
+    } catch (error: any) {
+      ResponseUtil.error(res, error.message);
+    }
+  };
+
+  /**
+   * Update driver service type (toggle ride / delivery / both)
+   * PATCH /api/drivers/service-type
+   *
+   * Body: { service_types: ['ride'] | ['delivery'] | ['ride', 'delivery'] }
+   *
+   * Rules:
+   *  - car: may choose ride, delivery, or both
+   *  - motorcycle / bicycle / truck / bus / minibus: delivery only
+   */
+  updateServiceType = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        ResponseUtil.unauthorized(res, 'User not authenticated');
+        return;
+      }
+
+      const { service_types } = req.body;
+
+      // Basic input validation
+      if (!service_types || !Array.isArray(service_types) || service_types.length === 0) {
+        ResponseUtil.badRequest(
+          res,
+          'service_types is required and must be a non-empty array. ' +
+          'Allowed values: ["ride"], ["delivery"], ["ride", "delivery"]'
+        );
+        return;
+      }
+
+      const result = await this.driverService.updateDriverServiceType(userId, service_types);
+
+      ResponseUtil.success(res, {
+        service_types: result.serviceTypes,
+        driver: result.driver,
+      }, 'Service type updated successfully');
+    } catch (error: any) {
+      // Surface vehicle capability errors as 422 Unprocessable Entity
+      if (
+        error.message.includes('does not support') ||
+        error.message.includes('Invalid service type')
+      ) {
+        ResponseUtil.error(res, error.message, 422);
+      } else {
+        ResponseUtil.error(res, error.message);
+      }
+    }
+  };
+
+  /**
    * Update driver online/offline status
    * PUT /api/drivers/status
    */

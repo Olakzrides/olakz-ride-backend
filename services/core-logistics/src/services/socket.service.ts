@@ -1389,4 +1389,39 @@ logger.info('Customer socket emit debug', {
   isCustomerOnline(userId: string): boolean {
     return this.customerSockets.has(userId);
   }
+
+  // ── Support / Dispute real-time events ──────────────────────────────────
+
+  /**
+   * Emit a support:message:new event to a specific customer.
+   * Called by the internal HTTP endpoint when an admin sends a reply.
+   */
+  async emitSupportMessage(customerId: string, payload: {
+    chatId: string;
+    chatType: 'general' | 'dispute';
+    disputeId?: string;
+    message: {
+      id: string;
+      senderType: 'admin';
+      message: string | null;
+      attachmentUrl: string | null;
+      createdAt: string;
+    };
+  }): Promise<void> {
+    await this.emitToCustomer(customerId, 'support:message:new', payload);
+    logger.info(`support:message:new emitted to customer ${customerId}`);
+  }
+
+  /**
+   * Emit a support:dispute:status_changed event to a specific customer.
+   * Called by the internal HTTP endpoint when an admin updates a dispute status.
+   */
+  async emitDisputeStatusChanged(customerId: string, payload: {
+    disputeId: string;
+    status: string;
+    resolutionNote?: string;
+  }): Promise<void> {
+    await this.emitToCustomer(customerId, 'support:dispute:status_changed', payload);
+    logger.info(`support:dispute:status_changed emitted to customer ${customerId}, status=${payload.status}`);
+  }
 }

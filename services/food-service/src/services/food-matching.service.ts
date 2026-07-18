@@ -191,8 +191,8 @@ export class FoodMatchingService {
       throw new Error(`Order is no longer available (status: ${order.status})`);
     }
 
-    // Generate pickup code — vendor holds this, courier enters it at pickup to confirm handover
-    const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate 4-digit pickup code — vendor holds this, courier enters it at pickup to confirm handover
+    const pickupCode = Math.floor(1000 + Math.random() * 9000).toString();
 
     // Assign courier
     await supabase

@@ -223,6 +223,137 @@ export class DriverService {
   }
 
   /**
+   * Update driver service type (ride / delivery / both)
+   *
+   * Rules (enforced here + in vehicle_service_capabilities):
+   *  - 'ride'     is only available to car drivers
+   *  - 'delivery' is available to all vehicle types
+   *  - car drivers may choose: ['ride'], ['delivery'], or ['ride','delivery']
+   *  - all other vehicle types may only choose: ['delivery']
+   */
+  async updateDriverServiceType(
+    userId: string,
+    requestedServiceTypes: string[]
+  ): Promise<{ driver: any; serviceTypes: string[] }> {
+    // Fetch the driver row with physical vehicle type name
+    const { data: driver, error: fetchError } = await supabase
+      .from('drivers')
+      .select(`
+        id,
+        service_types,
+        vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(id, name)
+      `)
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError || !driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const vehicleTypeName: string = (driver.vehicle_type as any)?.name?.toLowerCase() ?? '';
+
+    // Validate each requested service type against vehicle capabilities
+    // ride     → car, bus, minibus
+    // delivery → all vehicle types
+    const RIDE_CAPABLE_VEHICLES = ['car', 'bus', 'minibus'];
+    const DELIVERY_CAPABLE_VEHICLES = ['car', 'motorcycle', 'bicycle', 'truck', 'bus', 'minibus'];
+
+    const validServiceTypes = ['ride', 'delivery'];
+    for (const svc of requestedServiceTypes) {
+      if (!validServiceTypes.includes(svc)) {
+        throw new Error(`Invalid service type: "${svc}". Must be one of: ${validServiceTypes.join(', ')}`);
+      }
+    }
+
+    if (requestedServiceTypes.includes('ride') && !RIDE_CAPABLE_VEHICLES.includes(vehicleTypeName)) {
+      throw new Error(
+        `Your vehicle type "${vehicleTypeName}" does not support the ride service. ` +
+        `Only car, bus, and minibus drivers can offer ride. You may only choose: delivery`
+      );
+    }
+
+    if (requestedServiceTypes.includes('delivery') && !DELIVERY_CAPABLE_VEHICLES.includes(vehicleTypeName)) {
+      throw new Error(
+        `Your vehicle type "${vehicleTypeName}" does not support the delivery service.`
+      );
+    }
+
+    // Persist
+    const { data: updated, error: updateError } = await supabase
+      .from('drivers')
+      .update({
+        service_types: requestedServiceTypes,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', driver.id)
+      .select()
+      .single();
+
+    if (updateError) {
+      throw new Error(`Failed to update service type: ${updateError.message}`);
+    }
+
+    return { driver: updated, serviceTypes: updated.service_types };
+  }
+
+  /**
+   * Get available service type options for a driver based on their vehicle type
+   */
+  async getServiceTypeOptions(userId: string): Promise<{
+    currentServiceTypes: string[];
+    availableOptions: Array<{ value: string[]; label: string; description: string }>;
+    vehicleType: string;
+  }> {
+    const { data: driver, error } = await supabase
+      .from('drivers')
+      .select(`
+        service_types,
+        vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(name, display_name)
+      `)
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const vehicleTypeName: string = (driver.vehicle_type as any)?.name?.toLowerCase() ?? '';
+    const isRideCapable = ['car', 'bus', 'minibus'].includes(vehicleTypeName);
+
+    const availableOptions = isRideCapable
+      ? [
+          {
+            value: ['ride'],
+            label: 'Ride Only',
+            description: 'Accept passenger ride requests only',
+          },
+          {
+            value: ['delivery'],
+            label: 'Delivery Only',
+            description: 'Accept delivery requests only',
+          },
+          {
+            value: ['ride', 'delivery'],
+            label: 'Ride & Delivery',
+            description: 'Accept both ride and delivery requests',
+          },
+        ]
+      : [
+          {
+            value: ['delivery'],
+            label: 'Delivery Only',
+            description: 'Accept delivery requests only',
+          },
+        ];
+
+    return {
+      currentServiceTypes: driver.service_types ?? [],
+      availableOptions,
+      vehicleType: (driver.vehicle_type as any)?.display_name ?? vehicleTypeName,
+    };
+  }
+
+  /**
    * Update driver profile
    */
   async updateDriverProfile(
