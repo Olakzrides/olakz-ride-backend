@@ -34,6 +34,80 @@ async function emitToCustomer(
   }
 }
 
+/**
+ * Fetch role-specific profile for the reporter.
+ * - driver  → drivers table (status, rating, vehicle info)
+ * - vendor  → vendors table (business_name, business_type, verification_status)
+ * - customer → no extra lookup needed
+ */
+async function fetchReporterProfile(
+  userId: string,
+  reporterRole: string
+): Promise<Record<string, any> | null> {
+  try {
+    if (reporterRole === 'driver') {
+      const { data } = await supabase
+        .from('drivers')
+        .select(`
+          id, status, rating, total_rides, total_deliveries,
+          service_types, created_at,
+          vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(name, display_name),
+          vehicles:driver_vehicles(plate_number, manufacturer, model, year, color, is_active)
+        `)
+        .eq('user_id', userId)
+        .single();
+
+      if (!data) return null;
+
+      const activeVehicle = (data.vehicles as any[])?.find((v: any) => v.is_active) ?? data.vehicles?.[0] ?? null;
+
+      return {
+        driver_id:        data.id,
+        status:           data.status,
+        rating:           data.rating,
+        total_rides:      data.total_rides,
+        total_deliveries: data.total_deliveries,
+        service_types:    data.service_types,
+        vehicle_type:     (data.vehicle_type as any)?.display_name ?? null,
+        vehicle:          activeVehicle ? {
+          plate_number: activeVehicle.plate_number,
+          manufacturer: activeVehicle.manufacturer,
+          model:        activeVehicle.model,
+          year:         activeVehicle.year,
+          color:        activeVehicle.color,
+        } : null,
+        registered_at: data.created_at,
+      };
+    }
+
+    if (reporterRole === 'vendor') {
+      const { data } = await supabase
+        .from('vendors')
+        .select('id, business_name, business_type, verification_status, is_active, city, state, created_at')
+        .eq('user_id', userId)
+        .single();
+
+      if (!data) return null;
+
+      return {
+        vendor_id:           data.id,
+        business_name:       data.business_name,
+        business_type:       data.business_type,
+        verification_status: data.verification_status,
+        is_active:           data.is_active,
+        city:                data.city,
+        state:               data.state,
+        registered_at:       data.created_at,
+      };
+    }
+
+    return null; // customer — no extra profile needed
+  } catch (err: any) {
+    logger.warn(`fetchReporterProfile failed for ${reporterRole} ${userId}:`, err.message);
+    return null;
+  }
+}
+
 // ── Dispute management ────────────────────────────────────────────────────────
 
 export class SupportAdminService {
@@ -57,7 +131,7 @@ export class SupportAdminService {
       .select(`
         id, customer_id, issue_type, title, description,
         status, priority, photo_urls, reference_id, reference_type,
-        assigned_to, resolved_at, resolution_note,
+        assigned_to, resolved_at, resolution_note, reporter_role,
         created_at, updated_at
       `, { count: 'exact' })
       .order('created_at', { ascending: false })
@@ -114,7 +188,7 @@ export class SupportAdminService {
     return counts;
   }
 
-  /** Get a single dispute with full chat thread and customer info */
+  /** Get a single dispute with full chat thread, customer info, and role-specific profile */
   async getDisputeDetail(disputeId: string) {
     const { data: dispute, error } = await supabase
       .from('disputes')
@@ -124,12 +198,18 @@ export class SupportAdminService {
 
     if (error || !dispute) throw new Error('Dispute not found');
 
-    // Customer info
-    const { data: customer } = await supabase
+    // Base user info
+    const { data: user } = await supabase
       .from('users')
-      .select('id, first_name, last_name, email, phone')
+      .select('id, first_name, last_name, email, phone, active_role')
       .eq('id', dispute.customer_id)
       .single();
+
+    // Role-specific profile (driver details, vendor details, or null for customer)
+    const reporterProfile = await fetchReporterProfile(
+      dispute.customer_id,
+      dispute.reporter_role ?? user?.active_role ?? 'customer'
+    );
 
     // Chat thread
     const { data: chat } = await supabase
@@ -157,7 +237,16 @@ export class SupportAdminService {
         .eq('is_read', false);
     }
 
-    return { dispute, customer, chatId: chat?.id ?? null, messages };
+    return {
+      dispute,
+      reporter: {
+        ...user,
+        reporter_role:   dispute.reporter_role ?? 'customer',
+        profile:         reporterProfile,
+      },
+      chatId:   chat?.id ?? null,
+      messages,
+    };
   }
 
   /** Update dispute status (pending → in_progress → resolved) */
@@ -264,7 +353,7 @@ export class SupportAdminService {
 
     const { data, error, count } = await supabase
       .from('support_chats')
-      .select('id, customer_id, is_open, created_at, updated_at', { count: 'exact' })
+      .select('id, customer_id, is_open, reporter_role, created_at, updated_at', { count: 'exact' })
       .eq('type', 'general')
       .order('updated_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -292,16 +381,27 @@ export class SupportAdminService {
     };
   }
 
-  /** Get messages in a general chat (admin view) */
+  /** Get messages in a general chat (admin view) — includes reporter profile */
   async getGeneralChatMessages(chatId: string) {
     const { data: chat, error: cErr } = await supabase
       .from('support_chats')
-      .select('id, customer_id')
+      .select('id, customer_id, reporter_role')
       .eq('id', chatId)
       .eq('type', 'general')
       .single();
 
     if (cErr || !chat) throw new Error('Chat not found');
+
+    // Base user info
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email, phone, active_role')
+      .eq('id', chat.customer_id)
+      .single();
+
+    // Role-specific profile
+    const reporterRole = chat.reporter_role ?? user?.active_role ?? 'customer';
+    const reporterProfile = await fetchReporterProfile(chat.customer_id, reporterRole);
 
     const { data: messages } = await supabase
       .from('support_messages')
@@ -317,7 +417,15 @@ export class SupportAdminService {
       .eq('sender_type', 'customer')
       .eq('is_read', false);
 
-    return { chatId, customerId: chat.customer_id, messages: messages ?? [] };
+    return {
+      chatId,
+      reporter: {
+        ...user,
+        reporter_role: reporterRole,
+        profile:       reporterProfile,
+      },
+      messages: messages ?? [],
+    };
   }
 
   /** Admin replies in a general chat */
