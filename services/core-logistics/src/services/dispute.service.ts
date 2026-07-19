@@ -44,7 +44,8 @@ export const ISSUE_TYPES: Array<{ value: IssueType; label: string; description: 
 export class DisputeService {
 
   /**
-   * Create a new dispute submitted by a customer.
+   * Create a new dispute submitted by a customer, driver, or vendor.
+   * reporter_role is read from users.active_role at the time of submission.
    * Photos (up to 2) are already uploaded to Supabase Storage by the controller —
    * this method receives their public URLs.
    */
@@ -59,6 +60,15 @@ export class DisputeService {
   }) {
     const priority = PRIORITY_MAP[params.issueType] ?? 'low';
 
+    // Read the user's current active_role so admin knows who is reporting
+    const { data: userRow } = await supabase
+      .from('users')
+      .select('active_role')
+      .eq('id', params.customerId)
+      .single();
+
+    const reporterRole = userRow?.active_role ?? 'customer';
+
     const { data: dispute, error } = await supabase
       .from('disputes')
       .insert({
@@ -71,6 +81,7 @@ export class DisputeService {
         photo_urls:     params.photoUrls ?? [],
         reference_id:   params.referenceId ?? null,
         reference_type: params.referenceType ?? null,
+        reporter_role:  reporterRole,
       })
       .select()
       .single();
@@ -81,10 +92,11 @@ export class DisputeService {
     const { data: chat, error: chatError } = await supabase
       .from('support_chats')
       .insert({
-        customer_id: params.customerId,
-        type:        'dispute',
-        dispute_id:  dispute.id,
-        is_open:     true,
+        customer_id:   params.customerId,
+        type:          'dispute',
+        dispute_id:    dispute.id,
+        is_open:       true,
+        reporter_role: reporterRole,
       })
       .select()
       .single();
@@ -225,14 +237,24 @@ export class DisputeService {
 
     if (existing) return { chatId: existing.id, isNew: false };
 
+    // Read active_role so admin knows who started the chat
+    const { data: userRow } = await supabase
+      .from('users')
+      .select('active_role')
+      .eq('id', customerId)
+      .single();
+
+    const reporterRole = userRow?.active_role ?? 'customer';
+
     // Create a new general chat
     const { data: chat, error } = await supabase
       .from('support_chats')
       .insert({
-        customer_id: customerId,
-        type:        'general',
-        dispute_id:  null,
-        is_open:     true,
+        customer_id:   customerId,
+        type:          'general',
+        dispute_id:    null,
+        is_open:       true,
+        reporter_role: reporterRole,
       })
       .select()
       .single();
@@ -242,7 +264,7 @@ export class DisputeService {
     // Insert the automated welcome message from support
     await supabase.from('support_messages').insert({
       chat_id:     chat.id,
-      sender_id:   chat.id,           // system — use chat id as placeholder sender
+      sender_id:   chat.id,
       sender_type: 'admin',
       message:     'Hello! Welcome to Olakz support. How can I help you today?',
     });
