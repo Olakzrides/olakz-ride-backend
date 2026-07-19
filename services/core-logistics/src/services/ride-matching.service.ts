@@ -30,7 +30,6 @@ export class RideMatchingService {
   private readonly MAX_DRIVERS_PER_REQUEST = 10;
   private readonly REQUEST_TIMEOUT_SECONDS = 600;    // 10 minutes per batch
   private readonly MAX_SEARCH_RADIUS_KM = 15;        // 15km radius
-  private readonly LAST_SEEN_WINDOW_MINUTES = 5;
 
   constructor(socketService: SocketService) {
     this.socketService = socketService;
@@ -172,7 +171,6 @@ export class RideMatchingService {
     logger.info(`✅ Step 4: Found ${withAvailability?.length || 0} drivers with availability records`);
     
     // Step 5: Check online and available
-    const fiveMinutesAgo = new Date(Date.now() - this.LAST_SEEN_WINDOW_MINUTES * 60 * 1000).toISOString();
     const { data: onlineDrivers } = await supabase
       .from('drivers')
       .select(`
@@ -182,9 +180,8 @@ export class RideMatchingService {
       .eq('status', 'approved')
       .eq('service_tier_id', serviceTierId)
       .eq('availability.is_online', true)
-      .eq('availability.is_available', true)
-      .gte('availability.last_seen_at', fiveMinutesAgo);
-    logger.info(`✅ Step 5: Found ${onlineDrivers?.length || 0} drivers online and available (last ${this.LAST_SEEN_WINDOW_MINUTES} min)`);
+      .eq('availability.is_available', true);
+    logger.info(`✅ Step 5: Found ${onlineDrivers?.length || 0} drivers online and available`);
     
     // Step 6: Check location data
     const { data: withLocation } = await supabase
@@ -199,7 +196,6 @@ export class RideMatchingService {
     // location record per driver), which makes the same driver appear multiple
     // times in results and only 1 driver ends up receiving the request.
     // Location is fetched separately per driver below.
-    const lastSeenCutoff = new Date(Date.now() - this.LAST_SEEN_WINDOW_MINUTES * 60 * 1000).toISOString();
 
     // Build the base query — try with service_tier_id first
     let { data: driversData, error } = await supabase
@@ -227,8 +223,7 @@ export class RideMatchingService {
       .eq('service_tier_id', serviceTierId)
       .eq('vehicles.is_active', true)
       .eq('availability.is_online', true)
-      .eq('availability.is_available', true)
-      .gte('availability.last_seen_at', lastSeenCutoff);
+      .eq('availability.is_available', true);
 
     logger.info(`Query result (tier match): Found ${driversData?.length || 0} drivers, Error: ${error?.message || 'none'}`);
 
@@ -260,8 +255,7 @@ export class RideMatchingService {
         .eq('status', 'approved')
         .eq('vehicles.is_active', true)
         .eq('availability.is_online', true)
-        .eq('availability.is_available', true)
-        .gte('availability.last_seen_at', lastSeenCutoff);
+        .eq('availability.is_available', true);
 
       driversData = fallback.data;
       error = fallback.error;
