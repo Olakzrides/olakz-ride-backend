@@ -401,6 +401,7 @@ export class DeliveryMatchingService {
         package_description,
         delivery_type,
         scheduled_pickup_at,
+        payment_method,
         vehicle_type:vehicle_types(name, display_name)
       `)
       .eq('id', deliveryId)
@@ -414,7 +415,7 @@ export class DeliveryMatchingService {
     // Get customer details
     const { data: customer } = await supabase
       .from('users')
-      .select('first_name, last_name, phone')
+      .select('first_name, last_name, phone, avatar_url')
       .eq('id', delivery.customer_id)
       .single();
 
@@ -427,6 +428,7 @@ export class DeliveryMatchingService {
       customer: {
         name: customer ? `${customer.first_name} ${customer.last_name}` : 'Customer',
         phone: customer?.phone,
+        photo: customer?.avatar_url ?? null,
       },
       pickup: {
         latitude: parseFloat(delivery.pickup_latitude),
@@ -450,6 +452,7 @@ export class DeliveryMatchingService {
       },
       deliveryType: delivery.delivery_type,
       scheduledPickupAt: delivery.scheduled_pickup_at,
+      paymentMethod: (delivery as any).payment_method ?? null,
       vehicleType: (delivery.vehicle_type as any)?.display_name || 'Any Vehicle',
       expiresAt: new Date(Date.now() + this.REQUEST_TIMEOUT_SECONDS * 1000).toISOString(),
       timeout: this.REQUEST_TIMEOUT_SECONDS,
