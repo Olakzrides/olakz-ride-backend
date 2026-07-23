@@ -662,6 +662,23 @@ export class DeliveryService {
       logger.error('Error notifying couriers of delivery cancellation:', notifyErr);
     }
 
+    // ── Notify assigned courier if one exists (their request is already 'accepted', not 'pending') ──
+    try {
+      if (delivery.courier_id) {
+        const { socketService } = await import('../../../index');
+        if (socketService) {
+          socketService.emitToDriver(delivery.courier_id, 'delivery:cancelled', {
+            deliveryId,
+            reason: reason || 'customer_cancelled',
+            message: 'The customer has cancelled this delivery.',
+          });
+          logger.info(`Notified assigned courier ${delivery.courier_id} of delivery cancellation: ${deliveryId}`);
+        }
+      }
+    } catch (assignedCourierNotifyErr) {
+      logger.error('Error notifying assigned courier of delivery cancellation:', assignedCourierNotifyErr);
+    }
+
     // ── Refund wallet payment if applicable ──────────────────────────────────
     // delivery.payment_method and delivery.payment_status come from getDelivery above
     if (
