@@ -590,8 +590,12 @@ export class DeliveryMatchingService {
       .single();
 
     if (delivery && this.socketService.isCustomerOnline(delivery.customer_id)) {
-      // Notify via Socket.IO
-      // this.socketService.notifyCustomer(delivery.customer_id, 'delivery:no_couriers_available', { deliveryId });
+      // Notify customer via Socket.IO
+      await this.socketService.emitToCustomer(delivery.customer_id, 'delivery:no_couriers_available', {
+        deliveryId,
+        message: 'No couriers are available for your delivery at this time. Please try again later.',
+      });
+      logger.info(`Notified customer ${delivery.customer_id} — no couriers available for delivery ${deliveryId}`);
     }
   }
 

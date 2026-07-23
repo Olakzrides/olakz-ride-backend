@@ -661,8 +661,23 @@ export class DeliveriesController {
         limit,
       });
 
+      // Fetch customer photos in a single batch query
+      const customerIds = [...new Set(deliveries.map((d: any) => d.customer_id).filter(Boolean))];
+      const customerPhotoMap = new Map<string, string | null>();
+
+      if (customerIds.length > 0) {
+        const { data: users } = await supabase
+          .from('users')
+          .select('id, avatar_url')
+          .in('id', customerIds);
+
+        for (const u of users ?? []) {
+          customerPhotoMap.set(u.id, u.avatar_url ?? null);
+        }
+      }
+
       return ResponseUtil.success(res, {
-        deliveries: deliveries.map(delivery => ({
+        deliveries: deliveries.map((delivery: any) => ({
           id: delivery.id,
           orderNumber: delivery.order_number,
           pickupLocation: {
@@ -680,6 +695,10 @@ export class DeliveriesController {
           distanceToPickup: delivery.distance_to_pickup || null,
           deliveryType: delivery.delivery_type,
           scheduledPickupAt: delivery.scheduled_pickup_at,
+          paymentMethod: delivery.payment_method ?? null,
+          customer: {
+            photo: customerPhotoMap.get(delivery.customer_id) ?? null,
+          },
           createdAt: delivery.created_at,
         })),
         total: deliveries.length,
