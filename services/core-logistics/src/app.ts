@@ -114,7 +114,7 @@ export function createApp(): Application {
    *
    * FCM subscribeToTopic accepts up to 1000 tokens per call.
    */
-  app.post('/api/internal/push/resubscribe-all-tokens', internalApiAuth, async (req, res) => {
+  app.post('/api/internal/push/resubscribe-all-tokens', internalApiAuth, async (_req, res) => {
     try {
       const admin = await import('firebase-admin');
       if (admin.apps.length === 0) {
