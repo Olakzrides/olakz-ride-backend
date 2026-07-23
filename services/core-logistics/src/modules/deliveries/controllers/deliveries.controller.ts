@@ -203,6 +203,35 @@ export class DeliveriesController {
         return ResponseUtil.forbidden(res, 'Unauthorized access to delivery');
       }
 
+      // Fetch customer and courier user profiles in parallel
+      const userIdsToFetch: string[] = [delivery.customer_id];
+      if (delivery.courier?.user_id) {
+        userIdsToFetch.push(delivery.courier.user_id);
+      }
+
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, phone, avatar_url')
+        .in('id', userIdsToFetch);
+
+      const userMap = new Map((users ?? []).map((u: any) => [u.id, u]));
+
+      const customerUser = userMap.get(delivery.customer_id);
+      const courierUser  = delivery.courier?.user_id ? userMap.get(delivery.courier.user_id) : null;
+
+      const customerInfo = customerUser ? {
+        name:  `${customerUser.first_name ?? ''} ${customerUser.last_name ?? ''}`.trim() || null,
+        phone: customerUser.phone ?? null,
+        photo: customerUser.avatar_url ?? null,
+      } : null;
+
+      const courierInfo = delivery.courier ? {
+        ...delivery.courier,
+        name:  courierUser ? `${courierUser.first_name ?? ''} ${courierUser.last_name ?? ''}`.trim() || null : null,
+        phone: courierUser?.phone ?? null,
+        photo: courierUser?.avatar_url ?? null,
+      } : null;
+
       return ResponseUtil.success(res, {
         delivery: {
           id: delivery.id,
@@ -233,7 +262,8 @@ export class DeliveriesController {
           distanceKm: delivery.distance_km,
           paymentMethod: delivery.payment_method,
           paymentStatus: delivery.payment_status,
-          courier: delivery.courier,
+          courier: courierInfo,
+          customer: customerInfo,
           pickupCode: delivery.customer_id === userId ? delivery.pickup_code : undefined,
           deliveryCode: delivery.customer_id === userId ? delivery.delivery_code : undefined,
           createdAt: delivery.created_at,
@@ -248,6 +278,7 @@ export class DeliveriesController {
       return ResponseUtil.error(res, error.message || 'Failed to fetch delivery details');
     }
   };
+
 
   /**
    * Update delivery status
