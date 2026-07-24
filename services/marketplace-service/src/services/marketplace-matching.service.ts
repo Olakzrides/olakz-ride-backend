@@ -3,6 +3,7 @@ import { supabase } from '../config/database';
 import { WalletService } from './wallet.service';
 import { OrderService } from './order.service';
 import { emitToCustomer, emitToVendor, broadcastToRiders, emitToRider } from './socket.service';
+import { notifyAdminMarketplaceStatus } from './admin-relay.service';
 import { haversineKm } from '../utils/maps';
 import logger from '../utils/logger';
 
@@ -181,6 +182,8 @@ export class MarketplaceMatchingService {
       });
     }
 
+    await notifyAdminMarketplaceStatus(orderId, 'rider_accepted', 'Rider accepted order, en route to store');
+
     logger.info('Rider accepted marketplace order', { orderId, driverId });
   }
 
@@ -227,6 +230,8 @@ export class MarketplaceMatchingService {
         reason,
       });
     }
+
+    await notifyAdminMarketplaceStatus(orderId, 'searching_rider', 'Rider cancelled — searching for new rider');
 
     logger.info('Rider cancelled marketplace order — re-queuing', { orderId, driverId });
 

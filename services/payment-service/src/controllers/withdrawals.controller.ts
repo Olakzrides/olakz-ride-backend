@@ -7,11 +7,27 @@ import { ResponseUtil } from '../utils/response';
 import { AuthRequest } from '../middleware/auth.middleware';
 import logger from '../utils/logger';
 import config from '../config';
+import { verifyTransactionPin, PinError } from '../utils/pin-verify';
 
 const MIN_WITHDRAWAL = 1000;
 
 function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'An unexpected error occurred';
+}
+
+/** Shared PIN error → HTTP response helper */
+function handlePinError(err: unknown, res: Response): Response | null {
+  if (!(err instanceof PinError)) return null;
+  const statusMap: Record<string, number> = {
+    PIN_NOT_SET:  403,
+    INVALID_PIN:  401,
+    PIN_LOCKED:   423,
+    PIN_REQUIRED: 400,
+  };
+  return res.status(statusMap[err.code] ?? 400).json({
+    success: false,
+    error: { code: err.code, message: err.message },
+  });
 }
 
 export class WithdrawalsController {
@@ -22,16 +38,21 @@ export class WithdrawalsController {
   initiateWithdrawal = async (req: Request, res: Response): Promise<Response> => {
     try {
       const userId = (req as AuthRequest).user!.id;
-      const { bank_account_id, amount } = req.body;
+      const { bank_account_id, amount, pin } = req.body;
 
-      if (!bank_account_id) {
-        return ResponseUtil.badRequest(res, 'bank_account_id is required');
-      }
-      if (!amount || amount <= 0) {
-        return ResponseUtil.badRequest(res, 'Invalid amount');
-      }
+      if (!bank_account_id) return ResponseUtil.badRequest(res, 'bank_account_id is required');
+      if (!amount || amount <= 0) return ResponseUtil.badRequest(res, 'Invalid amount');
       if (amount < MIN_WITHDRAWAL) {
         return ResponseUtil.badRequest(res, `Minimum withdrawal amount is ₦${MIN_WITHDRAWAL.toLocaleString()}`);
+      }
+
+      // ── PIN verification ─────────────────────────────────────────────────────
+      try {
+        await verifyTransactionPin(userId, pin);
+      } catch (pinErr) {
+        const pinResponse = handlePinError(pinErr, res);
+        if (pinResponse) return pinResponse;
+        throw pinErr;
       }
 
       // Verify bank account belongs to user

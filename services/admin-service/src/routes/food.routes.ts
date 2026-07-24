@@ -9,7 +9,9 @@ const ctrl = new FoodAdminController();
 router.use(adminAuthMiddleware);
 
 // Orders
+router.get('/orders/counts', auditMiddleware('food_get_order_counts'), ctrl.getStatusCounts);
 router.get('/orders', auditMiddleware('food_get_orders'), ctrl.getOrders);
+router.get('/orders/:id', auditMiddleware('food_get_order_by_id'), ctrl.getOrderById);
 router.patch('/orders/:id/status', auditMiddleware('food_update_order_status'), ctrl.updateOrderStatus);
 
 // Vendors (restaurants)

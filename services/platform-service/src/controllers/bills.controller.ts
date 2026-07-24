@@ -3,6 +3,23 @@ import billsService from '../services/bills.service';
 import billsWebhookService from '../services/bills-webhook.service';
 import logger from '../utils/logger';
 import ResponseUtil from '../utils/response';
+import { verifyTransactionPin, PinError } from '../utils/pin-verify';
+
+/** Shared PIN error → HTTP response helper */
+function handlePinError(err: unknown, res: Response): boolean {
+  if (!(err instanceof PinError)) return false;
+  const statusMap: Record<string, number> = {
+    PIN_NOT_SET:  403,
+    INVALID_PIN:  401,
+    PIN_LOCKED:   423,
+    PIN_REQUIRED: 400,
+  };
+  res.status(statusMap[err.code] ?? 400).json({
+    success: false,
+    error: { code: err.code, message: err.message },
+  });
+  return true;
+}
 
 export class BillsController {
   /**
@@ -27,53 +44,34 @@ export class BillsController {
   async purchaseAirtime(req: Request, res: Response): Promise<Response> {
     try {
       const userId = (req as any).user?.id;
+      if (!userId) return ResponseUtil.unauthorized(res);
 
-      if (!userId) {
-        return ResponseUtil.unauthorized(res);
-      }
+      const { phone_number, network, amount, payment_method, card_id, pin } = req.body;
 
-      const { phone_number, network, amount, payment_method, card_id } = req.body;
-
-      // Validation
       if (!phone_number || !network || !amount || !payment_method) {
         return ResponseUtil.error(res, 'Missing required fields', 400);
       }
+      if (typeof amount !== 'number' || amount <= 0) return ResponseUtil.error(res, 'Invalid amount', 400);
+      if (amount < 50 || amount > 500000) return ResponseUtil.error(res, 'Amount must be between ₦50 and ₦500,000', 400);
+      if (!['wallet', 'card'].includes(payment_method)) return ResponseUtil.error(res, 'Invalid payment method', 400);
+      if (payment_method === 'card' && !card_id) return ResponseUtil.error(res, 'Card ID is required for card payment', 400);
 
-      if (typeof amount !== 'number' || amount <= 0) {
-        return ResponseUtil.error(res, 'Invalid amount', 400);
-      }
-
-      if (amount < 50 || amount > 500000) {
-        return ResponseUtil.error(res, 'Amount must be between ₦50 and ₦500,000', 400);
-      }
-
-      if (!['wallet', 'card'].includes(payment_method)) {
-        return ResponseUtil.error(res, 'Invalid payment method', 400);
-      }
-
-      if (payment_method === 'card' && !card_id) {
-        return ResponseUtil.error(res, 'Card ID is required for card payment', 400);
-      }
-
-      // Validate phone number format (Nigerian)
       const phoneRegex = /^(\+?234|0)[789]\d{9}$/;
-      if (!phoneRegex.test(phone_number.replace(/\s/g, ''))) {
-        return ResponseUtil.error(res, 'Invalid Nigerian phone number', 400);
+      if (!phoneRegex.test(phone_number.replace(/\s/g, ''))) return ResponseUtil.error(res, 'Invalid Nigerian phone number', 400);
+
+      // ── PIN verification ─────────────────────────────────────────────────────
+      try {
+        await verifyTransactionPin(userId, pin);
+      } catch (pinErr) {
+        if (handlePinError(pinErr, res)) return res;
+        throw pinErr;
       }
 
       const result = await billsService.purchaseAirtime({
-        userId,
-        phoneNumber: phone_number,
-        network,
-        amount,
-        paymentMethod: payment_method,
-        cardId: card_id,
+        userId, phoneNumber: phone_number, network, amount, paymentMethod: payment_method, cardId: card_id,
       });
 
-      if (!result.success) {
-        return ResponseUtil.error(res, result.message, 400);
-      }
-
+      if (!result.success) return ResponseUtil.error(res, result.message, 400);
       return ResponseUtil.success(res, result.message, { transaction: result.transaction });
     } catch (error: any) {
       logger.error('Purchase airtime error:', error);
@@ -117,43 +115,32 @@ export class BillsController {
   async purchaseData(req: Request, res: Response): Promise<Response> {
     try {
       const userId = (req as any).user?.id;
+      if (!userId) return ResponseUtil.unauthorized(res);
 
-      if (!userId) {
-        return ResponseUtil.unauthorized(res);
-      }
-
-      const { phone_number, network, bundle_code, payment_method, card_id } = req.body;
+      const { phone_number, network, bundle_code, payment_method, card_id, pin } = req.body;
 
       if (!phone_number || !network || !bundle_code || !payment_method) {
         return ResponseUtil.error(res, 'Missing required fields', 400);
       }
-
-      if (!['wallet', 'card'].includes(payment_method)) {
-        return ResponseUtil.error(res, 'Invalid payment method', 400);
-      }
-
-      if (payment_method === 'card' && !card_id) {
-        return ResponseUtil.error(res, 'Card ID is required for card payment', 400);
-      }
+      if (!['wallet', 'card'].includes(payment_method)) return ResponseUtil.error(res, 'Invalid payment method', 400);
+      if (payment_method === 'card' && !card_id) return ResponseUtil.error(res, 'Card ID is required for card payment', 400);
 
       const phoneRegex = /^(\+?234|0)[789]\d{9}$/;
-      if (!phoneRegex.test(phone_number.replace(/\s/g, ''))) {
-        return ResponseUtil.error(res, 'Invalid Nigerian phone number', 400);
+      if (!phoneRegex.test(phone_number.replace(/\s/g, ''))) return ResponseUtil.error(res, 'Invalid Nigerian phone number', 400);
+
+      // ── PIN verification ─────────────────────────────────────────────────────
+      try {
+        await verifyTransactionPin(userId, pin);
+      } catch (pinErr) {
+        if (handlePinError(pinErr, res)) return res;
+        throw pinErr;
       }
 
       const result = await billsService.purchaseData({
-        userId,
-        phoneNumber: phone_number,
-        network,
-        bundleCode: bundle_code,
-        paymentMethod: payment_method,
-        cardId: card_id,
+        userId, phoneNumber: phone_number, network, bundleCode: bundle_code, paymentMethod: payment_method, cardId: card_id,
       });
 
-      if (!result.success) {
-        return ResponseUtil.error(res, result.message, 400);
-      }
-
+      if (!result.success) return ResponseUtil.error(res, result.message, 400);
       return ResponseUtil.success(res, result.message, { transaction: result.transaction });
     } catch (error: any) {
       logger.error('Purchase data error:', error);
