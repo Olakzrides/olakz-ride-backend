@@ -39,6 +39,22 @@ export async function notifyAdminMarketplaceStatus(
   }
 }
 
+export async function notifyAdminNewMarketplaceOrder(
+  orderId: string,
+  storeName: string | null,
+  status: string
+): Promise<void> {
+  try {
+    await axios.post(
+      `${CORE_LOGISTICS_URL}/api/internal/marketplace/emit/new-order`,
+      { order_id: orderId, store_name: storeName, status, created_at: new Date().toISOString() },
+      { headers: HEADERS, timeout: TIMEOUT_MS }
+    );
+  } catch (err: any) {
+    logger.warn(`notifyAdminNewMarketplaceOrder failed for order ${orderId}:`, err.message);
+  }
+}
+
 export async function notifyAdminMarketplaceRiderLocation(
   orderId:  string,
   riderId:  string,

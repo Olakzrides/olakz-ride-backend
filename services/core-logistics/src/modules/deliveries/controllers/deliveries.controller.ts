@@ -114,6 +114,20 @@ export class DeliveriesController {
         });
       }
 
+      // Notify all admins a new delivery has been created
+      try {
+        const socketService = (req as any).app.get('socketService');
+        if (socketService) {
+          socketService.emitToAllAdmins('admin:delivery:new', {
+            deliveryId:   result.delivery.id,
+            orderNumber:  result.delivery.order_number,
+            status:       result.delivery.status,
+            deliveryType: result.delivery.delivery_type,
+            createdAt:    result.delivery.created_at,
+          });
+        }
+      } catch { /* non-fatal */ }
+
       return ResponseUtil.success(res, {
         delivery: {
           id: result.delivery.id,
@@ -133,6 +147,20 @@ export class DeliveriesController {
           ? 'Delivery scheduled successfully' 
           : 'Delivery order created successfully. Searching for courier...',
       });
+
+      // Notify all admins a new delivery has been created
+      try {
+        const socketService = (req as any).app.get('socketService');
+        if (socketService) {
+          socketService.emitToAllAdmins('admin:delivery:new', {
+            deliveryId:  result.delivery.id,
+            orderNumber: result.delivery.order_number,
+            status:      result.delivery.status,
+            deliveryType: result.delivery.delivery_type,
+            createdAt:   result.delivery.created_at,
+          });
+        }
+      } catch { /* non-fatal */ }
     } catch (error: any) {
       logger.error('Create delivery error:', error);
       return ResponseUtil.error(res, error.message || 'Failed to create delivery order');

@@ -222,6 +222,18 @@ export class HireService {
       data:             { hire_number: hireNumber, vehicle_sub_type: params.vehicle_sub_type, status: 'pending' },
     });
 
+    // Notify all admins a new hire has been created
+    try {
+      if (this.socketService) {
+        this.socketService.emitToAllAdmins('admin:hire:new', {
+          hireId:      hire.id,
+          hireNumber:  hire.hire_number,
+          status:      hire.status,
+          createdAt:   hire.created_at,
+        });
+      }
+    } catch { /* non-fatal */ }
+
     return hire;
   }
 
