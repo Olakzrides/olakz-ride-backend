@@ -8,7 +8,7 @@ import { AuthRequest } from '../middleware/auth.middleware';
 import logger from '../utils/logger';
 import config from '../config';
 
-const MIN_WITHDRAWAL = 1000;
+const MIN_WITHDRAWAL = 100;
 
 function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'An unexpected error occurred';
