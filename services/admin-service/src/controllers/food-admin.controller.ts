@@ -27,6 +27,21 @@ export class FoodAdminController {
     }
   };
 
+  getStatusCounts = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { restaurant_id, from, to } = req.query;
+      const counts = await FoodAdminService.getStatusCounts({
+        restaurant_id: restaurant_id as string,
+        from: from as string,
+        to: to as string,
+      });
+      ResponseUtil.success(res, counts, 'Food order status counts retrieved');
+    } catch (err: unknown) {
+      logger.error('getStatusCounts error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, toMessage(err));
+    }
+  };
+
   updateOrderStatus = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
       const adminId = req.user?.id;
@@ -120,6 +135,18 @@ export class FoodAdminController {
     } catch (err: unknown) {
       logger.error('getOrderTrends error', { error: toMessage(err) });
       ResponseUtil.serverError(res, toMessage(err));
+    }
+  };
+
+  getOrderById = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const order = await FoodAdminService.getOrderById(req.params.id);
+      ResponseUtil.success(res, { order }, 'Food order detail retrieved');
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      if (msg === 'Order not found') { ResponseUtil.notFound(res, 'Order'); return; }
+      logger.error('getOrderById error', { error: msg });
+      ResponseUtil.serverError(res, msg);
     }
   };
 }

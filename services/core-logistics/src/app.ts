@@ -160,6 +160,117 @@ export function createApp(): Application {
     }
   });
 
+  // ── Internal food order emit endpoints (called by food-service) ──────────────
+  // POST /api/internal/food/emit/code-verified   → push code verification event to admin
+  // POST /api/internal/food/emit/status-updated  → push status change event to admin
+  app.post('/api/internal/food/emit/code-verified', internalApiAuth, async (req, res) => {
+    try {
+      const { order_id, code_type, verified_at, new_status } = req.body;
+      if (!order_id || !code_type) {
+        return res.status(400).json({ success: false, message: 'order_id, code_type required' });
+      }
+
+      const socketService: import('./services/socket.service').SocketService = app.get('socketService');
+      if (!socketService) {
+        return res.status(503).json({ success: false, message: 'Socket service not available' });
+      }
+
+      socketService.emitToFoodAdminRoom(order_id, 'food:code:verified', {
+        orderId:    order_id,
+        codeType:   code_type,   // 'pickup' | 'delivery'
+        verifiedAt: verified_at ?? new Date().toISOString(),
+        newStatus:  new_status ?? null,
+      });
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      logger.error('Internal food/emit/code-verified error', { error: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post('/api/internal/food/emit/status-updated', internalApiAuth, async (req, res) => {
+    try {
+      const { order_id, status, message, updated_at } = req.body;
+      if (!order_id || !status) {
+        return res.status(400).json({ success: false, message: 'order_id, status required' });
+      }
+
+      const socketService: import('./services/socket.service').SocketService = app.get('socketService');
+      if (!socketService) {
+        return res.status(503).json({ success: false, message: 'Socket service not available' });
+      }
+
+      socketService.emitToFoodAdminRoom(order_id, 'food:order:status_updated', {
+        orderId:   order_id,
+        status,
+        message:   message ?? null,
+        updatedAt: updated_at ?? new Date().toISOString(),
+      });
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      logger.error('Internal food/emit/status-updated error', { error: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // ── Internal marketplace order emit endpoints (called by marketplace-service) ─
+  // POST /api/internal/marketplace/emit/status-updated → push status change to admin
+  app.post('/api/internal/marketplace/emit/status-updated', internalApiAuth, async (req, res) => {
+    try {
+      const { order_id, status, message, updated_at } = req.body;
+      if (!order_id || !status) {
+        return res.status(400).json({ success: false, message: 'order_id, status required' });
+      }
+
+      const socketService: import('./services/socket.service').SocketService = app.get('socketService');
+      if (!socketService) {
+        return res.status(503).json({ success: false, message: 'Socket service not available' });
+      }
+
+      socketService.emitToMarketplaceAdminRoom(order_id, 'marketplace:order:status_updated', {
+        orderId:   order_id,
+        status,
+        message:   message ?? null,
+        updatedAt: updated_at ?? new Date().toISOString(),
+      });
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      logger.error('Internal marketplace/emit/status-updated error', { error: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post('/api/internal/marketplace/emit/rider-location', internalApiAuth, async (req, res) => {
+    try {
+      const { order_id, rider_id, lat, lng, heading, updated_at } = req.body;
+      if (!order_id || lat === undefined || lng === undefined) {
+        return res.status(400).json({ success: false, message: 'order_id, lat, lng required' });
+      }
+
+      const socketService: import('./services/socket.service').SocketService = app.get('socketService');
+      if (!socketService) {
+        return res.status(503).json({ success: false, message: 'Socket service not available' });
+      }
+
+      socketService.emitToMarketplaceAdminRoom(order_id, 'marketplace:rider:location_updated', {
+        orderId:   order_id,
+        riderId:   rider_id ?? null,
+        latitude:  lat,
+        longitude: lng,
+        heading:   heading ?? null,
+        updatedAt: updated_at ?? new Date().toISOString(),
+      });
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      logger.error('Internal marketplace/emit/rider-location error', { error: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   // Mount routes
   app.use(routes);
 

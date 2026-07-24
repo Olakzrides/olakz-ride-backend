@@ -4,6 +4,7 @@ import { ResponseUtil } from '../utils/response';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { supabase } from '../config/database';
 import logger from '../utils/logger';
+import { verifyTransactionPin, PinError } from '../utils/pin-verify';
 
 function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -174,12 +175,31 @@ getBalance = async (req: Request, res: Response): Promise<Response> => {
   transfer = async (req: Request, res: Response): Promise<Response> => {
     try {
       const userId = (req as AuthRequest).user!.id;
-      const { phone, amount, note } = req.body;
+      const { phone, amount, note, pin } = req.body;
 
-      if (!phone)             return ResponseUtil.badRequest(res, 'Recipient phone number is required');
-      if (!amount)            return ResponseUtil.badRequest(res, 'Amount is required');
+      if (!phone)  return ResponseUtil.badRequest(res, 'Recipient phone number is required');
+      if (!amount) return ResponseUtil.badRequest(res, 'Amount is required');
       if (isNaN(Number(amount)) || Number(amount) <= 0)
         return ResponseUtil.badRequest(res, 'Amount must be a positive number');
+
+      // ── PIN verification ───────────────────────────────────────────────────
+      try {
+        await verifyTransactionPin(userId, pin);
+      } catch (pinErr: any) {
+        if (pinErr instanceof PinError) {
+          const statusMap: Record<string, number> = {
+            PIN_NOT_SET:  403,
+            INVALID_PIN:  401,
+            PIN_LOCKED:   423,
+            PIN_REQUIRED: 400,
+          };
+          return res.status(statusMap[pinErr.code] ?? 400).json({
+            success: false,
+            error: { code: pinErr.code, message: pinErr.message },
+          });
+        }
+        throw pinErr;
+      }
 
       const result = await WalletService.transferByPhone({
         senderUserId:   userId,

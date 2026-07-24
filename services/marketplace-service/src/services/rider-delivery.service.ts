@@ -3,6 +3,7 @@ import { supabase } from '../config/database';
 import { OrderService } from './order.service';
 import { WalletService } from './wallet.service';
 import { emitToCustomer, emitToVendor } from './socket.service';
+import { notifyAdminMarketplaceStatus, notifyAdminMarketplaceRiderLocation } from './admin-relay.service';
 import logger from '../utils/logger';
 
 export class RiderDeliveryService {
@@ -36,6 +37,8 @@ export class RiderDeliveryService {
       message: 'Rider is on the way to pick up your order',
     });
 
+    await notifyAdminMarketplaceStatus(orderId, 'heading_to_store', 'Rider heading to store');
+
     logger.info('Rider heading to store', { orderId, driverId });
   }
 
@@ -60,6 +63,8 @@ export class RiderDeliveryService {
       message: 'Your order has been picked up',
     });
 
+    await notifyAdminMarketplaceStatus(orderId, 'shipped', 'Rider picked up order from store');
+
     logger.info('Rider confirmed pickup from vendor', { orderId, driverId });
   }
 
@@ -82,6 +87,8 @@ export class RiderDeliveryService {
       status: 'heading_to_customer',
       message: 'Your order has been picked up and is on the way to you!',
     });
+
+    await notifyAdminMarketplaceStatus(orderId, 'heading_to_customer', 'Rider heading to customer');
 
     logger.info('Rider heading to customer', { orderId, driverId });
   }
@@ -106,6 +113,8 @@ export class RiderDeliveryService {
       status: 'arrived',
       message: 'Your rider is at your location',
     });
+
+    await notifyAdminMarketplaceStatus(orderId, 'arrived', 'Rider arrived at customer location');
 
     logger.info('Rider arrived at customer address', { orderId, driverId });
   }
@@ -189,6 +198,8 @@ export class RiderDeliveryService {
       emitToVendor(order.store.ownerId, 'marketplace:order:delivered', { order_id: orderId });
     }
 
+    await notifyAdminMarketplaceStatus(orderId, 'delivered', 'Order delivered successfully');
+
     logger.info('Marketplace order delivered and payouts processed', { orderId, driverId, subtotal, deliveryFee });
   }
 
@@ -206,6 +217,8 @@ export class RiderDeliveryService {
         heading,
         updated_at: new Date().toISOString(),
       });
+      // Relay rider location to admin watching this order
+      await notifyAdminMarketplaceRiderLocation(orderId, driverId, lat, lng, heading);
     }
   }
 
