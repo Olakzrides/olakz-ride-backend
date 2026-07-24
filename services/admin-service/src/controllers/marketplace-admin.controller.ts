@@ -40,6 +40,32 @@ export class MarketplaceAdminController {
     }
   };
 
+  getOrderStatusCounts = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const counts = await MarketplaceAdminService.getStatusCounts({
+        storeId:  req.query.store_id  as string | undefined,
+        dateFrom: req.query.date_from as string | undefined,
+        dateTo:   req.query.date_to   as string | undefined,
+      });
+      ResponseUtil.success(res, counts, 'Marketplace order status counts retrieved');
+    } catch (err: unknown) {
+      logger.error('getOrderStatusCounts error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, toMessage(err));
+    }
+  };
+
+  getOrderById = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const order = await MarketplaceAdminService.getOrderById(req.params.id);
+      ResponseUtil.success(res, { order }, 'Marketplace order detail retrieved');
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      if (msg === 'Order not found') { ResponseUtil.notFound(res, 'Order'); return; }
+      logger.error('getOrderById error', { error: msg });
+      ResponseUtil.serverError(res, msg);
+    }
+  };
+
   setStoreStatus = async (req: Request, res: Response): Promise<void> => {
     try {
       const { is_active } = req.body;
