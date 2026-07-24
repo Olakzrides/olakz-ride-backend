@@ -22,6 +22,7 @@ export class SocketService {
   private connectedUsers: Map<string, SocketUser> = new Map(); // userId -> SocketUser
   private driverSockets: Map<string, string> = new Map(); // driverId -> socketId
   private customerSockets: Map<string, string> = new Map(); // userId -> socketId
+  private adminSockets: Map<string, string> = new Map(); // userId -> socketId
 
   constructor(server: HTTPServer) {
     this.io = new SocketIOServer(server, {
@@ -126,6 +127,8 @@ export class SocketService {
       this.driverSockets.set(driverId, socket.id);
     } else if (userType === 'customer') {
       this.customerSockets.set(userId, socket.id);
+    } else if (userType === 'admin') {
+      this.adminSockets.set(userId, socket.id);
     }
 
     // Save connection to database
@@ -138,6 +141,9 @@ export class SocketService {
       socket.join(`driver:${driverId}`);
       // Update driver online status
       await this.updateDriverOnlineStatus(driverId, true);
+    } else if (userType === 'admin') {
+      // All admins join a shared room for broadcast-style admin events
+      socket.join('admins');
     }
 
     logger.info(`User connected: ${userId} (${userType}) - Socket: ${socket.id}`);
@@ -200,6 +206,80 @@ export class SocketService {
         this.updateDriverLastSeen(socket.driverId);
       }
     });
+
+    // ── Admin watch/unwatch events ──────────────────────────────────────────
+    // Admin subscribes to live updates for a specific ride/delivery/hire
+    if (socket.userType === 'admin') {
+      socket.on('admin:watch:ride', ({ rideId }: { rideId: string }) => {
+        if (rideId) {
+          socket.join(`ride:admin:${rideId}`);
+          logger.info(`Admin ${socket.userId} watching ride ${rideId}`);
+        }
+      });
+
+      socket.on('admin:unwatch:ride', ({ rideId }: { rideId: string }) => {
+        if (rideId) {
+          socket.leave(`ride:admin:${rideId}`);
+          logger.info(`Admin ${socket.userId} stopped watching ride ${rideId}`);
+        }
+      });
+
+      socket.on('admin:watch:delivery', ({ deliveryId }: { deliveryId: string }) => {
+        if (deliveryId) {
+          socket.join(`delivery:admin:${deliveryId}`);
+          logger.info(`Admin ${socket.userId} watching delivery ${deliveryId}`);
+        }
+      });
+
+      socket.on('admin:unwatch:delivery', ({ deliveryId }: { deliveryId: string }) => {
+        if (deliveryId) {
+          socket.leave(`delivery:admin:${deliveryId}`);
+          logger.info(`Admin ${socket.userId} stopped watching delivery ${deliveryId}`);
+        }
+      });
+
+      socket.on('admin:watch:hire', ({ hireId }: { hireId: string }) => {
+        if (hireId) {
+          socket.join(`hire:admin:${hireId}`);
+          logger.info(`Admin ${socket.userId} watching hire ${hireId}`);
+        }
+      });
+
+      socket.on('admin:unwatch:hire', ({ hireId }: { hireId: string }) => {
+        if (hireId) {
+          socket.leave(`hire:admin:${hireId}`);
+          logger.info(`Admin ${socket.userId} stopped watching hire ${hireId}`);
+        }
+      });
+
+      socket.on('admin:watch:food', ({ orderId }: { orderId: string }) => {
+        if (orderId) {
+          socket.join(`food:admin:${orderId}`);
+          logger.info(`Admin ${socket.userId} watching food order ${orderId}`);
+        }
+      });
+
+      socket.on('admin:unwatch:food', ({ orderId }: { orderId: string }) => {
+        if (orderId) {
+          socket.leave(`food:admin:${orderId}`);
+          logger.info(`Admin ${socket.userId} stopped watching food order ${orderId}`);
+        }
+      });
+
+      socket.on('admin:watch:marketplace', ({ orderId }: { orderId: string }) => {
+        if (orderId) {
+          socket.join(`marketplace:admin:${orderId}`);
+          logger.info(`Admin ${socket.userId} watching marketplace order ${orderId}`);
+        }
+      });
+
+      socket.on('admin:unwatch:marketplace', ({ orderId }: { orderId: string }) => {
+        if (orderId) {
+          socket.leave(`marketplace:admin:${orderId}`);
+          logger.info(`Admin ${socket.userId} stopped watching marketplace order ${orderId}`);
+        }
+      });
+    }
   }
 
   /**
@@ -418,6 +498,8 @@ export class SocketService {
       await this.updateDriverOnlineStatus(driverId, false);
     } else if (userType === 'customer') {
       this.customerSockets.delete(userId);
+    } else if (userType === 'admin') {
+      this.adminSockets.delete(userId);
     }
 
     // Update database connection status
@@ -530,7 +612,7 @@ export class SocketService {
   }
 
   /**
-   * Broadcast ride status update to relevant users
+   * Broadcast ride status update to relevant users + any watching admins
    */
   private async broadcastRideStatusUpdate(rideId: string, statusData: any): Promise<void> {
     // Get ride details to find customer and driver
@@ -542,25 +624,24 @@ export class SocketService {
 
     if (!ride) return;
 
+    const payload = { rideId, ...statusData };
+
     // Send to customer
     const customerSocketId = this.customerSockets.get(ride.user_id);
     if (customerSocketId) {
-      this.io.to(customerSocketId).emit('ride:status:updated', {
-        rideId,
-        ...statusData,
-      });
+      this.io.to(customerSocketId).emit('ride:status:updated', payload);
     }
 
     // Send to driver
     if (ride.driver_id) {
       const driverSocketId = this.driverSockets.get(ride.driver_id);
       if (driverSocketId) {
-        this.io.to(driverSocketId).emit('ride:status:updated', {
-          rideId,
-          ...statusData,
-        });
+        this.io.to(driverSocketId).emit('ride:status:updated', payload);
       }
     }
+
+    // Send to any admin watching this ride
+    this.io.to(`ride:admin:${rideId}`).emit('ride:status:updated', payload);
   }
 
   /**
@@ -677,7 +758,7 @@ export class SocketService {
   }
 
   /**
-   * Broadcast delivery status update to relevant users
+   * Broadcast delivery status update to relevant users + any watching admins
    */
   async broadcastDeliveryStatusUpdate(deliveryId: string, statusData: any): Promise<void> {
     // Get delivery details to find customer and courier
@@ -689,29 +770,28 @@ export class SocketService {
 
     if (!delivery) return;
 
+    const payload = { deliveryId, ...statusData };
+
     // Send to customer
     const customerSocketId = this.customerSockets.get(delivery.customer_id);
     if (customerSocketId) {
-      this.io.to(customerSocketId).emit('delivery:status:updated', {
-        deliveryId,
-        ...statusData,
-      });
+      this.io.to(customerSocketId).emit('delivery:status:updated', payload);
     }
 
     // Send to courier
     if (delivery.courier_id) {
       const courierSocketId = this.driverSockets.get(delivery.courier_id);
       if (courierSocketId) {
-        this.io.to(courierSocketId).emit('delivery:status:updated', {
-          deliveryId,
-          ...statusData,
-        });
+        this.io.to(courierSocketId).emit('delivery:status:updated', payload);
       }
     }
+
+    // Send to any admin watching this delivery
+    this.io.to(`delivery:admin:${deliveryId}`).emit('delivery:status:updated', payload);
   }
 
   /**
-   * Broadcast driver location to customers
+   * Broadcast driver location to customers on active rides + watching admins
    */
   private async broadcastDriverLocationToCustomers(driverId: string, locationData: any): Promise<void> {
     // Get active rides for this driver
@@ -721,19 +801,64 @@ export class SocketService {
       .eq('driver_id', driverId)
       .in('status', ['driver_assigned', 'driver_arriving', 'driver_arrived', 'in_progress']);
 
-    if (!rides || rides.length === 0) return;
+    if (rides && rides.length > 0) {
+      rides.forEach(ride => {
+        const payload = { rideId: ride.id, driverId, ...locationData };
 
-    // Send location to customers of active rides
-    rides.forEach(ride => {
-      const customerSocketId = this.customerSockets.get(ride.user_id);
-      if (customerSocketId) {
-        this.io.to(customerSocketId).emit('driver:location:updated', {
-          rideId: ride.id,
-          driverId,
-          ...locationData,
-        });
-      }
-    });
+        // Customer
+        const customerSocketId = this.customerSockets.get(ride.user_id);
+        if (customerSocketId) {
+          this.io.to(customerSocketId).emit('driver:location:updated', payload);
+        }
+
+        // Admin watching this ride
+        this.io.to(`ride:admin:${ride.id}`).emit('driver:location:updated', payload);
+      });
+    }
+
+    // Also check active deliveries for this driver (courier)
+    const { data: deliveries } = await supabase
+      .from('deliveries')
+      .select('id, customer_id')
+      .eq('courier_id', driverId)
+      .in('status', ['assigned', 'courier_enroute_pickup', 'arrived_pickup', 'picked_up', 'enroute_delivery', 'arrived_delivery']);
+
+    if (deliveries && deliveries.length > 0) {
+      deliveries.forEach(delivery => {
+        const payload = { deliveryId: delivery.id, driverId, ...locationData };
+
+        // Customer
+        const customerSocketId = this.customerSockets.get(delivery.customer_id);
+        if (customerSocketId) {
+          this.io.to(customerSocketId).emit('driver:location:updated', payload);
+        }
+
+        // Admin watching this delivery
+        this.io.to(`delivery:admin:${delivery.id}`).emit('driver:location:updated', payload);
+      });
+    }
+
+    // Also check active hires for this driver
+    const { data: hires } = await supabase
+      .from('transport_hires')
+      .select('id, customer_id')
+      .eq('driver_id', driverId)
+      .in('status', ['driver_assigned', 'driver_arrived', 'in_progress']);
+
+    if (hires && hires.length > 0) {
+      hires.forEach(hire => {
+        const payload = { hireId: hire.id, driverId, ...locationData };
+
+        // Customer
+        const customerSocketId = this.customerSockets.get(hire.customer_id);
+        if (customerSocketId) {
+          this.io.to(customerSocketId).emit('driver:location:updated', payload);
+        }
+
+        // Admin watching this hire
+        this.io.to(`hire:admin:${hire.id}`).emit('driver:location:updated', payload);
+      });
+    }
   }
 
   /**
@@ -1292,9 +1417,7 @@ logger.info('Customer socket emit debug', {
   }
 
   /**
-   * Broadcast hire status update to both customer and driver.
-   * Called whenever hire status changes (confirmed, in_progress, completed, etc.)
-   * Emits hire:status:updated to both parties.
+   * Broadcast hire status update to both customer and driver + watching admins.
    */
   async broadcastHireStatusUpdate(hireId: string, statusData: {
     status: string;
@@ -1328,6 +1451,9 @@ logger.info('Customer socket emit debug', {
         this.io.to(`driver:${hire.driver_id}`).emit('hire:status:updated', payload);
       }
     }
+
+    // Notify any admin watching this hire
+    this.io.to(`hire:admin:${hireId}`).emit('hire:status:updated', payload);
 
     logger.info(`hire:status:updated broadcasted for hire ${hireId} → ${statusData.status}`);
   }
@@ -1423,5 +1549,23 @@ logger.info('Customer socket emit debug', {
   }): Promise<void> {
     await this.emitToCustomer(customerId, 'support:dispute:status_changed', payload);
     logger.info(`support:dispute:status_changed emitted to customer ${customerId}, status=${payload.status}`);
+  }
+
+  /**
+   * Emit any event to all admins currently watching a specific food order.
+   * Called by the internal HTTP endpoint (food-service → core-logistics → admin socket).
+   */
+  emitToFoodAdminRoom(orderId: string, event: string, data: any): void {
+    this.io.to(`food:admin:${orderId}`).emit(event, data);
+    logger.debug(`${event} emitted to food:admin:${orderId}`);
+  }
+
+  /**
+   * Emit any event to all admins currently watching a specific marketplace order.
+   * Called by the internal HTTP endpoint (marketplace-service → core-logistics → admin socket).
+   */
+  emitToMarketplaceAdminRoom(orderId: string, event: string, data: any): void {
+    this.io.to(`marketplace:admin:${orderId}`).emit(event, data);
+    logger.debug(`${event} emitted to marketplace:admin:${orderId}`);
   }
 }

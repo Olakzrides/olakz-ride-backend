@@ -6,6 +6,8 @@ import config from './config';
 import logger from './utils/logger';
 import ResponseUtil from './utils/response';
 import { AppError } from './utils/errors';
+import { internalApiAuth } from './middleware/internal-api.middleware';
+import securityService from './services/security.service';
 
 // Routes
 import authRoutes from './routes/auth.routes';
@@ -48,6 +50,70 @@ app.get('/health', (_req: Request, res: Response) => {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
   });
+});
+
+// ── Internal service-to-service PIN verify ───────────────────────────────────
+// Called by payment-service and platform-service before executing PIN-gated transactions.
+// Secured with x-internal-api-key header.
+// POST /api/internal/pin/verify  Body: { user_id, pin }
+app.post('/api/internal/pin/verify', internalApiAuth, async (req: Request, res: Response) => {
+  try {
+    const { user_id, pin } = req.body;
+
+    if (!user_id || !pin) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'MISSING_FIELDS', message: 'user_id and pin are required' },
+      });
+    }
+
+    // Verify PIN is exactly 4 numeric digits
+    if (!/^\d{4}$/.test(String(pin))) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PIN_FORMAT', message: 'PIN must be exactly 4 digits' },
+      });
+    }
+
+    let result: { valid: boolean };
+    try {
+      result = await securityService.verifyWalletPin(user_id, String(pin));
+    } catch (err: any) {
+      // wallet_pin_enabled = false → user has no PIN
+      if (
+        err.message?.includes('not set') ||
+        err.message?.includes('PIN is not set')
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: { code: 'PIN_NOT_SET', message: 'Transaction PIN has not been set up yet' },
+        });
+      }
+      // PIN locked
+      if (err.message?.includes('locked')) {
+        return res.status(423).json({
+          success: false,
+          error: { code: 'PIN_LOCKED', message: err.message },
+        });
+      }
+      throw err;
+    }
+
+    if (!result.valid) {
+      return res.status(401).json({
+        success: false,
+        error: { code: 'INVALID_PIN', message: 'Incorrect PIN. Please try again.' },
+      });
+    }
+
+    return res.json({ success: true, valid: true });
+  } catch (err: any) {
+    logger.error('Internal pin/verify error', { error: err.message });
+    return res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'PIN verification failed' },
+    });
+  }
 });
 
 // Root endpoint

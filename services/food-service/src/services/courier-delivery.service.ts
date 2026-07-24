@@ -5,6 +5,48 @@ import { FoodStorageUtil } from '../utils/storage';
 import { WalletService } from './wallet.service';
 import { OrderService } from './order.service';
 import logger from '../utils/logger';
+import axios from 'axios';
+import config from '../config';
+
+// ── Internal helper — notify core-logistics socket to relay events to admin ──
+const CORE_LOGISTICS_URL = config.services.coreLogistics;
+const INTERNAL_HEADERS = {
+  'x-internal-api-key': config.internalApiKey,
+  'Content-Type': 'application/json',
+};
+
+async function notifyAdminCodeVerified(
+  orderId: string,
+  codeType: 'pickup' | 'delivery',
+  newStatus: string
+): Promise<void> {
+  try {
+    await axios.post(
+      `${CORE_LOGISTICS_URL}/api/internal/food/emit/code-verified`,
+      { order_id: orderId, code_type: codeType, verified_at: new Date().toISOString(), new_status: newStatus },
+      { headers: INTERNAL_HEADERS, timeout: 3000 }
+    );
+  } catch (err: any) {
+    // Non-fatal — admin will see it on next refresh if socket fails
+    logger.warn(`notifyAdminCodeVerified failed for order ${orderId}:`, err.message);
+  }
+}
+
+async function notifyAdminStatusUpdated(
+  orderId: string,
+  status: string,
+  message?: string
+): Promise<void> {
+  try {
+    await axios.post(
+      `${CORE_LOGISTICS_URL}/api/internal/food/emit/status-updated`,
+      { order_id: orderId, status, message, updated_at: new Date().toISOString() },
+      { headers: INTERNAL_HEADERS, timeout: 3000 }
+    );
+  } catch (err: any) {
+    logger.warn(`notifyAdminStatusUpdated failed for order ${orderId}:`, err.message);
+  }
+}
 
 /**
  * CourierDeliveryService — Phase 3
@@ -68,6 +110,9 @@ export class CourierDeliveryService {
       });
     }
 
+    // Notify admin
+    await notifyAdminStatusUpdated(orderId, 'arrived_vendor', 'Courier has arrived at the restaurant');
+
     logger.info('Courier arrived at vendor', { orderId, driverId });
   }
 
@@ -101,6 +146,9 @@ export class CourierDeliveryService {
       .from('food_vendor_pickups')
       .update({ status: 'picked_up', picked_up_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq('order_id', orderId);
+
+    // Notify admin watching this order in real-time
+    await notifyAdminCodeVerified(orderId, 'pickup', 'picked_up');
 
     logger.info('Pickup code verified', { orderId, driverId });
   }
@@ -150,9 +198,11 @@ export class CourierDeliveryService {
         order_id: orderId,
         status: 'picked_up',
       });
-      // Emit to vendor-pickups namespace
       socketSvc.emitToPickupRoom(orderId, 'vendor_pickup:package_picked_up', { order_id: orderId });
     }
+
+    // Notify admin
+    await notifyAdminStatusUpdated(orderId, 'picked_up', 'Courier has picked up the order');
 
     await FoodNotificationService.send({
       userId: order.customer_id,
@@ -181,6 +231,9 @@ export class CourierDeliveryService {
       message: 'Courier has arrived at your location — please share your delivery code',
     });
 
+    // Notify admin
+    await notifyAdminStatusUpdated(orderId, 'courier_at_door', 'Courier arrived at delivery address, awaiting code');
+
     await FoodNotificationService.send({
       userId: order.customer_id,
       title: '📍 Courier Arrived',
@@ -206,7 +259,6 @@ export class CourierDeliveryService {
     }
 
     // Mark delivery code as verified by transitioning to arrived_delivery
-    // (ensures markDelivered can only be called after this step)
     if (order.status === 'picked_up') {
       await supabase
         .from('food_orders')
@@ -214,6 +266,9 @@ export class CourierDeliveryService {
         .eq('id', orderId);
       await OrderService.recordStatusChange(orderId, 'arrived_delivery', order.status, driverId, 'courier', 'delivery code verified');
     }
+
+    // Notify admin watching this order in real-time
+    await notifyAdminCodeVerified(orderId, 'delivery', 'arrived_delivery');
 
     logger.info('Delivery code verified', { orderId, driverId });
   }
@@ -277,6 +332,9 @@ export class CourierDeliveryService {
         status: 'delivered',
       });
     }
+
+    // Notify admin
+    await notifyAdminStatusUpdated(orderId, 'delivered', 'Order delivered successfully');
 
     await FoodNotificationService.notifyCustomerOrderDelivered(order.customer_id, orderId);
 

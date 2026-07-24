@@ -22,9 +22,14 @@ export class FoodAdminService {
     let query = supabase
       .from('food_orders')
       .select(`
-        *,
+        id, customer_id, courier_id, restaurant_id, status,
+        payment_method, payment_status,
+        subtotal, delivery_fee, service_fee, total_amount,
+        pickup_code, delivery_code,
+        ready_at, picked_up_at, delivered_at, cancelled_at,
+        created_at, updated_at,
         restaurant:food_restaurants(id, name),
-        orderItems:food_order_items(*)
+        orderItems:food_order_items(id, item_name, item_price, quantity)
       `, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -37,7 +42,132 @@ export class FoodAdminService {
     const { data: orders, count, error } = await query;
     if (error) throw new Error(`Failed to get orders: ${error.message}`);
 
-    return { orders: orders || [], total: count || 0, page, limit };
+    const rows = orders ?? [];
+
+    // Batch fetch customer names
+    const customerIds = [...new Set(rows.map((o: any) => o.customer_id).filter(Boolean))];
+    const customerMap = new Map<string, { name: string; phone: string | null }>();
+    if (customerIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, phone')
+        .in('id', customerIds);
+      for (const u of users ?? []) {
+        customerMap.set(u.id, {
+          name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Unknown',
+          phone: u.phone ?? null,
+        });
+      }
+    }
+
+    // Batch fetch courier names
+    const courierIds = [...new Set(rows.map((o: any) => o.courier_id).filter(Boolean))];
+    const courierMap = new Map<string, { name: string; phone: string | null }>();
+    if (courierIds.length > 0) {
+      const { data: drivers } = await supabase
+        .from('drivers')
+        .select('id, user_id')
+        .in('id', courierIds);
+
+      const driverUserMap = new Map<string, string>();
+      for (const d of drivers ?? []) driverUserMap.set(d.id, d.user_id);
+
+      const courierUserIds = [...new Set([...driverUserMap.values()])];
+      if (courierUserIds.length > 0) {
+        const { data: courierUsers } = await supabase
+          .from('users')
+          .select('id, first_name, last_name, phone')
+          .in('id', courierUserIds);
+
+        const userDetailMap = new Map<string, { name: string; phone: string | null }>();
+        for (const u of courierUsers ?? []) {
+          userDetailMap.set(u.id, {
+            name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Unknown',
+            phone: u.phone ?? null,
+          });
+        }
+        for (const [driverId, userId] of driverUserMap.entries()) {
+          const details = userDetailMap.get(userId);
+          if (details) courierMap.set(driverId, details);
+        }
+      }
+    }
+
+    // Enrich each row
+    const enriched = rows.map((o: any, idx: number) => {
+      const customer = customerMap.get(o.customer_id);
+      const courier  = o.courier_id ? courierMap.get(o.courier_id) : null;
+
+      return {
+        sn:     offset + idx + 1,
+        id:     o.id,
+        status: o.status,
+        customer: {
+          id:    o.customer_id,
+          name:  customer?.name  ?? 'Unknown',
+          phone: customer?.phone ?? null,
+        },
+        courier: o.courier_id ? {
+          id:    o.courier_id,
+          name:  courier?.name  ?? 'Unknown',
+          phone: courier?.phone ?? null,
+        } : null,
+        restaurant: o.restaurant,
+        orderItems: o.orderItems ?? [],
+        amount: {
+          subtotal:      parseFloat(o.subtotal ?? 0),
+          deliveryFee:   parseFloat(o.delivery_fee ?? 0),
+          serviceFee:    parseFloat(o.service_fee ?? 0),
+          total:         parseFloat(o.total_amount ?? 0),
+          paymentMethod: o.payment_method,
+          paymentStatus: o.payment_status,
+          display:       `₦${parseFloat(o.total_amount ?? 0).toLocaleString('en-NG')} · ${o.payment_method}`,
+        },
+        codes: {
+          pickup_code:          o.pickup_code ?? null,
+          pickup_code_status:   o.ready_at
+            ? (o.picked_up_at  ? 'verified' : 'pending')
+            : 'not_generated',
+          delivery_code:        o.delivery_code ?? null,
+          delivery_code_status: o.delivery_code
+            ? (o.delivered_at ? 'verified' : 'pending')
+            : 'not_generated',
+        },
+        deliveredAt: o.delivered_at ?? null,
+        cancelledAt: o.cancelled_at ?? null,
+        createdAt:   o.created_at,
+      };
+    });
+
+    return { orders: enriched, total: count || 0, page, limit };
+  }
+
+  static async getStatusCounts(filters: { restaurant_id?: string; from?: string; to?: string } = {}) {
+    let query = supabase
+      .from('food_orders')
+      .select('status');
+
+    if (filters.restaurant_id) query = query.eq('restaurant_id', filters.restaurant_id);
+    if (filters.from) query = query.gte('created_at', filters.from);
+    if (filters.to) query = query.lte('created_at', filters.to);
+
+    const { data, error } = await query;
+    if (error) throw new Error(`Failed to get status counts: ${error.message}`);
+
+    const rows = data ?? [];
+    const counts = { all: rows.length, pending: 0, preparing: 0, picked_up: 0, delivered: 0, cancelled: 0 };
+
+    for (const row of rows) {
+      const s = (row as any).status as string;
+      if (s === 'pending')                                   counts.pending++;
+      else if (['accepted', 'preparing', 'ready_for_pickup',
+                'arrived_vendor'].includes(s))               counts.preparing++;
+      else if (['picked_up', 'arrived_delivery', 'courier_at_door'].includes(s)) counts.picked_up++;
+      else if (s === 'delivered')                            counts.delivered++;
+      else if (s === 'cancelled' || s === 'rejected')        counts.cancelled++;
+    }
+
+    return counts;
   }
 
   static async updateOrderStatus(orderId: string, status: string, adminId: string) {
@@ -220,6 +350,170 @@ export class FoodAdminService {
         .filter((o: Record<string, unknown>) => o.payment_status === 'paid')
         .reduce((s: number, o: Record<string, unknown>) => s + Number(o.total_amount), 0),
       by_date: Object.entries(byDate).map(([date, data]) => ({ date, ...data })),
+    };
+  }
+
+  // ─── Food Order Detail ────────────────────────────────────────────────────────
+
+  static async getOrderById(orderId: string) {
+    // Full order row
+    const { data: order, error } = await supabase
+      .from('food_orders')
+      .select(`
+        id, customer_id, courier_id, restaurant_id, status,
+        payment_method, payment_status,
+        subtotal, delivery_fee, service_fee, rounding_fee, total_amount,
+        pickup_code, delivery_code,
+        delivery_address,
+        special_instructions,
+        estimated_prep_time_minutes, estimated_delivery_time_minutes,
+        accepted_at, preparing_at, ready_at, picked_up_at,
+        arrived_vendor_at, arrived_delivery_at, delivered_at, cancelled_at,
+        pickup_photo_url, delivery_photo_url,
+        rejection_reason, cancellation_reason, cancelled_by,
+        created_at, updated_at
+      `)
+      .eq('id', orderId)
+      .single();
+
+    if (error || !order) throw new Error('Order not found');
+
+    // Order items
+    const { data: items } = await supabase
+      .from('food_order_items')
+      .select('id, item_id, item_name, item_price, quantity, selected_extras')
+      .eq('order_id', orderId);
+
+    // Restaurant info
+    const { data: restaurant } = await supabase
+      .from('food_restaurants')
+      .select('id, name, address, phone, city, state, logo_url')
+      .eq('id', order.restaurant_id)
+      .single();
+
+    // Customer info
+    const { data: customer } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email, phone, avatar_url')
+      .eq('id', order.customer_id)
+      .single();
+
+    // Courier info
+    let courierInfo: any = null;
+    if (order.courier_id) {
+      const { data: courier } = await supabase
+        .from('drivers')
+        .select(`
+          id, user_id, rating, total_deliveries,
+          vehicles:driver_vehicles(plate_number, manufacturer, model, color, is_active)
+        `)
+        .eq('id', order.courier_id)
+        .single();
+
+      if (courier) {
+        const { data: courierUser } = await supabase
+          .from('users')
+          .select('first_name, last_name, email, phone, avatar_url')
+          .eq('id', courier.user_id)
+          .single();
+
+        const vehicles = (courier.vehicles as any[]) ?? [];
+        const activeVehicle = vehicles.find((v: any) => v.is_active) ?? vehicles[0] ?? null;
+
+        courierInfo = {
+          id:     courier.id,
+          userId: courier.user_id,
+          name:   courierUser ? `${courierUser.first_name ?? ''} ${courierUser.last_name ?? ''}`.trim() : 'Unknown',
+          phone:  courierUser?.phone ?? null,
+          avatar: courierUser?.avatar_url ?? null,
+          rating: parseFloat(String(courier.rating)) || 0,
+          totalDeliveries: courier.total_deliveries ?? 0,
+          vehicle: activeVehicle ? {
+            plateNumber:  activeVehicle.plate_number,
+            manufacturer: activeVehicle.manufacturer,
+            model:        activeVehicle.model,
+            color:        activeVehicle.color,
+          } : null,
+        };
+      }
+    }
+
+    // Status timeline from history table
+    const { data: statusHistory } = await supabase
+      .from('food_order_status_history')
+      .select('id, status, previous_status, changed_by_role, notes, created_at')
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: true });
+
+    // Build codes section
+    const codes = {
+      pickup_code:          order.pickup_code ?? null,
+      pickup_code_status:   order.ready_at
+        ? (order.picked_up_at ? 'verified' : 'pending')
+        : 'not_generated',
+      delivery_code:        order.delivery_code ?? null,
+      delivery_code_status: order.delivery_code
+        ? (order.delivered_at ? 'verified' : 'pending')
+        : 'not_generated',
+    };
+
+    return {
+      id:          order.id,
+      status:      order.status,
+      paymentMethod:  order.payment_method,
+      paymentStatus:  order.payment_status,
+      amount: {
+        subtotal:    parseFloat(order.subtotal),
+        deliveryFee: parseFloat(order.delivery_fee),
+        serviceFee:  parseFloat(order.service_fee ?? 0),
+        roundingFee: parseFloat(order.rounding_fee ?? 0),
+        total:       parseFloat(order.total_amount),
+      },
+      deliveryAddress:     order.delivery_address,
+      specialInstructions: order.special_instructions ?? null,
+      customer: customer ? {
+        id:     customer.id,
+        name:   `${customer.first_name ?? ''} ${customer.last_name ?? ''}`.trim(),
+        email:  customer.email,
+        phone:  customer.phone,
+        avatar: customer.avatar_url,
+      } : { id: order.customer_id, name: 'Unknown', email: null, phone: null, avatar: null },
+      restaurant: restaurant ? {
+        id:      restaurant.id,
+        name:    restaurant.name,
+        address: restaurant.address,
+        phone:   restaurant.phone,
+        city:    restaurant.city,
+        state:   restaurant.state,
+        logo:    restaurant.logo_url,
+      } : { id: order.restaurant_id, name: 'Unknown' },
+      courier:     courierInfo,
+      items:       items ?? [],
+      codes,
+      proofOfDelivery: {
+        pickupPhotoUrl:   order.pickup_photo_url ?? null,
+        deliveryPhotoUrl: order.delivery_photo_url ?? null,
+      },
+      timeline: (statusHistory ?? []).map((h: any) => ({
+        id:             h.id,
+        status:         h.status,
+        previousStatus: h.previous_status,
+        changedByRole:  h.changed_by_role,
+        notes:          h.notes,
+        createdAt:      h.created_at,
+      })),
+      estimatedPrepMinutes:     order.estimated_prep_time_minutes ?? null,
+      estimatedDeliveryMinutes: order.estimated_delivery_time_minutes ?? null,
+      acceptedAt:      order.accepted_at ?? null,
+      preparingAt:     order.preparing_at ?? null,
+      readyAt:         order.ready_at ?? null,
+      arrivedVendorAt: order.arrived_vendor_at ?? null,
+      pickedUpAt:      order.picked_up_at ?? null,
+      arrivedDeliveryAt: order.arrived_delivery_at ?? null,
+      deliveredAt:     order.delivered_at ?? null,
+      cancelledAt:     order.cancelled_at ?? null,
+      cancellationReason: order.cancellation_reason ?? null,
+      createdAt:       order.created_at,
     };
   }
 }
