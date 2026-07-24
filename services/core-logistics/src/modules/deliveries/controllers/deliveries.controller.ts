@@ -1058,6 +1058,31 @@ export class DeliveriesController {
         .eq('status', 'pending')
         .neq('courier_id', driver.id);
 
+      // Notify all other couriers who had pending requests that this delivery was taken
+      try {
+        const { data: otherRequests } = await supabase
+          .from('delivery_requests')
+          .select('courier_id')
+          .eq('delivery_id', id)
+          .neq('courier_id', driver.id);
+
+        if (otherRequests && otherRequests.length > 0) {
+          const { socketService } = await import('../../../index');
+          if (socketService) {
+            for (const req of otherRequests) {
+              socketService.emitToDriver(req.courier_id, 'delivery:request:taken', {
+                deliveryId: id,
+                reason: 'accepted_by_another_courier',
+              });
+            }
+            logger.info(`Notified ${otherRequests.length} couriers that delivery ${id} was taken`);
+          }
+        }
+      } catch (notifyErr) {
+        // Non-fatal — delivery is still assigned
+        logger.error('Error notifying other couriers of delivery acceptance:', notifyErr);
+      }
+
       // Add status history entry
       await supabase.from('delivery_status_history').insert({
         delivery_id: id,
