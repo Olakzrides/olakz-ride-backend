@@ -53,11 +53,11 @@ export interface CreateSubAdminInput {
   first_name: string;
   last_name:  string;
   email:      string;
-  phone:      string;
+  phone?:     string;  // optional — removed from Create Admin form
   role:       'admin' | 'super_admin';
   status:     'pending' | 'active';
   password:   string;
-  created_by: string; // super admin's userId
+  created_by: string;
 }
 
 export interface ListAdminsFilters {
@@ -106,10 +106,7 @@ export class SubAdminService {
     const { first_name, last_name, email, phone, role, status, password, created_by } = input;
 
     // ── Validate ──────────────────────────────────────────────────────────────
-    if (!first_name?.trim()) throw new Error('first_name is required');
-    if (!last_name?.trim())  throw new Error('last_name is required');
     if (!email?.trim())      throw new Error('email is required');
-    if (!phone?.trim())      throw new Error('phone is required');
     if (!password?.trim())   throw new Error('password is required');
     if (password.length < 8) throw new Error('password must be at least 8 characters');
 
@@ -119,54 +116,99 @@ export class SubAdminService {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const normalizedPhone = phone.trim();
+    const now             = new Date().toISOString();
+    const passwordHash    = await bcrypt.hash(password, 12);
 
-    // ── Check email not already taken ─────────────────────────────────────────
+    // ── Check if email already exists ─────────────────────────────────────────
     const { data: existing } = await supabase
       .from('users')
-      .select('id, email, status, roles')
+      .select('id, email, status, roles, first_name, last_name')
       .eq('email', normalizedEmail)
       .maybeSingle();
 
+    // ── SCENARIO 2: Existing user — promote to admin ──────────────────────────
+    // If a user with this email already exists (and is not terminated),
+    // add the admin role to their account and update their password.
+    // Phone is NOT required — we keep whatever they already have.
     if (existing) {
       const ex = existing as Record<string, unknown>;
-      // If the existing account is terminated (soft-deleted), we can recycle it
-      // by updating in place rather than blocking with EMAIL_ALREADY_EXISTS.
-      if ((ex.status as string) !== 'terminated') {
-        throw new Error('EMAIL_ALREADY_EXISTS');
+      const exStatus = ex.status as string;
+
+      // If terminated, fall through to recycle logic below
+      if (exStatus !== 'terminated') {
+        const currentRoles = (ex.roles as string[]) ?? [];
+
+        // Check they don't already have this admin role
+        if (currentRoles.includes(role)) {
+          throw new Error(`USER_ALREADY_${role.toUpperCase()}`);
+        }
+
+        // Add the admin role to their existing roles
+        const newRoles = [...new Set([...currentRoles, role])];
+
+        const { data: promoted, error: promoteError } = await supabase
+          .from('users')
+          .update({
+            roles:               newRoles,
+            active_role:         role,
+            role:                role,
+            admin_password_hash: passwordHash, // admin dashboard password — password_hash untouched
+            status:              status === 'pending' ? 'pending' : 'active',
+            email_verified:      status !== 'pending',
+            updated_at:          now,
+          })
+          .eq('email', normalizedEmail)
+          .select('id, first_name, last_name, email, phone, roles, active_role, status, email_verified, created_at')
+          .single();
+
+        if (promoteError || !promoted) {
+          throw new Error(`Failed to promote user to admin: ${promoteError?.message}`);
+        }
+
+        logger.info('Existing user promoted to admin by super admin', {
+          userId:    (promoted as Record<string, unknown>).id,
+          email:     normalizedEmail,
+          role,
+          createdBy: created_by,
+        });
+
+        // Send notification email
+        const p = promoted as Record<string, unknown>;
+        const fn = (p.first_name as string | undefined) ?? first_name?.trim() ?? 'Admin';
+        if (status === 'pending') {
+          adminEmailService.sendPendingAccountEmail({
+            to: normalizedEmail, firstName: fn, role, email: normalizedEmail, password,
+          }).catch(err => logger.warn('Failed to send pending email (non-fatal)', { error: err?.message }));
+        } else {
+          adminEmailService.sendApprovalEmail({
+            to: normalizedEmail, firstName: fn, role, email: normalizedEmail, password,
+          }).catch(err => logger.warn('Failed to send approval email (non-fatal)', { error: err?.message }));
+        }
+
+        return promoted as unknown as {
+          id: string; first_name: string; last_name: string; email: string;
+          phone: string; roles: string[]; active_role: string;
+          status: string; email_verified: boolean; created_at: string;
+          promoted: boolean;
+        };
       }
-      // Fall through — will be handled as a reactivation below
     }
 
-    // ── Check phone not already taken ─────────────────────────────────────────
-    const { data: existingPhone } = await supabase
-      .from('users')
-      .select('id, phone, status')
-      .eq('phone', normalizedPhone)
-      .maybeSingle();
-
-    if (existingPhone) {
-      const ep = existingPhone as Record<string, unknown>;
-      if ((ep.status as string) !== 'terminated') {
-        throw new Error('PHONE_ALREADY_EXISTS');
-      }
+    // ── SCENARIO 1: New user or recycling a terminated account ───────────────
+    // For a brand new admin account, first_name and last_name are required.
+    if (!existing || (existing as Record<string, unknown>).status === 'terminated') {
+      if (!first_name?.trim()) throw new Error('first_name is required for new admin accounts');
+      if (!last_name?.trim())  throw new Error('last_name is required for new admin accounts');
     }
 
-    // ── Hash password ─────────────────────────────────────────────────────────
-    const passwordHash = await bcrypt.hash(password, 12);
-    const now          = new Date().toISOString();
-
-    // ── Reactivate terminated account OR create fresh ─────────────────────────
-    let newAdmin: Record<string, unknown>;
-
+    // If terminated account with same email, recycle it
     if (existing && (existing as Record<string, unknown>).status === 'terminated') {
-      // Recycle the existing row — update it with the new details
       const { data: recycled, error: recycleError } = await supabase
         .from('users')
         .update({
           first_name:     first_name.trim(),
           last_name:      last_name.trim(),
-          phone:          normalizedPhone,
+          ...(phone ? { phone: phone.trim() } : {}),
           password_hash:  passwordHash,
           roles:          [role],
           active_role:    role,
@@ -180,87 +222,64 @@ export class SubAdminService {
         .single();
 
       if (recycleError || !recycled) {
-        logger.error('SubAdminService.create recycle error', { error: recycleError?.message });
         throw new Error(`Failed to recreate admin account: ${recycleError?.message}`);
       }
 
-      // Clear any old revocation record so the recycled account is not blocked
       await supabase
         .from('admin_token_revocations')
         .delete()
         .eq('user_id', (recycled as Record<string, unknown>).id);
 
-      newAdmin = recycled as Record<string, unknown>;
-      logger.info('Terminated sub-admin account recycled by super admin', {
-        adminId:   newAdmin.id,
-        email:     normalizedEmail,
-        role,
-        createdBy: created_by,
-      });
-    } else {
-      // Fresh insert
-      const { data: inserted, error: insertError } = await supabase
-        .from('users')
-        .insert({
-          first_name:     first_name.trim(),
-          last_name:      last_name.trim(),
-          email:          normalizedEmail,
-          phone:          normalizedPhone,
-          password_hash:  passwordHash,
-          roles:          [role],
-          active_role:    role,
-          role:           role,
-          status:         status === 'pending' ? 'pending' : 'active',
-          email_verified: status !== 'pending',
-          provider:       'emailpass',
-          created_at:     now,
-          updated_at:     now,
-        })
-        .select('id, first_name, last_name, email, phone, roles, active_role, status, email_verified, created_at')
-        .single();
+      const newAdmin = recycled as Record<string, unknown>;
+      logger.info('Terminated admin account recycled', { adminId: newAdmin.id, email: normalizedEmail, role, createdBy: created_by });
 
-      if (insertError || !inserted) {
-        logger.error('SubAdminService.create insert error', { error: insertError?.message });
-        throw new Error(`Failed to create admin account: ${insertError?.message}`);
+      // Send email
+      if (status === 'pending') {
+        adminEmailService.sendPendingAccountEmail({ to: normalizedEmail, firstName: first_name.trim(), role, email: normalizedEmail, password })
+          .catch(err => logger.warn('pending email failed', { error: err?.message }));
+      } else {
+        adminEmailService.sendApprovalEmail({ to: normalizedEmail, firstName: first_name.trim(), role, email: normalizedEmail, password })
+          .catch(err => logger.warn('approval email failed', { error: err?.message }));
       }
 
-      newAdmin = inserted as Record<string, unknown>;
-      logger.info('Sub-admin created by super admin', {
-        newAdminId: newAdmin.id,
-        email:      normalizedEmail,
-        role,
-        createdBy:  created_by,
-      });
+      return newAdmin as unknown as any;
     }
 
-    logger.info('Sub-admin created by super admin', {
-      newAdminId: newAdmin.id,
-      email:      normalizedEmail,
-      role,
-      createdBy:  created_by,
-    });
+    // Fresh insert — brand new account
+    const { data: inserted, error: insertError } = await supabase
+      .from('users')
+      .insert({
+        first_name:     first_name.trim(),
+        last_name:      last_name.trim(),
+        email:          normalizedEmail,
+        ...(phone ? { phone: phone.trim() } : {}),
+        password_hash:  passwordHash,
+        roles:          [role],
+        active_role:    role,
+        role:           role,
+        status:         status === 'pending' ? 'pending' : 'active',
+        email_verified: status !== 'pending',
+        provider:       'emailpass',
+        created_at:     now,
+        updated_at:     now,
+      })
+      .select('id, first_name, last_name, email, phone, roles, active_role, status, email_verified, created_at')
+      .single();
 
-    // ── Send notification email (non-blocking) ────────────────────────────────
+    if (insertError || !inserted) {
+      throw new Error(`Failed to create admin account: ${insertError?.message}`);
+    }
+
+    const newAdmin = inserted as Record<string, unknown>;
+    logger.info('New sub-admin created by super admin', { adminId: newAdmin.id, email: normalizedEmail, role, createdBy: created_by });
+
+    // Send email
     if (status === 'pending') {
-      adminEmailService.sendPendingAccountEmail({
-        to:        normalizedEmail,
-        firstName: first_name.trim(),
-        role,
-        email:     normalizedEmail,
-        password,
-      }).catch(err =>
-        logger.warn('Failed to send pending-account email (non-fatal)', { error: err?.message })
-      );
+      adminEmailService.sendPendingAccountEmail({ to: normalizedEmail, firstName: first_name.trim(), role, email: normalizedEmail, password })
+        .catch(err => logger.warn('pending email failed', { error: err?.message }));
     } else {
-      adminEmailService.sendApprovalEmail({
-        to:        normalizedEmail,
-        firstName: first_name.trim(),
-        role,
-        email:     normalizedEmail,
-        password,
-      }).catch(err =>
-        logger.warn('Failed to send approval email on create (non-fatal)', { error: err?.message })
-      );
+      adminEmailService.sendApprovalEmail({ to: normalizedEmail, firstName: first_name.trim(), role, email: normalizedEmail, password })
+        .catch(err => logger.warn('approval email failed', { error: err?.message }));
     }
 
     return newAdmin as unknown as {
@@ -404,7 +423,7 @@ export class SubAdminService {
 
     const { error: updateError } = await supabase
       .from('users')
-      .update({ password_hash: passwordHash, updated_at: new Date().toISOString() })
+      .update({ admin_password_hash: passwordHash, updated_at: new Date().toISOString() })
       .eq('id', adminId);
 
     if (updateError) throw new Error(`Failed to reset password: ${updateError.message}`);

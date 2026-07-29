@@ -245,6 +245,27 @@ export function createApp(): Application {
   // ── Internal food order emit endpoints (called by food-service) ──────────────
   // POST /api/internal/food/emit/code-verified   → push code verification event to admin
   // POST /api/internal/food/emit/status-updated  → push status change event to admin
+  // POST /api/internal/food/emit/new-order       → push new order event to all admins
+  app.post('/api/internal/food/emit/new-order', internalApiAuth, async (req, res) => {
+    try {
+      const { order_id, restaurant_name, status, created_at } = req.body;
+      if (!order_id) return res.status(400).json({ success: false, message: 'order_id required' });
+
+      const socketService: import('./services/socket.service').SocketService = app.get('socketService');
+      if (socketService) {
+        socketService.emitToAllAdmins('admin:food:new', {
+          orderId:        order_id,
+          restaurantName: restaurant_name ?? null,
+          status:         status ?? 'pending',
+          createdAt:      created_at ?? new Date().toISOString(),
+        });
+      }
+      return res.json({ success: true });
+    } catch (err: any) {
+      logger.error('Internal food/emit/new-order error', { error: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
   app.post('/api/internal/food/emit/code-verified', internalApiAuth, async (req, res) => {
     try {
       const { order_id, code_type, verified_at, new_status } = req.body;
@@ -299,6 +320,27 @@ export function createApp(): Application {
 
   // ── Internal marketplace order emit endpoints (called by marketplace-service) ─
   // POST /api/internal/marketplace/emit/status-updated → push status change to admin
+  // POST /api/internal/marketplace/emit/new-order      → push new order to all admins
+  app.post('/api/internal/marketplace/emit/new-order', internalApiAuth, async (req, res) => {
+    try {
+      const { order_id, store_name, status, created_at } = req.body;
+      if (!order_id) return res.status(400).json({ success: false, message: 'order_id required' });
+
+      const socketService: import('./services/socket.service').SocketService = app.get('socketService');
+      if (socketService) {
+        socketService.emitToAllAdmins('admin:marketplace:new', {
+          orderId:    order_id,
+          storeName:  store_name ?? null,
+          status:     status ?? 'pending',
+          createdAt:  created_at ?? new Date().toISOString(),
+        });
+      }
+      return res.json({ success: true });
+    } catch (err: any) {
+      logger.error('Internal marketplace/emit/new-order error', { error: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
   app.post('/api/internal/marketplace/emit/status-updated', internalApiAuth, async (req, res) => {
     try {
       const { order_id, status, message, updated_at } = req.body;

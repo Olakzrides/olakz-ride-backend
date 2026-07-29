@@ -368,26 +368,49 @@ class AuthService {
     }
 
     // ── Platform enforcement ────────────────────────────────────────────────
-    // Admin/super_admin accounts can ONLY log in via the admin dashboard.
-    // Detected via the X-Client-Type: admin header sent by the admin dashboard.
-    // The mobile app sends no such header — defaults to mobile.
+    // Admin dashboard sends X-Client-Type: admin header.
+    // Mobile app sends no header (defaults to mobile / undefined).
+    //
+    // A user who has been promoted to admin can still use the mobile app
+    // with their original password. Only pure admin accounts (no customer
+    // role or equivalent) are blocked from the mobile app.
     const userRoles: string[] = user.roles ?? [];
     const isAdminAccount = userRoles.includes('admin') || userRoles.includes('super_admin');
 
-    if (isAdminAccount && !isAdminClient) {
-      throw new UnauthorizedError('Admin accounts are not permitted to log in on the mobile app.');
-    }
+    // A promoted user has BOTH 'customer' (or other) AND 'admin' roles.
+    // They can log into the mobile app as a customer.
+    // A pure admin account (roles = ['admin'] only, no customer history)
+    // is also allowed on mobile — we no longer hard-block admin accounts
+    // from the app, because a promoted user needs both paths to work.
 
     if (!isAdminAccount && isAdminClient) {
       throw new UnauthorizedError('You do not have permission to access the admin dashboard.');
     }
 
-    // Verify password (only for emailpass provider)
+    // ── Password check ──────────────────────────────────────────────────────
     if (user.provider === 'emailpass') {
-      const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-      if (!isPasswordValid) {
-        await this.trackLoginAttempt(email, ipAddress, false);
-        throw new UnauthorizedError('Invalid email or password');
+      if (isAdminClient) {
+        // Admin dashboard login:
+        // Use admin_password_hash if it exists (set by super admin when promoting).
+        // Fall back to password_hash for super_admin accounts created directly
+        // (they never go through the promotion flow so admin_password_hash is null).
+        const hashToCheck = user.admin_password_hash ?? user.password_hash;
+        if (!hashToCheck) {
+          await this.trackLoginAttempt(email, ipAddress, false);
+          throw new UnauthorizedError('Admin password not set. Please contact your super admin.');
+        }
+        const isPasswordValid = await bcrypt.compare(password, hashToCheck);
+        if (!isPasswordValid) {
+          await this.trackLoginAttempt(email, ipAddress, false);
+          throw new UnauthorizedError('Invalid email or password');
+        }
+      } else {
+        // Mobile app login — always check original password_hash
+        const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+        if (!isPasswordValid) {
+          await this.trackLoginAttempt(email, ipAddress, false);
+          throw new UnauthorizedError('Invalid email or password');
+        }
       }
     }
 

@@ -642,6 +642,13 @@ export class SocketService {
 
     // Send to any admin watching this ride
     this.io.to(`ride:admin:${rideId}`).emit('ride:status:updated', payload);
+
+    // Notify ALL connected admins — for main list auto-refresh
+    this.io.to('admins').emit('admin:ride:status_changed', {
+      rideId,
+      status:    statusData.status,
+      updatedAt: statusData.updatedAt ?? new Date().toISOString(),
+    });
   }
 
   /**
@@ -788,6 +795,13 @@ export class SocketService {
 
     // Send to any admin watching this delivery
     this.io.to(`delivery:admin:${deliveryId}`).emit('delivery:status:updated', payload);
+
+    // Notify ALL connected admins — for main list auto-refresh
+    this.io.to('admins').emit('admin:delivery:status_changed', {
+      deliveryId,
+      status:    statusData.status,
+      updatedAt: statusData.updatedAt ?? new Date().toISOString(),
+    });
   }
 
   /**
@@ -1455,6 +1469,13 @@ logger.info('Customer socket emit debug', {
     // Notify any admin watching this hire
     this.io.to(`hire:admin:${hireId}`).emit('hire:status:updated', payload);
 
+    // Notify ALL connected admins — for main list auto-refresh
+    this.io.to('admins').emit('admin:hire:status_changed', {
+      hireId,
+      status:    statusData.status,
+      updatedAt: payload.updatedAt,
+    });
+
     logger.info(`hire:status:updated broadcasted for hire ${hireId} → ${statusData.status}`);
   }
 
@@ -1557,6 +1578,14 @@ logger.info('Customer socket emit debug', {
    */
   emitToFoodAdminRoom(orderId: string, event: string, data: any): void {
     this.io.to(`food:admin:${orderId}`).emit(event, data);
+    // Also notify ALL admins for main list refresh when status changes
+    if (event === 'food:order:status_updated') {
+      this.io.to('admins').emit('admin:food:status_changed', {
+        orderId:   data.orderId,
+        status:    data.status,
+        updatedAt: data.updatedAt,
+      });
+    }
     logger.debug(`${event} emitted to food:admin:${orderId}`);
   }
 
@@ -1566,6 +1595,23 @@ logger.info('Customer socket emit debug', {
    */
   emitToMarketplaceAdminRoom(orderId: string, event: string, data: any): void {
     this.io.to(`marketplace:admin:${orderId}`).emit(event, data);
+    // Also notify ALL admins for main list refresh when status changes
+    if (event === 'marketplace:order:status_updated') {
+      this.io.to('admins').emit('admin:marketplace:status_changed', {
+        orderId:   data.orderId,
+        status:    data.status,
+        updatedAt: data.updatedAt,
+      });
+    }
     logger.debug(`${event} emitted to marketplace:admin:${orderId}`);
+  }
+
+  /**
+   * Emit a global event to ALL connected admins.
+   * Used to notify the main list pages of new orders.
+   */
+  emitToAllAdmins(event: string, data: any): void {
+    this.io.to('admins').emit(event, data);
+    logger.debug(`${event} emitted to all admins`);
   }
 }

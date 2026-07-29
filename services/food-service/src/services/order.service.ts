@@ -5,6 +5,7 @@ import { FareService } from './fare.service';
 import { VendorPromoService } from './vendor-promo.service';
 import { getFoodSocketService } from './food-socket.service';
 import { FoodNotificationService } from './food-notification.service';
+import { notifyAdminNewFoodOrder } from './courier-delivery.service';
 import logger from '../utils/logger';
 
 export type OrderStatus =
@@ -227,6 +228,9 @@ export class OrderService {
     // 7. Insert order items
     const orderItems = orderItemsData.map((oi) => ({ ...oi, order_id: order.id }));
     await supabase.from('food_order_items').insert(orderItems);
+
+    // Notify all admins a new food order has been placed (non-blocking)
+    notifyAdminNewFoodOrder(order.id, restaurant.name ?? null, 'pending').catch(() => {});
 
     // 7b. Record promo use (non-blocking — order is already placed)
     if (promoId && discountAmount > 0) {
