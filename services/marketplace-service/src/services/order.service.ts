@@ -4,6 +4,7 @@ import { WalletService } from './wallet.service';
 import { FareService } from './fare.service';
 import { VendorPromoService } from './vendor-promo.service';
 import { emitToVendor } from './socket.service';
+import { notifyAdminNewMarketplaceOrder } from './admin-relay.service';
 import logger from '../utils/logger';
 
 interface PlaceOrderParams {
@@ -234,6 +235,9 @@ export class OrderService {
       special_instructions: specialInstructions || null,
       created_at: order.createdAt,
     });
+
+    // Notify all admins a new marketplace order has been placed (non-blocking)
+    notifyAdminNewMarketplaceOrder(order.id, store.name ?? null, 'pending').catch(() => {});
 
     // 10-minute pending expiry
     const PENDING_EXPIRY_MS = 10 * 60 * 1000;

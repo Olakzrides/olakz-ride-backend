@@ -340,15 +340,23 @@ export class RideService {
       }
     }
 
+    // Notify all admins a new ride has been created
+    try {
+      const { socketService } = await import('../index');
+      if (socketService) {
+        socketService.emitToAllAdmins('admin:ride:new', {
+          rideId:    ride.id,
+          status:    ride.status,
+          createdAt: ride.created_at,
+        });
+      }
+    } catch { /* non-fatal */ }
+
     return {
       success: true,
       ride,
     };
   }
-
-  /**
-   * Update ride status with state machine validation
-   */
   async updateRideStatus(
     rideId: string,
     newStatus: RideStatus,
