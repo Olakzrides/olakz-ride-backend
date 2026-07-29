@@ -429,7 +429,7 @@ export class HireService {
   }> {
     const { data: hire, error: fetchErr } = await supabase
       .from('transport_hires')
-      .select('id, driver_id, status, payment_method, cash_payment_confirmed, service_fee, rounding_fee, hire_number')
+      .select('id, driver_id, status, payment_method, cash_payment_confirmed, service_fee, rounding_fee, hire_number, driver_fare, currency_code')
       .eq('id', hireId)
       .maybeSingle();
 
