@@ -471,6 +471,47 @@ export class HireService {
       platformRemittance,
     });
 
+    // Credit driver's wallet with their fare now that cash is confirmed
+    // (deferred from driverCompleteHire for cash payment method)
+    const driverFare = Number(hire.driver_fare ?? 0);
+    if (driverFare > 0) {
+      try {
+        const { data: driverRow } = await supabase
+          .from('drivers').select('user_id').eq('id', driverId).single();
+
+        if (driverRow?.user_id) {
+          await this.paymentService.creditWallet({
+            userId:          driverRow.user_id,
+            amount:          driverFare,
+            currencyCode:    'NGN',
+            reference:       `hire_cash_earning_${hireId}_${Date.now()}`,
+            description:     `Transport hire cash earning — ${hire.hire_number}`,
+            transactionType: 'earning',
+          });
+
+          // Increment total_earnings and total_hire_earnings
+          const { data: drv } = await supabase
+            .from('drivers')
+            .select('total_earnings, total_hire_earnings')
+            .eq('id', driverId)
+            .single();
+
+          await supabase
+            .from('drivers')
+            .update({
+              total_earnings:      (Number(drv?.total_earnings ?? 0) + driverFare),
+              total_hire_earnings: (Number(drv?.total_hire_earnings ?? 0) + driverFare),
+              updated_at:          new Date().toISOString(),
+            })
+            .eq('id', driverId);
+
+          logger.info('Driver credited for cash hire after confirmation', { hireId, driverId, driverFare });
+        }
+      } catch (creditErr: any) {
+        logger.error('Failed to credit driver wallet for cash hire (non-fatal)', { hireId, driverId, error: creditErr.message });
+      }
+    }
+
     logger.info(`Driver ${driverId} confirmed cash for hire ${hireId}. Remittance:`, remittanceResult);
 
     await this.logHireNotification({
@@ -1552,15 +1593,43 @@ export class HireService {
         .from('drivers').select('user_id').eq('id', driverId).single();
 
       if (driverRow?.user_id) {
-        await this.paymentService.creditWallet({
-          userId:          driverRow.user_id,
-          amount:          driverFare,
-          currencyCode:    hire.currency_code ?? 'NGN',
-          reference:       `hire_earning_${hireId}_${Date.now()}`,
-          description:     `Transport hire earning — ${hire.hire_number}`,
-          transactionType: 'earning',
-        });
-        logger.info('Driver credited for completed hire', { hireId, driverId, driverFare });
+        // Wallet hires: credit wallet immediately at completion
+        // Cash hires: driver collects cash in person — wallet credit and
+        //             earnings update happen after confirmCashPayment (same as cash rides)
+        if (hire.payment_method !== 'cash') {
+          await this.paymentService.creditWallet({
+            userId:          driverRow.user_id,
+            amount:          driverFare,
+            currencyCode:    hire.currency_code ?? 'NGN',
+            reference:       `hire_earning_${hireId}_${Date.now()}`,
+            description:     `Transport hire earning — ${hire.hire_number}`,
+            transactionType: 'earning',
+          });
+
+          // Increment total_earnings and total_hire_earnings on drivers table
+          try {
+            const { data: drv } = await supabase
+              .from('drivers')
+              .select('total_earnings, total_hire_earnings')
+              .eq('id', driverId)
+              .single();
+
+            await supabase
+              .from('drivers')
+              .update({
+                total_earnings:      (Number(drv?.total_earnings ?? 0) + driverFare),
+                total_hire_earnings: (Number(drv?.total_hire_earnings ?? 0) + driverFare),
+                updated_at:          new Date().toISOString(),
+              })
+              .eq('id', driverId);
+          } catch (earningsErr: any) {
+            logger.error('Failed to update hire earnings counters (non-fatal)', { hireId, driverId, error: earningsErr.message });
+          }
+
+          logger.info('Driver credited for completed hire', { hireId, driverId, driverFare });
+        } else {
+          logger.info('Cash hire completed — wallet credit deferred until confirmCashPayment', { hireId, driverId, driverFare });
+        }
       }
     }
 
