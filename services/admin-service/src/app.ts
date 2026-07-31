@@ -26,6 +26,8 @@ import broadcastRoutes from './routes/broadcast.routes';
 import subAdminRoutes from './routes/sub-admin.routes';
 
 import supportRoutes from './routes/support.routes';
+import auditRoutes from './routes/audit.routes';
+import hireAdminRoutes from './routes/hire.routes';
 
 const app = express();
 
@@ -105,6 +107,12 @@ app.use('/api/admin/administrators', subAdminRoutes);
 
 // Step 20: support, disputes, live chat, FAQ
 app.use('/api/admin/support', supportRoutes);
+
+// Step 21: daily transaction audit sheet
+app.use('/api/admin/audit', auditRoutes);
+
+// Step 22: transport hire management
+app.use('/api/admin/hire', hireAdminRoutes);
 
 // 404
 app.use((req, res) => {

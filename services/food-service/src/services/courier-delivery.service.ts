@@ -48,6 +48,22 @@ async function notifyAdminStatusUpdated(
   }
 }
 
+export async function notifyAdminNewFoodOrder(
+  orderId: string,
+  restaurantName: string | null,
+  status: string
+): Promise<void> {
+  try {
+    await axios.post(
+      `${CORE_LOGISTICS_URL}/api/internal/food/emit/new-order`,
+      { order_id: orderId, restaurant_name: restaurantName, status, created_at: new Date().toISOString() },
+      { headers: INTERNAL_HEADERS, timeout: 3000 }
+    );
+  } catch (err: any) {
+    logger.warn(`notifyAdminNewFoodOrder failed for order ${orderId}:`, err.message);
+  }
+}
+
 /**
  * CourierDeliveryService — Phase 3
  * Handles the full courier execution flow:

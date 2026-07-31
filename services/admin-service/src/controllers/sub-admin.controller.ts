@@ -23,24 +23,30 @@ export class SubAdminController {
 
       const { first_name, last_name, email, phone, role, status, password } = req.body;
 
-      // Basic presence checks before handing off to service
-      if (!first_name || !last_name || !email || !phone || !role || !password) {
-        ResponseUtil.badRequest(res, 'first_name, last_name, email, phone, role, and password are all required');
+      // email, role, and password are always required.
+      // first_name and last_name are only required for new accounts (service validates).
+      // phone is optional — completely removed from the Create Admin form.
+      if (!email || !role || !password) {
+        ResponseUtil.badRequest(res, 'email, role, and password are required');
         return;
       }
 
       const admin = await SubAdminService.create({
-        first_name,
-        last_name,
+        first_name: first_name ?? '',
+        last_name:  last_name  ?? '',
         email,
-        phone,
+        phone,       // optional
         role,
         status: status ?? 'pending',
         password,
         created_by: superAdminId,
       });
 
-      ResponseUtil.created(res, { admin }, 'Admin account created successfully');
+      const message = (admin as any).promoted
+        ? 'User promoted to admin successfully'
+        : 'Admin account created successfully';
+
+      ResponseUtil.created(res, { admin }, message);
     } catch (err: unknown) {
       const msg = toMessage(err);
       if (msg === 'EMAIL_ALREADY_EXISTS') {
@@ -49,6 +55,14 @@ export class SubAdminController {
       }
       if (msg === 'PHONE_ALREADY_EXISTS') {
         ResponseUtil.badRequest(res, 'An account with this phone number already exists', 'PHONE_ALREADY_EXISTS');
+        return;
+      }
+      if (msg === 'USER_ALREADY_ADMIN') {
+        ResponseUtil.badRequest(res, 'This user already has the admin role', 'USER_ALREADY_ADMIN');
+        return;
+      }
+      if (msg === 'USER_ALREADY_SUPER_ADMIN') {
+        ResponseUtil.badRequest(res, 'This user already has the super_admin role', 'USER_ALREADY_SUPER_ADMIN');
         return;
       }
       if (msg.startsWith('role must be') || msg.includes('required') || msg.includes('characters')) {
