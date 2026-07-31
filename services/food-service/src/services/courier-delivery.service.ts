@@ -60,7 +60,7 @@ export class CourierDeliveryService {
   private static async getOrderForCourier(orderId: string, driverId: string) {
     const { data: order } = await supabase
       .from('food_orders')
-      .select('id, status, customer_id, restaurant_id, courier_id, delivery_code, total_amount, delivery_fee')
+      .select('id, status, customer_id, restaurant_id, courier_id, delivery_code, total_amount, delivery_fee, subtotal')
       .eq('id', orderId)
       .single();
 
@@ -318,6 +318,55 @@ export class CourierDeliveryService {
         total_earned: deliveryFee,
         status: 'pending',
       });
+
+      // ── Credit courier wallet with delivery fee ──────────────────────────────
+      try {
+        const { data: driverRow } = await supabase
+          .from('drivers')
+          .select('user_id')
+          .eq('id', driverId)
+          .single();
+
+        if (driverRow?.user_id) {
+          await WalletService.credit({
+            userId: driverRow.user_id,
+            amount: deliveryFee,
+            reference: `food_delivery_fee_${orderId}`,
+            description: `Food delivery earnings — order ${orderId}`,
+            transactionType: 'earning',
+          });
+          logger.info('Courier wallet credited for food delivery', { orderId, driverId, deliveryFee });
+        }
+      } catch (creditErr: any) {
+        // Non-fatal — earnings record was created, wallet credit can be retried
+        logger.error('Failed to credit courier wallet for food delivery', { orderId, driverId, error: creditErr.message });
+      }
+
+      // ── Credit vendor wallet with subtotal (items cost) ──────────────────────
+      try {
+        const vendorAmount = parseFloat((order as any).subtotal);
+        if (vendorAmount > 0) {
+          const { data: restaurant } = await supabase
+            .from('food_restaurants')
+            .select('owner_id')
+            .eq('id', order.restaurant_id)
+            .single();
+
+          if (restaurant?.owner_id) {
+            await WalletService.credit({
+              userId: restaurant.owner_id,
+              amount: vendorAmount,
+              reference: `food_vendor_earning_${orderId}`,
+              description: `Food order earnings — order ${orderId}`,
+              transactionType: 'earning',
+            });
+            logger.info('Vendor wallet credited for food order', { orderId, restaurantId: order.restaurant_id, vendorAmount });
+          }
+        }
+      } catch (vendorCreditErr: any) {
+        // Non-fatal — order is still delivered, credit can be retried manually
+        logger.error('Failed to credit vendor wallet for food order', { orderId, error: vendorCreditErr.message });
+      }
     }
 
     // Notify customer + vendor
