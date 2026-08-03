@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { FoodAdminController } from '../controllers/food-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new FoodAdminController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // Orders
 router.get('/orders/counts', auditMiddleware('food_get_order_counts'), ctrl.getStatusCounts);

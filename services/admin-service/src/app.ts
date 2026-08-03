@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import config from './config';
 import { ResponseUtil } from './utils/response';
 import driverRoutes from './routes/drivers.routes';
+import { rbacMiddleware } from './middleware/rbac.middleware';
 import documentRoutes from './routes/documents.routes';
 import deliveryRoutes from './routes/delivery.routes';
 import foodRoutes from './routes/food.routes';
@@ -28,6 +29,7 @@ import subAdminRoutes from './routes/sub-admin.routes';
 import supportRoutes from './routes/support.routes';
 import auditRoutes from './routes/audit.routes';
 import hireAdminRoutes from './routes/hire.routes';
+import systemRolesRoutes from './routes/system-roles.routes';
 
 const app = express();
 
@@ -113,6 +115,9 @@ app.use('/api/admin/audit', auditRoutes);
 
 // Step 22: transport hire management
 app.use('/api/admin/hire', hireAdminRoutes);
+
+// Step 23: system roles, RBAC, instant promote
+app.use('/api/admin/system-roles', systemRolesRoutes);
 
 // 404
 app.use((req, res) => {

@@ -98,7 +98,6 @@ export const adminAuthMiddleware = async (
     }
 
     // ── Revocation check ────────────────────────────────────────────────────
-    // iat is the Unix timestamp (seconds) when the JWT was signed.
     const iat = decoded.iat as number | undefined;
     if (iat) {
       const revoked = await isTokenRevoked(userId, iat);
@@ -112,9 +111,33 @@ export const adminAuthMiddleware = async (
       }
     }
 
-    req.user = { id: userId, email: decoded.email as string, roles: userRoles, isAdmin: true };
+    // ── Read active_role from DB (Option B) ─────────────────────────────────
+    // Reading from DB instead of JWT ensures that promotions and demotions
+    // take effect on the NEXT API call without forcing a re-login.
+    const { data: userRow } = await supabase
+      .from('users')
+      .select('active_role, roles')
+      .eq('id', userId)
+      .single();
 
-    logger.info('Admin authenticated', { adminId: userId, roles: userRoles, path: req.path });
+    // Use DB roles if available, otherwise fall back to JWT roles
+    const dbRoles: string[] = (userRow?.roles as string[]) ?? userRoles;
+    const activeRole: string = userRow?.active_role ?? userRoles[0] ?? 'admin';
+
+    const isAdminFromDb = dbRoles.includes('admin') || dbRoles.includes('super_admin');
+    if (!isAdminFromDb) {
+      ResponseUtil.forbidden(res, 'Admin access required', 'ADMIN_ACCESS_REQUIRED');
+      return;
+    }
+
+    req.user = {
+      id:      userId,
+      email:   decoded.email as string,
+      roles:   dbRoles,
+      isAdmin: true,
+    };
+
+    logger.info('Admin authenticated', { adminId: userId, activeRole, path: req.path });
     next();
   } catch (err: unknown) {
     const name = err instanceof Error ? (err as NodeJS.ErrnoException).name : '';

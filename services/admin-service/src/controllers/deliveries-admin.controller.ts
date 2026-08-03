@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AdminRequest } from '../middleware/auth.middleware';
 import { DeliveriesAdminService } from '../services/deliveries-admin.service';
 import { ResponseUtil } from '../utils/response';
+import { emptyIfNoRole } from '../middleware/rbac.middleware';
 import { logger } from '../utils/logger';
 
 function toMessage(err: unknown): string {
@@ -17,6 +18,7 @@ export class DeliveriesAdminController {
    * Query params: from, to
    */
   getStatusCounts = async (req: AdminRequest, res: Response): Promise<void> => {
+    if (emptyIfNoRole(req as any, res, { all: 0, pending: 0, accepted: 0, arrived: 0, in_progress: 0, completed: 0, cancelled: 0 })) return;
     try {
       const counts = await DeliveriesAdminService.getStatusCounts({
         from: req.query.from as string | undefined,
@@ -29,19 +31,8 @@ export class DeliveriesAdminController {
     }
   };
 
-  /**
-   * GET /api/admin/deliveries
-   * Paginated delivery list with filters.
-   *
-   * Query params:
-   *   page   - default 1
-   *   limit  - default 10, max 100
-   *   status - all | pending | accepted | arrived | in_progress | completed | cancelled
-   *   search - pickup/dropoff address, recipient name, order number
-   *   from   - ISO date
-   *   to     - ISO date
-   */
   getDeliveries = async (req: AdminRequest, res: Response): Promise<void> => {
+    if (emptyIfNoRole(req as any, res, { deliveries: [], pagination: { page: 1, limit: 10, total: 0, pages: 0 } })) return;
     try {
       const page  = Math.max(1, parseInt(req.query.page  as string) || 1);
       const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));

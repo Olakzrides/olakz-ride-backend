@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { VendorAdminController } from '../controllers/vendor-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new VendorAdminController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // ─── Registration progress (must come before /:id routes) ────────────────────
 router.get('/registrations', auditMiddleware('vendor_get_incomplete_registrations'), ctrl.getIncompleteRegistrations);

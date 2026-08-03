@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { MarketplaceAdminService } from '../services/marketplace-admin.service';
 import { ResponseUtil } from '../utils/response';
+import { emptyIfNoRole } from '../middleware/rbac.middleware';
 import { logger } from '../utils/logger';
 
 function toMessage(err: unknown): string {
@@ -9,6 +10,7 @@ function toMessage(err: unknown): string {
 
 export class MarketplaceAdminController {
   getStores = async (req: Request, res: Response): Promise<void> => {
+    if (emptyIfNoRole(req as any, res, { stores: [], total: 0, page: 1, limit: 20, totalPages: 0 })) return;
     try {
       const result = await MarketplaceAdminService.getStores({
         status: req.query.status as string,

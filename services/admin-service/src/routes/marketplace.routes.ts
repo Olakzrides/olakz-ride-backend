@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { MarketplaceAdminController } from '../controllers/marketplace-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new MarketplaceAdminController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // Stores
 router.get('/stores', auditMiddleware('marketplace_get_stores'), ctrl.getStores);

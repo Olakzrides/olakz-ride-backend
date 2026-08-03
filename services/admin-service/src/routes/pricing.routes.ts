@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { PricingAdminController } from '../controllers/pricing-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new PricingAdminController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // City tiers: high | middle | low   (no national — unassigned states fall to low)

@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { DeliveriesAdminController } from '../controllers/deliveries-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new DeliveriesAdminController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // GET /api/admin/deliveries/status-counts  — tab counts (must come before /:deliveryId)
 router.get('/status-counts', auditMiddleware('deliveries_get_status_counts'), ctrl.getStatusCounts);

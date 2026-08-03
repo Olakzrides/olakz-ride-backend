@@ -360,7 +360,8 @@ export class SubAdminService {
   }
 
   /**
-   * Get full details of a single admin by ID, including wallet balance.
+   * Get full details of a single admin by ID, including wallet balance
+   * and their currently assigned system role.
    */
   static async getAdminById(adminId: string) {
     const { data: admin, error } = await supabase
@@ -379,6 +380,26 @@ export class SubAdminService {
     const a = admin as Record<string, unknown>;
     const walletBalance = await getWalletBalance(a.id as string);
 
+    // Fetch their assigned system role from admin_user_roles
+    const { data: userRole } = await supabase
+      .from('admin_user_roles')
+      .select(`
+        role_id,
+        assigned_at,
+        role:admin_system_roles(id, name, description, is_active)
+      `)
+      .eq('user_id', adminId)
+      .maybeSingle();
+
+    const assignedRole = userRole && (userRole.role as any)?.is_active
+      ? {
+          role_id:          (userRole.role as any).id,
+          role_name:        (userRole.role as any).name,
+          role_description: (userRole.role as any).description ?? null,
+          assigned_at:      userRole.assigned_at,
+        }
+      : null;
+
     return {
       id:             a.id,
       name:           `${a.first_name} ${a.last_name}`.trim(),
@@ -394,6 +415,7 @@ export class SubAdminService {
       date_joined:    a.created_at,
       updated_at:     a.updated_at,
       wallet_balance: walletBalance,
+      assigned_role:  assignedRole,   // null if no system role has been assigned yet
     };
   }
 

@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { MarketplacePricingController } from '../controllers/marketplace-pricing.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl   = new MarketplacePricingController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 
 // GET /api/admin/marketplace/pricing

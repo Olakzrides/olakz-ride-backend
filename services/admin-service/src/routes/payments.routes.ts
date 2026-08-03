@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { PaymentAdminController } from '../controllers/payment-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new PaymentAdminController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // GET /api/admin/payments/overview  — summary stats (must be before /:transactionId)
 router.get('/overview', auditMiddleware('payments_get_overview'), ctrl.getOverviewStats);
