@@ -75,6 +75,7 @@ export class AuditController {
         pickupAddress:       pickup_address,
         destination,
         location:            req.body.location,
+        auditDate:           req.body.audit_date,   // optional — defaults to today if not sent
         transactionExpenses: transaction_expenses !== undefined ? Number(transaction_expenses) : 0,
       });
 
@@ -216,6 +217,7 @@ export class AuditController {
         expenditureAmount:      Number(expenditure_amount),
         expenditureReason:      expenditure_reason,
         expenditureDescription: expenditure_description,
+        auditDate:              req.body.audit_date,   // optional — defaults to today if not sent
       });
 
       ResponseUtil.created(res, { expenditure: exp }, 'Expenditure added');
@@ -396,6 +398,37 @@ export class AuditController {
     } catch (err) {
       logger.error('exportMonthly error', { error: toMsg(err) });
       ResponseUtil.serverError(res, 'Failed to export monthly audit sheet');
+    }
+  };
+
+  /**
+   * GET /api/admin/audit/summary/yearly?year=2026
+   */
+  getYearlySummary = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const summary = await svc.getYearlySummary(year);
+      ResponseUtil.success(res, summary, 'Yearly summary retrieved');
+    } catch (err) {
+      logger.error('getYearlySummary error', { error: toMsg(err) });
+      ResponseUtil.serverError(res, 'Failed to get yearly summary');
+    }
+  };
+
+  /**
+   * GET /api/admin/audit/export/yearly?year=2026  → CSV download (super_admin only)
+   */
+  exportYearly = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const csv  = await svc.exportYearlyCSV(year);
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="audit_${year}.csv"`);
+      res.status(200).send(csv);
+    } catch (err) {
+      logger.error('exportYearly error', { error: toMsg(err) });
+      ResponseUtil.serverError(res, 'Failed to export yearly audit sheet');
     }
   };
 }

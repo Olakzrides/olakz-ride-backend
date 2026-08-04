@@ -46,13 +46,17 @@ router.post('/lock', auditMiddleware('audit_lock_day'), ctrl.lockDay);
 // ── Summaries ─────────────────────────────────────────────────────────────────
 // GET /api/admin/audit/summary/daily?date=YYYY-MM-DD
 // GET /api/admin/audit/summary/monthly?year=2026&month=7
+// GET /api/admin/audit/summary/yearly?year=2026
 router.get('/summary/daily',   auditMiddleware('audit_daily_summary'),   ctrl.getDailySummary);
 router.get('/summary/monthly', auditMiddleware('audit_monthly_summary'), ctrl.getMonthlySummary);
+router.get('/summary/yearly',  auditMiddleware('audit_yearly_summary'),  ctrl.getYearlySummary);
 
 // ── Export — super_admin only ─────────────────────────────────────────────────
 // GET /api/admin/audit/export/daily?date=YYYY-MM-DD   → CSV download
 // GET /api/admin/audit/export/monthly?year=&month=    → CSV download
+// GET /api/admin/audit/export/yearly?year=            → CSV download
 router.get('/export/daily',   superAdminMiddleware, auditMiddleware('audit_export_daily'),   ctrl.exportDaily);
 router.get('/export/monthly', superAdminMiddleware, auditMiddleware('audit_export_monthly'), ctrl.exportMonthly);
+router.get('/export/yearly',  superAdminMiddleware, auditMiddleware('audit_export_yearly'),  ctrl.exportYearly);
 
 export default router;

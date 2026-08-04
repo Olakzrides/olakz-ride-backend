@@ -19,14 +19,16 @@ export interface CreateTransactionInput {
   pickupAddress?:       string;
   destination?:         string;
   location?:            string;         // free-text location, e.g. "Ikeja, Lagos"
+  auditDate?:           string;         // YYYY-MM-DD — optional, defaults to today if not provided
   // NOTE: staffOnDuty is intentionally removed — auto-set from authenticated admin's profile
   transactionExpenses?: number;
 }
 
 export interface CreateExpenditureInput {
-  expenditureAmount:      number;
-  expenditureReason:      string;
+  expenditureAmount:       number;
+  expenditureReason:       string;
   expenditureDescription?: string;
+  auditDate?:              string;      // YYYY-MM-DD — optional, defaults to today if not provided
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -177,19 +179,29 @@ export class AuditService {
     }
     // AP can exceed CP — that results in a loss (company paid rider more than it charged customer)
 
-    // Backend-controlled date
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    // Use provided audit_date or default to today.
+    // Allows admins to enter transactions for past dates (e.g. backdating missed records).
+    const today = new Date().toISOString().split('T')[0];
+    const auditDate = input.auditDate?.trim() || today;
+
+    // Validate date format YYYY-MM-DD and ensure it's not a future date
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(auditDate)) {
+      throw new Error('audit_date must be in YYYY-MM-DD format');
+    }
+    if (auditDate > today) {
+      throw new Error('audit_date cannot be in the future');
+    }
 
     // Auto-fill staff_on_duty from the logged-in admin's name — never from client input
     const adminDisplayName = await fetchAdminDisplayName(adminId);
 
     const { profit, loss } = calculateProfitLoss(input.chargePrice, input.amountPaid);
-    const serialNumber = await getNextSerialNumber(today);
+    const serialNumber = await getNextSerialNumber(auditDate);
 
     const { data, error } = await supabase
       .from('audit_transactions')
       .insert({
-        audit_date:           today,
+        audit_date:           auditDate,
         serial_number:        serialNumber,
         service_type:         input.serviceType,
         ride_type:            input.rideType ?? null,
@@ -365,11 +377,19 @@ export class AuditService {
     }
 
     const today = new Date().toISOString().split('T')[0];
+    const auditDate = input.auditDate?.trim() || today;
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(auditDate)) {
+      throw new Error('audit_date must be in YYYY-MM-DD format');
+    }
+    if (auditDate > today) {
+      throw new Error('audit_date cannot be in the future');
+    }
 
     const { data, error } = await supabase
       .from('audit_expenditures')
       .insert({
-        audit_date:              today,
+        audit_date:              auditDate,
         expenditure_amount:      input.expenditureAmount,
         expenditure_reason:      input.expenditureReason.trim(),
         expenditure_description: input.expenditureDescription ?? null,
@@ -487,7 +507,7 @@ export class AuditService {
     const [txData, expData] = await Promise.all([
       supabase
         .from('audit_transactions')
-        .select('profit, loss, transaction_expenses')
+        .select('charge_price, amount_paid, transaction_expenses')
         .eq('audit_date', date),
       supabase
         .from('audit_expenditures')
@@ -501,27 +521,37 @@ export class AuditService {
     const transactions = txData.data ?? [];
     const expenditures = expData.data ?? [];
 
-    const totalProfit      = transactions.reduce((s, r) => s + parseFloat(r.profit ?? 0), 0);
-    const totalLoss        = transactions.reduce((s, r) => s + parseFloat(r.loss ?? 0), 0);
+    // Gross Revenue = SUM of all Charge Price (total collected from customers)
+    const grossRevenue = transactions.reduce(
+      (s, r) => s + parseFloat(r.charge_price ?? 0), 0
+    );
+
+    // Gross Expenses = SUM of all Amount Paid (payouts to riders/vendors)
+    //                + SUM of all Transaction Expenses (per-transaction costs)
+    //                + SUM of all Expenditures (daily operational costs)
+    const totalPayouts     = transactions.reduce((s, r) => s + parseFloat(r.amount_paid        ?? 0), 0);
     const totalTxExpenses  = transactions.reduce((s, r) => s + parseFloat(r.transaction_expenses ?? 0), 0);
-    const totalOpex        = expenditures.reduce((s, r) => s + parseFloat(r.expenditure_amount ?? 0), 0);
-    const dailyTotalBalance = totalProfit - totalLoss - totalTxExpenses - totalOpex;
+    const totalOpex        = expenditures.reduce((s, r) => s + parseFloat(r.expenditure_amount   ?? 0), 0);
+    const grossExpenses    = totalPayouts + totalTxExpenses + totalOpex;
+
+    // Net Revenue = Gross Revenue − Gross Expenses
+    // Positive = profit for the day. Negative = deficit.
+    const netRevenue = grossRevenue - grossExpenses;
 
     return {
       date,
-      transaction_count:          transactions.length,
-      total_profit:                round2(totalProfit),
-      total_loss:                  round2(totalLoss),
-      total_transaction_expenses:  round2(totalTxExpenses),
-      total_operational_expenditure: round2(totalOpex),
-      daily_total_balance:         round2(dailyTotalBalance),
+      transaction_count:              transactions.length,
+      gross_revenue:                  round2(grossRevenue),
+      gross_expenses:                 round2(grossExpenses),
+      total_transaction_expenses:     round2(totalTxExpenses),
+      total_operational_expenditure:  round2(totalOpex),
+      net_revenue:                    round2(netRevenue),
     };
   }
 
   // ── Monthly Summary ───────────────────────────────────────────────────────────
 
   async getMonthlySummary(year: number, month: number) {
-    // Build date range for the month
     const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
     const lastDay   = new Date(year, month, 0).getDate();
     const endDate   = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
@@ -529,7 +559,7 @@ export class AuditService {
     const [txData, expData] = await Promise.all([
       supabase
         .from('audit_transactions')
-        .select('audit_date, profit, loss, transaction_expenses')
+        .select('audit_date, charge_price, amount_paid, transaction_expenses')
         .gte('audit_date', startDate)
         .lte('audit_date', endDate),
       supabase
@@ -542,33 +572,124 @@ export class AuditService {
     if (txData.error)  throw new Error(`Failed to get transactions: ${txData.error.message}`);
     if (expData.error) throw new Error(`Failed to get expenditures: ${expData.error.message}`);
 
-    // Group by date to build daily balances
-    const dailyMap: Record<string, { profit: number; loss: number; txExp: number; opex: number }> = {};
+    // Group by date
+    const dailyMap: Record<string, {
+      grossRevenue: number;
+      totalPayouts: number;
+      txExp:        number;
+      opex:         number;
+    }> = {};
 
     for (const row of txData.data ?? []) {
-      if (!dailyMap[row.audit_date]) dailyMap[row.audit_date] = { profit: 0, loss: 0, txExp: 0, opex: 0 };
-      dailyMap[row.audit_date].profit += parseFloat(row.profit ?? 0);
-      dailyMap[row.audit_date].loss   += parseFloat(row.loss ?? 0);
-      dailyMap[row.audit_date].txExp  += parseFloat(row.transaction_expenses ?? 0);
+      if (!dailyMap[row.audit_date]) {
+        dailyMap[row.audit_date] = { grossRevenue: 0, totalPayouts: 0, txExp: 0, opex: 0 };
+      }
+      dailyMap[row.audit_date].grossRevenue += parseFloat(row.charge_price        ?? 0);
+      dailyMap[row.audit_date].totalPayouts += parseFloat(row.amount_paid         ?? 0);
+      dailyMap[row.audit_date].txExp        += parseFloat(row.transaction_expenses ?? 0);
     }
 
     for (const row of expData.data ?? []) {
-      if (!dailyMap[row.audit_date]) dailyMap[row.audit_date] = { profit: 0, loss: 0, txExp: 0, opex: 0 };
+      if (!dailyMap[row.audit_date]) {
+        dailyMap[row.audit_date] = { grossRevenue: 0, totalPayouts: 0, txExp: 0, opex: 0 };
+      }
       dailyMap[row.audit_date].opex += parseFloat(row.expenditure_amount ?? 0);
     }
 
-    const dailySummaries = Object.entries(dailyMap).map(([date, d]) => ({
-      date,
-      daily_total_balance: round2(d.profit - d.loss - d.txExp - d.opex),
-    })).sort((a, b) => a.date.localeCompare(b.date));
+    const dailySummaries = Object.entries(dailyMap).map(([date, d]) => {
+      const grossExpenses = d.totalPayouts + d.txExp + d.opex;
+      const netRevenue    = d.grossRevenue - grossExpenses;
+      return {
+        date,
+        gross_revenue:  round2(d.grossRevenue),
+        gross_expenses: round2(grossExpenses),
+        net_revenue:    round2(netRevenue),
+      };
+    }).sort((a, b) => a.date.localeCompare(b.date));
 
-    const monthlyTotalBalance = dailySummaries.reduce((s, d) => s + d.daily_total_balance, 0);
+    const monthlyGrossRevenue  = dailySummaries.reduce((s, d) => s + d.gross_revenue,  0);
+    const monthlyGrossExpenses = dailySummaries.reduce((s, d) => s + d.gross_expenses, 0);
+    const monthlyNetRevenue    = monthlyGrossRevenue - monthlyGrossExpenses;
 
     return {
       year,
       month,
       daily_summaries:        dailySummaries,
-      monthly_total_balance:  round2(monthlyTotalBalance),
+      monthly_gross_revenue:  round2(monthlyGrossRevenue),
+      monthly_gross_expenses: round2(monthlyGrossExpenses),
+      monthly_net_revenue:    round2(monthlyNetRevenue),
+    };
+  }
+
+  // ── Yearly Summary ────────────────────────────────────────────────────────────
+
+  async getYearlySummary(year: number) {
+    const startDate = `${year}-01-01`;
+    const endDate   = `${year}-12-31`;
+
+    const [txData, expData] = await Promise.all([
+      supabase
+        .from('audit_transactions')
+        .select('audit_date, charge_price, amount_paid, transaction_expenses')
+        .gte('audit_date', startDate)
+        .lte('audit_date', endDate),
+      supabase
+        .from('audit_expenditures')
+        .select('audit_date, expenditure_amount')
+        .gte('audit_date', startDate)
+        .lte('audit_date', endDate),
+    ]);
+
+    if (txData.error)  throw new Error(`Failed to get transactions: ${txData.error.message}`);
+    if (expData.error) throw new Error(`Failed to get expenditures: ${expData.error.message}`);
+
+    // Group by month (YYYY-MM)
+    const monthlyMap: Record<string, {
+      grossRevenue: number;
+      totalPayouts: number;
+      txExp:        number;
+      opex:         number;
+    }> = {};
+
+    for (const row of txData.data ?? []) {
+      const monthKey = row.audit_date.slice(0, 7); // "YYYY-MM"
+      if (!monthlyMap[monthKey]) {
+        monthlyMap[monthKey] = { grossRevenue: 0, totalPayouts: 0, txExp: 0, opex: 0 };
+      }
+      monthlyMap[monthKey].grossRevenue += parseFloat(row.charge_price         ?? 0);
+      monthlyMap[monthKey].totalPayouts += parseFloat(row.amount_paid          ?? 0);
+      monthlyMap[monthKey].txExp        += parseFloat(row.transaction_expenses ?? 0);
+    }
+
+    for (const row of expData.data ?? []) {
+      const monthKey = row.audit_date.slice(0, 7);
+      if (!monthlyMap[monthKey]) {
+        monthlyMap[monthKey] = { grossRevenue: 0, totalPayouts: 0, txExp: 0, opex: 0 };
+      }
+      monthlyMap[monthKey].opex += parseFloat(row.expenditure_amount ?? 0);
+    }
+
+    const monthlySummaries = Object.entries(monthlyMap).map(([month, d]) => {
+      const grossExpenses = d.totalPayouts + d.txExp + d.opex;
+      const netRevenue    = d.grossRevenue - grossExpenses;
+      return {
+        month,                                  // "YYYY-MM"
+        gross_revenue:  round2(d.grossRevenue),
+        gross_expenses: round2(grossExpenses),
+        net_revenue:    round2(netRevenue),
+      };
+    }).sort((a, b) => a.month.localeCompare(b.month));
+
+    const yearlyGrossRevenue  = monthlySummaries.reduce((s, m) => s + m.gross_revenue,  0);
+    const yearlyGrossExpenses = monthlySummaries.reduce((s, m) => s + m.gross_expenses, 0);
+    const yearlyNetRevenue    = yearlyGrossRevenue - yearlyGrossExpenses;
+
+    return {
+      year,
+      monthly_summaries:      monthlySummaries,
+      yearly_gross_revenue:   round2(yearlyGrossRevenue),
+      yearly_gross_expenses:  round2(yearlyGrossExpenses),
+      yearly_net_revenue:     round2(yearlyNetRevenue),
     };
   }
 
@@ -583,7 +704,7 @@ export class AuditService {
 
     const headers = [
       'S/N', 'Date', 'Service Type', 'Ride Type',
-      'Charge Price (CP)', 'Amount Paid (AP)', 'Profit', 'Loss',
+      'Charge Price (CP)', 'Amount Paid (AP)',
       'Pickup Time', 'Dropoff Time',
       'Sender Phone', 'Receiver Phone', 'Rider Phone',
       'Pickup Address', 'Destination', 'Location',
@@ -592,7 +713,7 @@ export class AuditService {
 
     const rows = transactions.map((t: any) => [
       t.serial_number, t.audit_date, t.service_type, t.ride_type ?? '',
-      t.charge_price, t.amount_paid, t.profit, t.loss,
+      t.charge_price, t.amount_paid,
       t.pickup_time ?? '', t.dropoff_time ?? '',
       t.sender_phone ?? '', t.receiver_phone ?? '', t.rider_phone ?? '',
       `"${(t.pickup_address ?? '').replace(/"/g, '""')}"`,
@@ -615,12 +736,12 @@ export class AuditService {
     csv += '\n\nDaily Operational Expenditures\n';
     csv += expHeaders.join(',') + '\n';
     csv += expRows.map(r => r.join(',')).join('\n');
-    csv += '\n\nDaily Summary\n';
-    csv += `Total Profit,${summary.total_profit}\n`;
-    csv += `Total Loss,${summary.total_loss}\n`;
-    csv += `Total Transaction Expenses,${summary.total_transaction_expenses}\n`;
-    csv += `Total Operational Expenditure,${summary.total_operational_expenditure}\n`;
-    csv += `Daily Total Balance,${summary.daily_total_balance}\n`;
+    csv += '\n\nDaily Financial Summary\n';
+    csv += `Gross Revenue (Total CP Collected),${summary.gross_revenue}\n`;
+    csv += `Gross Expenses (Payouts + TX Costs + Opex),${summary.gross_expenses}\n`;
+    csv += `  — Transaction Expenses,${summary.total_transaction_expenses}\n`;
+    csv += `  — Operational Expenditure,${summary.total_operational_expenditure}\n`;
+    csv += `Net Revenue (Gross Revenue − Gross Expenses),${summary.net_revenue}\n`;
 
     return csv;
   }
@@ -629,9 +750,30 @@ export class AuditService {
     const summary = await this.getMonthlySummary(year, month);
 
     let csv = `Monthly Audit Summary — ${year}-${String(month).padStart(2, '0')}\n\n`;
-    csv += 'Date,Daily Total Balance\n';
-    csv += summary.daily_summaries.map(d => `${d.date},${d.daily_total_balance}`).join('\n');
-    csv += `\n\nMonthly Total Balance,${summary.monthly_total_balance}\n`;
+    csv += 'Date,Gross Revenue,Gross Expenses,Net Revenue\n';
+    csv += summary.daily_summaries
+      .map(d => `${d.date},${d.gross_revenue},${d.gross_expenses},${d.net_revenue}`)
+      .join('\n');
+    csv += '\n\nMonthly Totals\n';
+    csv += `Monthly Gross Revenue,${summary.monthly_gross_revenue}\n`;
+    csv += `Monthly Gross Expenses,${summary.monthly_gross_expenses}\n`;
+    csv += `Monthly Net Revenue,${summary.monthly_net_revenue}\n`;
+
+    return csv;
+  }
+
+  async exportYearlyCSV(year: number): Promise<string> {
+    const summary = await this.getYearlySummary(year);
+
+    let csv = `Yearly Audit Summary — ${year}\n\n`;
+    csv += 'Month,Gross Revenue,Gross Expenses,Net Revenue\n';
+    csv += summary.monthly_summaries
+      .map(m => `${m.month},${m.gross_revenue},${m.gross_expenses},${m.net_revenue}`)
+      .join('\n');
+    csv += '\n\nYearly Totals\n';
+    csv += `Yearly Gross Revenue,${summary.yearly_gross_revenue}\n`;
+    csv += `Yearly Gross Expenses,${summary.yearly_gross_expenses}\n`;
+    csv += `Yearly Net Revenue,${summary.yearly_net_revenue}\n`;
 
     return csv;
   }
