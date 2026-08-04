@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { AdminRequest, adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { DocumentService } from '../services/document.service';
 import { ResponseUtil } from '../utils/response';
 import { logger } from '../utils/logger';
@@ -8,6 +9,7 @@ const router = Router();
 const documentService = new DocumentService();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 /**
  * GET /api/admin/storage/signed-url?bucket=driver-documents&path=userId/type/file.jpg

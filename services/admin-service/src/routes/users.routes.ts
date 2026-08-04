@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { UserAdminController } from '../controllers/user-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new UserAdminController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // Platform overview
 router.get('/stats', auditMiddleware('get_platform_stats'), ctrl.getPlatformStats);

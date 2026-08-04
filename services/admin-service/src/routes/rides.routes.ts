@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { RidesAdminController } from '../controllers/rides-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new RidesAdminController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // GET /api/admin/rides/status-counts  — tab counts (must come before /:rideId)
 router.get('/status-counts', auditMiddleware('rides_get_status_counts'), ctrl.getStatusCounts);

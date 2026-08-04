@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AdminRequest } from '../middleware/auth.middleware';
 import { UserAdminService } from '../services/user-admin.service';
 import { ResponseUtil } from '../utils/response';
+import { emptyIfNoRole } from '../middleware/rbac.middleware';
 import { logger } from '../utils/logger';
 
 function toMessage(err: unknown): string {
@@ -10,6 +11,7 @@ function toMessage(err: unknown): string {
 
 export class UserAdminController {
   getUsers = async (req: Request, res: Response): Promise<void> => {
+    if (emptyIfNoRole(req as any, res, { users: [], total: 0, page: 1, limit: 20 })) return;
     try {
       const { role, status, search, page, limit } = req.query;
       const result = await UserAdminService.getUsers({

@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { AdminDriverController } from '../controllers/admin-driver.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new AdminDriverController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // ─── Existing: application review flow ───────────────────────────────────────
 router.get('/pending', auditMiddleware('get_pending_drivers'), ctrl.getPendingDrivers);

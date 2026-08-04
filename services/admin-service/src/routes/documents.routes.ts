@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { AdminDocumentController } from '../controllers/admin-document.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new AdminDocumentController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 router.get('/pending', auditMiddleware('get_pending_documents'), ctrl.getPendingDocuments);
 router.get('/statistics', auditMiddleware('get_document_statistics'), ctrl.getReviewStatistics);

@@ -3,6 +3,7 @@ import { AdminRequest } from '../middleware/auth.middleware';
 import { RidesAdminService } from '../services/rides-admin.service';
 import { ResponseUtil } from '../utils/response';
 import { logger } from '../utils/logger';
+import { emptyIfNoRole } from '../middleware/rbac.middleware';
 
 function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -10,15 +11,8 @@ function toMessage(err: unknown): string {
 
 export class RidesAdminController {
 
-  /**
-   * GET /api/admin/rides/status-counts
-   * Returns count per status tab: all, pending, accepted, arrived, in_progress, completed, cancelled.
-   *
-   * Query params:
-   *   from - ISO date
-   *   to   - ISO date
-   */
   getStatusCounts = async (req: AdminRequest, res: Response): Promise<void> => {
+    if (emptyIfNoRole(req as any, res, { all: 0, pending: 0, accepted: 0, arrived: 0, in_progress: 0, completed: 0, cancelled: 0 })) return;
     try {
       const counts = await RidesAdminService.getStatusCounts({
         from: req.query.from as string | undefined,

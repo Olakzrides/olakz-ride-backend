@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { AirtimeAdminController } from '../controllers/airtime-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new AirtimeAdminController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // GET /api/admin/airtime/status-counts  — tab counts (must come before /:transactionId)
 router.get('/status-counts', auditMiddleware('airtime_get_status_counts'), ctrl.getStatusCounts);

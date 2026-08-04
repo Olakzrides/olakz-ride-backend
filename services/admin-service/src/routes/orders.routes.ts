@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { OrdersAdminController } from '../controllers/orders-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
@@ -8,6 +9,7 @@ const ctrl = new OrdersAdminController();
 
 // All routes require admin JWT
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 router.get('/', auditMiddleware('orders_get_all'), ctrl.getAllOrders);
 router.get('/filter/by-status', auditMiddleware('orders_filter_by_status'), ctrl.filterByStatus);
