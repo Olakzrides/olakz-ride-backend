@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { PromoAdminController } from '../controllers/promo-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new PromoAdminController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // ── Read endpoints (must come before /:promoId) ──────────────────────────────
 router.get('/active',                auditMiddleware('promo_get_active'),      ctrl.getActive);

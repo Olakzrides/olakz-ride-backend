@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AdminRequest } from '../middleware/auth.middleware';
 import { SupportAdminService } from '../services/support-admin.service';
 import { ResponseUtil } from '../utils/response';
+import { emptyIfNoRole } from '../middleware/rbac.middleware';
 import { logger } from '../utils/logger';
 
 function toMsg(err: unknown): string {
@@ -17,7 +18,8 @@ export class SupportAdminController {
    * GET /api/admin/support/disputes/counts
    * Tab badge counts: all, pending, in_progress, resolved
    */
-  getDisputeCounts = async (_req: AdminRequest, res: Response): Promise<void> => {
+  getDisputeCounts = async (req: AdminRequest, res: Response): Promise<void> => {
+    if (emptyIfNoRole(req as any, res, { all: 0, pending: 0, in_progress: 0, resolved: 0 })) return;
     try {
       const counts = await this.svc.getDisputeStatusCounts();
       ResponseUtil.success(res, counts, 'Dispute counts retrieved');

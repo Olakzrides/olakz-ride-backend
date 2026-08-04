@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { AuditController } from '../controllers/audit.controller';
 import { adminAuthMiddleware, superAdminMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
@@ -8,14 +9,23 @@ const ctrl   = new AuditController();
 
 // All audit routes require admin authentication
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
+
+// ── Identity / debug ──────────────────────────────────────────────────────────
+// GET /api/admin/audit/me
+//   Returns the staff name that will be auto-stamped for the calling admin.
+//   Use this to verify name resolution is working before creating transactions.
+router.get('/me', ctrl.getMyStaffName);
 
 // ── Transactions ──────────────────────────────────────────────────────────────
-// POST   /api/admin/audit/transactions           — add a row (date auto-set to today)
+// POST   /api/admin/audit/transactions           — add a row (date auto-set to today; staff name auto-filled)
 // GET    /api/admin/audit/transactions?date=     — list rows for a date
-// PUT    /api/admin/audit/transactions/:id       — update (locked = 403)
-// DELETE /api/admin/audit/transactions/:id       — delete (locked = 403)
+// GET    /api/admin/audit/transactions/:id       — full detail for one transaction (any admin/super_admin)
+// PUT    /api/admin/audit/transactions/:id       — update (owner or super_admin only; locked OK for owner)
+// DELETE /api/admin/audit/transactions/:id       — delete (owner or super_admin only)
 router.post(  '/transactions',     auditMiddleware('audit_create_transaction'),  ctrl.createTransaction);
 router.get(   '/transactions',     auditMiddleware('audit_list_transactions'),   ctrl.listTransactions);
+router.get(   '/transactions/:id', auditMiddleware('audit_view_transaction'),    ctrl.getTransactionById);
 router.put(   '/transactions/:id', auditMiddleware('audit_update_transaction'),  ctrl.updateTransaction);
 router.delete('/transactions/:id', auditMiddleware('audit_delete_transaction'),  ctrl.deleteTransaction);
 
@@ -36,13 +46,17 @@ router.post('/lock', auditMiddleware('audit_lock_day'), ctrl.lockDay);
 // ── Summaries ─────────────────────────────────────────────────────────────────
 // GET /api/admin/audit/summary/daily?date=YYYY-MM-DD
 // GET /api/admin/audit/summary/monthly?year=2026&month=7
+// GET /api/admin/audit/summary/yearly?year=2026
 router.get('/summary/daily',   auditMiddleware('audit_daily_summary'),   ctrl.getDailySummary);
 router.get('/summary/monthly', auditMiddleware('audit_monthly_summary'), ctrl.getMonthlySummary);
+router.get('/summary/yearly',  auditMiddleware('audit_yearly_summary'),  ctrl.getYearlySummary);
 
 // ── Export — super_admin only ─────────────────────────────────────────────────
 // GET /api/admin/audit/export/daily?date=YYYY-MM-DD   → CSV download
 // GET /api/admin/audit/export/monthly?year=&month=    → CSV download
+// GET /api/admin/audit/export/yearly?year=            → CSV download
 router.get('/export/daily',   superAdminMiddleware, auditMiddleware('audit_export_daily'),   ctrl.exportDaily);
 router.get('/export/monthly', superAdminMiddleware, auditMiddleware('audit_export_monthly'), ctrl.exportMonthly);
+router.get('/export/yearly',  superAdminMiddleware, auditMiddleware('audit_export_yearly'),  ctrl.exportYearly);
 
 export default router;

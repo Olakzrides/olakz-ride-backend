@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { AdminDeliveryController } from '../controllers/admin-delivery.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new AdminDeliveryController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 router.get('/analytics', auditMiddleware('get_delivery_analytics'), ctrl.getAnalytics);
 router.get('/analytics/volume-by-vehicle', auditMiddleware('get_volume_by_vehicle'), ctrl.getVolumeByVehicle);

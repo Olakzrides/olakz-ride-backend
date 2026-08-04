@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { AdminRequest } from '../middleware/auth.middleware';
-import { AuditService } from '../services/audit.service';
+import { AuditService, resolveAdminDisplayName } from '../services/audit.service';
 import { ResponseUtil } from '../utils/response';
 import { logger } from '../utils/logger';
 
@@ -12,11 +12,38 @@ const svc = new AuditService();
 
 export class AuditController {
 
+  // ── Identity check ────────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/admin/audit/me
+   * Returns the name that will be auto-stamped as staff_on_duty for the
+   * currently logged-in admin. Use this to verify name resolution is working
+   * before creating transactions.
+   *
+   * Response:
+   *   { admin_id, staff_name, source: "full_name" | "first_last" | "first_only" | "email_prefix" | "id_fallback" }
+   */
+  getMyStaffName = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const adminId = req.user!.id;
+      const result  = await resolveAdminDisplayName(adminId);
+      ResponseUtil.success(res, {
+        admin_id:   adminId,
+        staff_name: result.name,
+      }, 'Staff name resolved');
+    } catch (err) {
+      logger.error('getMyStaffName error', { error: toMsg(err) });
+      ResponseUtil.serverError(res, 'Failed to resolve staff name');
+    }
+  };
+
   // ── Transactions ─────────────────────────────────────────────────────────────
 
   /**
    * POST /api/admin/audit/transactions
-   * Add one transaction row. Date auto-set to today by backend.
+   * Add one transaction row. Date is auto-set to today by backend.
+   * Staff name is auto-filled from the authenticated admin's profile —
+   * any staff_on_duty value sent by the client is silently ignored.
    */
   createTransaction = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
@@ -27,12 +54,13 @@ export class AuditController {
         pickup_time, dropoff_time,
         sender_phone, receiver_phone, rider_phone,
         pickup_address, destination,
-        staff_on_duty, transaction_expenses,
+        transaction_expenses,
       } = req.body;
+      // NOTE: staff_on_duty is intentionally NOT read from req.body
 
-      if (!service_type)                  { ResponseUtil.badRequest(res, 'service_type is required'); return; }
-      if (charge_price === undefined)     { ResponseUtil.badRequest(res, 'charge_price is required'); return; }
-      if (amount_paid === undefined)      { ResponseUtil.badRequest(res, 'amount_paid is required'); return; }
+      if (!service_type)              { ResponseUtil.badRequest(res, 'service_type is required'); return; }
+      if (charge_price === undefined) { ResponseUtil.badRequest(res, 'charge_price is required'); return; }
+      if (amount_paid  === undefined) { ResponseUtil.badRequest(res, 'amount_paid is required');  return; }
 
       const tx = await svc.createTransaction(adminId, {
         serviceType:         service_type,
@@ -46,14 +74,15 @@ export class AuditController {
         riderPhone:          rider_phone,
         pickupAddress:       pickup_address,
         destination,
-        staffOnDuty:         staff_on_duty,
+        location:            req.body.location,
+        auditDate:           req.body.audit_date,   // optional — defaults to today if not sent
         transactionExpenses: transaction_expenses !== undefined ? Number(transaction_expenses) : 0,
       });
 
       ResponseUtil.created(res, { transaction: tx }, 'Transaction added');
     } catch (err) {
       const msg = toMsg(err);
-      if (msg.includes('cannot exceed') || msg.includes('required') || msg.includes('Invalid') || msg.includes('must be')) {
+      if (msg.includes('required') || msg.includes('Invalid') || msg.includes('must be')) {
         ResponseUtil.badRequest(res, msg);
       } else {
         logger.error('createTransaction error', { error: msg });
@@ -63,13 +92,19 @@ export class AuditController {
   };
 
   /**
-   * GET /api/admin/audit/transactions?date=YYYY-MM-DD
+   * GET /api/admin/audit/transactions
+   * ?date=YYYY-MM-DD          — single day (default: today)
+   * ?from=YYYY-MM-DD&to=...   — date range
+   * ?location=Ikeja           — partial location filter (can combine with date/range)
    */
   listTransactions = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
-      const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
-      const transactions = await svc.listTransactions(date);
-      ResponseUtil.success(res, { transactions, total: transactions.length, date });
+      const { date, from, to, location } = req.query as {
+        date?: string; from?: string; to?: string; location?: string;
+      };
+
+      const transactions = await svc.listTransactions({ date, from, to, location });
+      ResponseUtil.success(res, { transactions, total: transactions.length });
     } catch (err) {
       logger.error('listTransactions error', { error: toMsg(err) });
       ResponseUtil.serverError(res, 'Failed to list transactions');
@@ -77,16 +112,42 @@ export class AuditController {
   };
 
   /**
+   * GET /api/admin/audit/transactions/:id
+   * Returns full detail for a single transaction plus the name of the admin
+   * who created it. Any authenticated admin or super_admin may view.
+   */
+  getTransactionById = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const tx = await svc.getTransactionById(req.params.id);
+      ResponseUtil.success(res, { transaction: tx }, 'Transaction retrieved');
+    } catch (err) {
+      const msg = toMsg(err);
+      if (msg === 'Transaction not found') {
+        ResponseUtil.notFound(res, 'Transaction');
+      } else {
+        logger.error('getTransactionById error', { error: msg });
+        ResponseUtil.serverError(res, 'Failed to retrieve transaction');
+      }
+    }
+  };
+
+  /**
    * PUT /api/admin/audit/transactions/:id
+   * Only the admin who created the transaction may edit it.
+   * super_admin may edit any transaction.
+   * Locked transactions can still be edited by the owner / super_admin —
+   * locking does NOT prevent the creator from coming back to re-edit.
    */
   updateTransaction = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
-      const adminId = req.user!.id;
-      const tx = await svc.updateTransaction(req.params.id, adminId, {
+      const adminId    = req.user!.id;
+      const adminRoles = req.user!.roles;
+
+      const tx = await svc.updateTransaction(req.params.id, adminId, adminRoles, {
         serviceType:         req.body.service_type,
         rideType:            req.body.ride_type,
-        chargePrice:         req.body.charge_price !== undefined ? Number(req.body.charge_price) : undefined,
-        amountPaid:          req.body.amount_paid  !== undefined ? Number(req.body.amount_paid)  : undefined,
+        chargePrice:         req.body.charge_price    !== undefined ? Number(req.body.charge_price)    : undefined,
+        amountPaid:          req.body.amount_paid     !== undefined ? Number(req.body.amount_paid)     : undefined,
         pickupTime:          req.body.pickup_time,
         dropoffTime:         req.body.dropoff_time,
         senderPhone:         req.body.sender_phone,
@@ -94,17 +155,19 @@ export class AuditController {
         riderPhone:          req.body.rider_phone,
         pickupAddress:       req.body.pickup_address,
         destination:         req.body.destination,
-        staffOnDuty:         req.body.staff_on_duty,
+        location:            req.body.location,
         transactionExpenses: req.body.transaction_expenses !== undefined ? Number(req.body.transaction_expenses) : undefined,
+        // staff_on_duty is NOT editable — it was set at creation and is immutable
       });
+
       ResponseUtil.success(res, { transaction: tx }, 'Transaction updated');
     } catch (err) {
       const msg = toMsg(err);
-      if (msg === 'LOCKED') {
-        ResponseUtil.forbidden(res, 'This transaction is locked and cannot be edited');
+      if (msg === 'FORBIDDEN') {
+        ResponseUtil.forbidden(res, 'You can only edit transactions you created. Only a super admin can edit other admins\' transactions.');
       } else if (msg === 'Record not found') {
         ResponseUtil.notFound(res, 'Transaction');
-      } else if (msg.includes('cannot exceed') || msg.includes('must be')) {
+      } else if (msg.includes('must be') || msg.includes('Invalid')) {
         ResponseUtil.badRequest(res, msg);
       } else {
         logger.error('updateTransaction error', { error: msg });
@@ -115,15 +178,19 @@ export class AuditController {
 
   /**
    * DELETE /api/admin/audit/transactions/:id
+   * Only the admin who created the transaction (or super_admin) may delete it.
    */
   deleteTransaction = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
-      await svc.deleteTransaction(req.params.id);
+      const adminId    = req.user!.id;
+      const adminRoles = req.user!.roles;
+
+      await svc.deleteTransaction(req.params.id, adminId, adminRoles);
       ResponseUtil.success(res, null, 'Transaction deleted');
     } catch (err) {
       const msg = toMsg(err);
-      if (msg === 'LOCKED') {
-        ResponseUtil.forbidden(res, 'This transaction is locked and cannot be deleted');
+      if (msg === 'FORBIDDEN') {
+        ResponseUtil.forbidden(res, 'You can only delete transactions you created. Only a super admin can delete other admins\' transactions.');
       } else if (msg === 'Record not found') {
         ResponseUtil.notFound(res, 'Transaction');
       } else {
@@ -150,6 +217,7 @@ export class AuditController {
         expenditureAmount:      Number(expenditure_amount),
         expenditureReason:      expenditure_reason,
         expenditureDescription: expenditure_description,
+        auditDate:              req.body.audit_date,   // optional — defaults to today if not sent
       });
 
       ResponseUtil.created(res, { expenditure: exp }, 'Expenditure added');
@@ -180,21 +248,27 @@ export class AuditController {
 
   /**
    * PUT /api/admin/audit/expenditures/:id
+   * Only the admin who created the expenditure (or super_admin) may edit it.
    */
   updateExpenditure = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
-      const exp = await svc.updateExpenditure(req.params.id, {
-        expenditureAmount:      req.body.expenditure_amount !== undefined ? Number(req.body.expenditure_amount) : undefined,
+      const adminId    = req.user!.id;
+      const adminRoles = req.user!.roles;
+
+      const exp = await svc.updateExpenditure(req.params.id, adminId, adminRoles, {
+        expenditureAmount:      req.body.expenditure_amount    !== undefined ? Number(req.body.expenditure_amount) : undefined,
         expenditureReason:      req.body.expenditure_reason,
         expenditureDescription: req.body.expenditure_description,
       });
       ResponseUtil.success(res, { expenditure: exp }, 'Expenditure updated');
     } catch (err) {
       const msg = toMsg(err);
-      if (msg === 'LOCKED') {
-        ResponseUtil.forbidden(res, 'This expenditure is locked and cannot be edited');
+      if (msg === 'FORBIDDEN') {
+        ResponseUtil.forbidden(res, 'You can only edit expenditures you created. Only a super admin can edit other admins\' expenditures.');
       } else if (msg === 'Record not found') {
         ResponseUtil.notFound(res, 'Expenditure');
+      } else if (msg.includes('must be')) {
+        ResponseUtil.badRequest(res, msg);
       } else {
         logger.error('updateExpenditure error', { error: msg });
         ResponseUtil.serverError(res, 'Failed to update expenditure');
@@ -204,15 +278,19 @@ export class AuditController {
 
   /**
    * DELETE /api/admin/audit/expenditures/:id
+   * Only the admin who created the expenditure (or super_admin) may delete it.
    */
   deleteExpenditure = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
-      await svc.deleteExpenditure(req.params.id);
+      const adminId    = req.user!.id;
+      const adminRoles = req.user!.roles;
+
+      await svc.deleteExpenditure(req.params.id, adminId, adminRoles);
       ResponseUtil.success(res, null, 'Expenditure deleted');
     } catch (err) {
       const msg = toMsg(err);
-      if (msg === 'LOCKED') {
-        ResponseUtil.forbidden(res, 'This expenditure is locked and cannot be deleted');
+      if (msg === 'FORBIDDEN') {
+        ResponseUtil.forbidden(res, 'You can only delete expenditures you created. Only a super admin can delete other admins\' expenditures.');
       } else if (msg === 'Record not found') {
         ResponseUtil.notFound(res, 'Expenditure');
       } else {
@@ -226,13 +304,20 @@ export class AuditController {
 
   /**
    * POST /api/admin/audit/lock
-   * Body: { date: "YYYY-MM-DD" } — defaults to today if not provided
+   * Body: { date: "YYYY-MM-DD" } — defaults to today if not provided.
+   * Locking is a bookkeeping marker only. The owner or super_admin can
+   * still come back and re-edit a locked transaction at any time.
    */
   lockDay = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
-      const date = req.body.date || new Date().toISOString().split('T')[0];
-      const result = await svc.lockDay(date);
-      ResponseUtil.success(res, result, `All transactions and expenditures for ${date} have been locked`);
+      const adminId = req.user!.id;
+      const date    = req.body.date || new Date().toISOString().split('T')[0];
+      const result  = await svc.lockDay(adminId, date);
+      ResponseUtil.success(
+        res,
+        result,
+        `Audit for ${date} submitted by ${result.submitted_by}`
+      );
     } catch (err) {
       logger.error('lockDay error', { error: toMsg(err) });
       ResponseUtil.serverError(res, 'Failed to lock the day');
@@ -313,6 +398,37 @@ export class AuditController {
     } catch (err) {
       logger.error('exportMonthly error', { error: toMsg(err) });
       ResponseUtil.serverError(res, 'Failed to export monthly audit sheet');
+    }
+  };
+
+  /**
+   * GET /api/admin/audit/summary/yearly?year=2026
+   */
+  getYearlySummary = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const summary = await svc.getYearlySummary(year);
+      ResponseUtil.success(res, summary, 'Yearly summary retrieved');
+    } catch (err) {
+      logger.error('getYearlySummary error', { error: toMsg(err) });
+      ResponseUtil.serverError(res, 'Failed to get yearly summary');
+    }
+  };
+
+  /**
+   * GET /api/admin/audit/export/yearly?year=2026  → CSV download (super_admin only)
+   */
+  exportYearly = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const csv  = await svc.exportYearlyCSV(year);
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="audit_${year}.csv"`);
+      res.status(200).send(csv);
+    } catch (err) {
+      logger.error('exportYearly error', { error: toMsg(err) });
+      ResponseUtil.serverError(res, 'Failed to export yearly audit sheet');
     }
   };
 }

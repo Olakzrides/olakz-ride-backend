@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AdminRequest } from '../middleware/auth.middleware';
 import { HireAdminService } from '../services/hire-admin.service';
 import { ResponseUtil } from '../utils/response';
+import { emptyIfNoRole } from '../middleware/rbac.middleware';
 import { logger } from '../utils/logger';
 
 function toMsg(err: unknown): string {
@@ -15,6 +16,7 @@ export class HireAdminController {
    * Tab badge counts: all, pending, searching, accepted, arrived, in_progress, completed, cancelled
    */
   getStatusCounts = async (req: AdminRequest, res: Response): Promise<void> => {
+    if (emptyIfNoRole(req as any, res, { all: 0, pending: 0, searching: 0, accepted: 0, arrived: 0, in_progress: 0, completed: 0, cancelled: 0 })) return;
     try {
       const counts = await HireAdminService.getStatusCounts({
         from: req.query.from as string | undefined,

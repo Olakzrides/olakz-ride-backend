@@ -90,7 +90,7 @@ export class HireAdminService {
          start_datetime, end_datetime,
          amount, driver_fare, service_fee,
          payment_method, payment_status,
-         status, created_at, completed_at, cancelled_at`,
+         status, created_at, updated_at`,
         { count: 'exact' }
       )
       .order('created_at', { ascending: false })
@@ -205,8 +205,7 @@ export class HireAdminService {
         status:      formatStatus(hire.status),
         rawStatus:   hire.status,
         createdAt:   hire.created_at,
-        completedAt: hire.completed_at ?? null,
-        cancelledAt: hire.cancelled_at ?? null,
+        updatedAt:   hire.updated_at,
       };
     });
 
@@ -226,7 +225,7 @@ export class HireAdminService {
   static async getHireById(hireId: string) {
     const { data: hire, error } = await supabase
       .from('transport_hires')
-      .select('*')
+      .select('id, hire_number, customer_id, driver_id, vehicle_category, vehicle_sub_type, pickup_address, destination_address, start_datetime, end_datetime, amount, driver_fare, service_fee, rounding_fee, payment_method, payment_status, payment_hold_id, cash_payment_confirmed, for_whom, passenger_name, passenger_phone, note, status, cancellation_reason, created_at, updated_at')
       .eq('id', hireId)
       .single();
 
@@ -300,9 +299,8 @@ export class HireAdminService {
       pickup:      { address: hire.pickup_address },
       destination: { address: hire.destination_address },
       schedule: {
-        startDatetime:   hire.start_datetime,
-        endDatetime:     hire.end_datetime,
-        durationHours:   hire.duration_hours ?? null,
+        startDatetime: hire.start_datetime,
+        endDatetime:   hire.end_datetime,
       },
       amount: {
         total:          parseFloat(hire.amount ?? 0),
@@ -313,10 +311,13 @@ export class HireAdminService {
         paymentStatus:  hire.payment_status,
         cashConfirmed:  hire.cash_payment_confirmed ?? false,
       },
-      notes:       hire.notes ?? null,
+      forWhom:           hire.for_whom,
+      passengerName:     hire.passenger_name ?? null,
+      passengerPhone:    hire.passenger_phone ?? null,
+      notes:             hire.note ?? null,
+      cancellationReason: hire.cancellation_reason ?? null,
       createdAt:   hire.created_at,
-      completedAt: hire.completed_at ?? null,
-      cancelledAt: hire.cancelled_at ?? null,
+      updatedAt:   hire.updated_at,
     };
   }
 }

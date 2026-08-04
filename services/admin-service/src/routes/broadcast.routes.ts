@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { BroadcastController } from '../controllers/broadcast.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl = new BroadcastController();
 
 router.use(adminAuthMiddleware);
+router.use(rbacMiddleware);
 
 // ── Broadcast history (must come before /:role to avoid conflict) ─────────────
 router.get('/broadcasts',              auditMiddleware('broadcast_get_all'),     ctrl.getAll);

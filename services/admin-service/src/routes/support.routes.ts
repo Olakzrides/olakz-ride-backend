@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { SupportAdminController } from '../controllers/support-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();

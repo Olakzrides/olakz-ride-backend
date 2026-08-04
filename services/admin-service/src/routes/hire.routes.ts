@@ -1,14 +1,14 @@
 import { Router } from 'express';
 import { HireAdminController } from '../controllers/hire-admin.controller';
 import { adminAuthMiddleware } from '../middleware/auth.middleware';
+import { rbacMiddleware } from '../middleware/rbac.middleware';
 import { auditMiddleware } from '../middleware/audit.middleware';
 
 const router = Router();
 const ctrl   = new HireAdminController();
 
 router.use(adminAuthMiddleware);
-
-// GET /api/admin/hire/status-counts  — tab counts (must come before /:hireId)
+router.use(rbacMiddleware);
 router.get('/status-counts', auditMiddleware('hire_get_status_counts'), ctrl.getStatusCounts);
 
 // GET /api/admin/hire  — paginated list with filters
