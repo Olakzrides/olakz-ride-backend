@@ -390,15 +390,43 @@ class AuthService {
     // ── Password check ──────────────────────────────────────────────────────
     if (user.provider === 'emailpass') {
       if (isAdminClient) {
-        // Admin dashboard login:
-        // Use admin_password_hash if it exists (set by super admin when promoting).
-        // Fall back to password_hash for super_admin accounts created directly
-        // (they never go through the promotion flow so admin_password_hash is null).
-        const hashToCheck = user.admin_password_hash ?? user.password_hash;
+        // Admin dashboard login password logic:
+        //
+        // Two types of admin accounts:
+        //  1. PROMOTED USER — was a customer first, then promoted by super admin.
+        //     They never received an admin-specific password. They use their
+        //     original app password (password_hash). admin_password_hash may be
+        //     set from an old flow but should be ignored for promoted accounts.
+        //
+        //  2. CREATED ADMIN — account created fresh by super admin via the
+        //     create sub-admin flow. They have admin_password_hash set by the
+        //     super admin and use that to log in.
+        //
+        // A promoted user is identified by having 'customer' (or 'driver', 'vendor')
+        // in their roles array alongside 'admin'/'super_admin'.
+        // A created admin typically has only admin/super_admin roles.
+
+        const userRolesArr: string[] = user.roles ?? [];
+        const nonAdminRoles = userRolesArr.filter(
+          (r: string) => r !== 'admin' && r !== 'super_admin'
+        );
+        const isPromotedUser = nonAdminRoles.length > 0;
+
+        let hashToCheck: string | null;
+
+        if (isPromotedUser) {
+          // Promoted user → always use their original app password
+          hashToCheck = user.password_hash;
+        } else {
+          // Created admin → use admin_password_hash, fall back to password_hash
+          hashToCheck = user.admin_password_hash ?? user.password_hash;
+        }
+
         if (!hashToCheck) {
           await this.trackLoginAttempt(email, ipAddress, false);
           throw new UnauthorizedError('Admin password not set. Please contact your super admin.');
         }
+
         const isPasswordValid = await bcrypt.compare(password, hashToCheck);
         if (!isPasswordValid) {
           await this.trackLoginAttempt(email, ipAddress, false);
