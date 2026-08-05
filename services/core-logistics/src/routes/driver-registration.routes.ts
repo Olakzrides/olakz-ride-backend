@@ -32,6 +32,12 @@ router.get('/vehicle-types/:vehicleType/form-config', driverRegistrationControll
 // Document Requirements (temporary endpoint for testing)
 router.get('/register/:registrationId/documents/requirements', driverRegistrationController.getDocumentRequirements);
 
+// Driver account status check — frontend calls this to decide whether to show/lock the registration UI
+router.get('/driver-status',
+  authenticate,
+  driverRegistrationController.getDriverAccountStatus
+);
+
 // Multi-step registration endpoints (AUTHENTICATED - NO RATE LIMITING)
 router.post('/register/initiate', 
   authenticate, 

@@ -96,7 +96,7 @@ export class VehicleValidationService {
         name: 'address.postal_code',
         label: 'Postal Code',
         type: 'text',
-        required: true,
+        required: false,
         validation: { minLength: 3, maxLength: 20 }
       },
       {
@@ -544,9 +544,6 @@ export class VehicleValidationService {
     }
     if (!data.address?.state) {
       errors.push({ field: 'address.state', message: 'State is required' });
-    }
-    if (!data.address?.postal_code) {
-      errors.push({ field: 'address.postal_code', message: 'Postal code is required' });
     }
 
     // Emergency contact validation
