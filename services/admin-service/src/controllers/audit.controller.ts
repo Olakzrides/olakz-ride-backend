@@ -92,18 +92,16 @@ export class AuditController {
   };
 
   /**
-   * GET /api/admin/audit/transactions
-   * ?date=YYYY-MM-DD          — single day (default: today)
-   * ?from=YYYY-MM-DD&to=...   — date range
-   * ?location=Ikeja           — partial location filter (can combine with date/range)
+   * GET /api/admin/audit/transactions?from=YYYY-MM-DD&to=YYYY-MM-DD
+   * GET /api/admin/audit/transactions?from=2026-08-01&to=2026-08-04&location=Ikeja
+   * Both from and to default to today when not provided.
    */
   listTransactions = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
-      const { date, from, to, location } = req.query as {
-        date?: string; from?: string; to?: string; location?: string;
+      const { from, to, location } = req.query as {
+        from?: string; to?: string; location?: string;
       };
-
-      const transactions = await svc.listTransactions({ date, from, to, location });
+      const transactions = await svc.listTransactions({ from, to, location });
       ResponseUtil.success(res, { transactions, total: transactions.length });
     } catch (err) {
       logger.error('listTransactions error', { error: toMsg(err) });
@@ -233,13 +231,14 @@ export class AuditController {
   };
 
   /**
-   * GET /api/admin/audit/expenditures?date=YYYY-MM-DD
+   * GET /api/admin/audit/expenditures?from=YYYY-MM-DD&to=YYYY-MM-DD
+   * Both default to today when not provided.
    */
   listExpenditures = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
-      const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
-      const expenditures = await svc.listExpenditures(date);
-      ResponseUtil.success(res, { expenditures, total: expenditures.length, date });
+      const { from, to } = req.query as { from?: string; to?: string };
+      const expenditures = await svc.listExpenditures({ from, to });
+      ResponseUtil.success(res, { expenditures, total: expenditures.length });
     } catch (err) {
       logger.error('listExpenditures error', { error: toMsg(err) });
       ResponseUtil.serverError(res, 'Failed to list expenditures');
@@ -327,16 +326,17 @@ export class AuditController {
   // ── Summaries ─────────────────────────────────────────────────────────────────
 
   /**
-   * GET /api/admin/audit/summary/daily?date=YYYY-MM-DD
+   * GET /api/admin/audit/summary/daily?from=YYYY-MM-DD&to=YYYY-MM-DD
+   * Both default to today. Pass the same from/to as the transaction list filter.
    */
   getDailySummary = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
-      const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
-      const summary = await svc.getDailySummary(date);
-      ResponseUtil.success(res, summary, 'Daily summary retrieved');
+      const { from, to, location } = req.query as { from?: string; to?: string; location?: string };
+      const summary = await svc.getDailySummary({ from, to, location });
+      ResponseUtil.success(res, summary, 'Summary retrieved');
     } catch (err) {
       logger.error('getDailySummary error', { error: toMsg(err) });
-      ResponseUtil.serverError(res, 'Failed to get daily summary');
+      ResponseUtil.serverError(res, 'Failed to get summary');
     }
   };
 
