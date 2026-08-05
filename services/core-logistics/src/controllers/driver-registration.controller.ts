@@ -1188,7 +1188,7 @@ export class DriverRegistrationController {
 
         // Update vehicle record too
         if (vehicleDetails && updatedDriver) {
-          await this.createDriverVehicle(updatedDriver.id, vehicleType.id, vehicleDetails);
+          await this.createDriverVehicle(updatedDriver.id, vehicleType.id, vehicleDetails, session.id);
         }
 
         logger.info('Driver record updated for re-submission:', {
@@ -1227,7 +1227,7 @@ export class DriverRegistrationController {
 
       // Create driver vehicle record if vehicle details exist
       if (vehicleDetails && driver) {
-        await this.createDriverVehicle(driver.id, vehicleType.id, vehicleDetails);
+        await this.createDriverVehicle(driver.id, vehicleType.id, vehicleDetails, session.id);
       }
 
       logger.info('Driver record created:', {
@@ -1246,8 +1246,27 @@ export class DriverRegistrationController {
   /**
    * Create driver vehicle record
    */
-  private async createDriverVehicle(driverId: string, vehicleTypeId: string, vehicleDetails: any): Promise<void> {
+  private async createDriverVehicle(driverId: string, vehicleTypeId: string, vehicleDetails: any, sessionId?: string): Promise<void> {
     try {
+      // Try to get the vehicle photo URL from the session documents
+      let vehiclePhotoUrl: string | null = null;
+
+      if (sessionId) {
+        const { data: vehiclePhotoDoc } = await supabase
+          .from('driver_documents')
+          .select('document_url')
+          .eq('session_id', sessionId)
+          .eq('document_type', 'vehicle_photos')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (vehiclePhotoDoc?.document_url) {
+          vehiclePhotoUrl = vehiclePhotoDoc.document_url;
+          logger.info('Vehicle photo found for driver vehicle record', { driverId, vehiclePhotoUrl });
+        }
+      }
+
       const { error } = await supabase
         .from('driver_vehicles')
         .insert({
@@ -1259,6 +1278,7 @@ export class DriverRegistrationController {
           year: vehicleDetails.year ? parseInt(vehicleDetails.year) : new Date().getFullYear(),
           color: vehicleDetails.color || 'Unknown',
           is_active: true,
+          vehicle_photo_url: vehiclePhotoUrl,
         });
 
       if (error) {
