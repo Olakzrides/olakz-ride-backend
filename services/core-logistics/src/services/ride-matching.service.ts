@@ -25,9 +25,10 @@ interface RideMatchingCriteria {
   maxDrivers: number;
 }
 
-// ── Tier hierarchy — VIP drivers can serve Standard/Premium/VIP bookings,
-// Premium drivers can serve Standard/Premium bookings,
-// Standard drivers can only serve Standard bookings.
+// ── Tier hierarchy:
+// Standard drivers can ONLY serve Standard bookings.
+// Premium drivers can serve Standard + Premium bookings.
+// VIP drivers can serve Standard + Premium + VIP bookings.
 const TIER_IDS = {
   standard: '00000000-0000-0000-0000-000000000011',
   premium:  '00000000-0000-0000-0000-000000000012',
@@ -38,19 +39,21 @@ const TIER_IDS = {
  * Given the booked tier UUID, return the list of driver tier UUIDs
  * that are eligible to serve that ride.
  *
- * Standard booking → only Standard drivers
- * Premium booking  → Standard + Premium drivers
- * VIP booking      → Standard + Premium + VIP drivers
+ * Standard booking → Premium + VIP + Standard drivers (any tier can take standard)
+ * Premium booking  → Premium + VIP drivers only (standard drivers cannot serve premium)
+ * VIP booking      → VIP drivers only
  */
 function getEligibleDriverTierIds(bookedTierId: string): string[] {
   if (bookedTierId === TIER_IDS.vip) {
-    return [TIER_IDS.standard, TIER_IDS.premium, TIER_IDS.vip];
+    // Only VIP drivers can serve VIP bookings
+    return [TIER_IDS.vip];
   }
   if (bookedTierId === TIER_IDS.premium) {
-    return [TIER_IDS.standard, TIER_IDS.premium];
+    // Premium and VIP drivers can serve Premium bookings
+    return [TIER_IDS.premium, TIER_IDS.vip];
   }
-  // Standard or unknown — only Standard drivers
-  return [TIER_IDS.standard];
+  // Standard booking — all tiers (Standard, Premium, VIP) can serve it
+  return [TIER_IDS.standard, TIER_IDS.premium, TIER_IDS.vip];
 }
 
 export class RideMatchingService {
