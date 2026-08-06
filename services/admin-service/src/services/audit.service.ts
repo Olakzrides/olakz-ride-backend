@@ -229,33 +229,42 @@ export class AuditService {
     return data;
   }
 
-  /** List transactions with optional date, date range, and location filters */
+  /** List transactions filtered by date range and/or location.
+   *
+   *  location only      → returns all transactions matching that location (all dates)
+   *  from only          → returns that single day
+   *  from + to          → returns full range
+   *  from/to + location → returns range filtered by location
+   *  neither            → returns today
+   */
   async listTransactions(params: {
-    date?: string;
-    from?: string;
-    to?: string;
+    from?:     string;
+    to?:       string;
     location?: string;
   }) {
     const today = new Date().toISOString().split('T')[0];
+    const hasLocation  = !!params.location?.trim();
+    const hasDateRange = !!(params.from || params.to);
 
     let query = supabase
       .from('audit_transactions')
       .select('*')
+      .order('audit_date',    { ascending: true })
       .order('serial_number', { ascending: true });
 
-    // Date filtering: range takes priority over single date
-    if (params.from || params.to) {
-      if (params.from) query = query.gte('audit_date', params.from);
-      if (params.to)   query = query.lte('audit_date', params.to);
-    } else {
-      // Default to single date (today if not provided)
-      const date = params.date ?? today;
-      query = query.eq('audit_date', date);
+    if (hasDateRange) {
+      // Date filter applied — location is an optional additional filter
+      const from = params.from ?? today;
+      const to   = params.to   ?? from;
+      query = query.gte('audit_date', from).lte('audit_date', to);
+    } else if (!hasLocation) {
+      // No date and no location — default to today
+      query = query.eq('audit_date', today);
     }
+    // If location only (no dates) → no date filter, search all dates
 
-    // Location filter — partial case-insensitive match
-    if (params.location?.trim()) {
-      query = query.ilike('location', `%${params.location.trim()}%`);
+    if (hasLocation) {
+      query = query.ilike('location', `%${params.location!.trim()}%`);
     }
 
     const { data, error } = await query;
@@ -403,12 +412,18 @@ export class AuditService {
     return data;
   }
 
-  async listExpenditures(date: string) {
+  async listExpenditures(params: { from?: string; to?: string }) {
+    const today = new Date().toISOString().split('T')[0];
+    const from  = params.from ?? today;
+    const to    = params.to   ?? from;   // if no to, use from (single day)
+
     const { data, error } = await supabase
       .from('audit_expenditures')
       .select('*')
-      .eq('audit_date', date)
-      .order('created_at', { ascending: true });
+      .gte('audit_date', from)
+      .lte('audit_date', to)
+      .order('audit_date',  { ascending: true })
+      .order('created_at',  { ascending: true });
 
     if (error) throw new Error(`Failed to list expenditures: ${error.message}`);
     return data ?? [];
@@ -501,19 +516,46 @@ export class AuditService {
     };
   }
 
-  // ── Daily Summary ─────────────────────────────────────────────────────────────
+  /**
+   * Calculate gross revenue, gross expenses and net revenue for a date range.
+   *
+   * ?from=YYYY-MM-DD&to=YYYY-MM-DD
+   *
+   * Both from and to default to today when not provided.
+   * Pass the same from/to as the transactions filter — the summary
+   * will always match what the table shows.
+   */
+  async getDailySummary(params: { from?: string; to?: string; location?: string }) {
+    const today       = new Date().toISOString().split('T')[0];
+    const hasLocation  = !!params.location?.trim();
+    const hasDateRange = !!(params.from || params.to);
 
-  async getDailySummary(date: string) {
-    const [txData, expData] = await Promise.all([
-      supabase
-        .from('audit_transactions')
-        .select('charge_price, amount_paid, transaction_expenses')
-        .eq('audit_date', date),
-      supabase
-        .from('audit_expenditures')
-        .select('expenditure_amount')
-        .eq('audit_date', date),
-    ]);
+    let txQuery = supabase
+      .from('audit_transactions')
+      .select('charge_price, amount_paid, transaction_expenses');
+
+    let expQuery = supabase
+      .from('audit_expenditures')
+      .select('expenditure_amount');
+
+    if (hasDateRange) {
+      const from = params.from ?? today;
+      const to   = params.to   ?? from;
+      txQuery  = txQuery.gte('audit_date', from).lte('audit_date', to);
+      expQuery = expQuery.gte('audit_date', from).lte('audit_date', to);
+    } else if (!hasLocation) {
+      // No date and no location — default to today
+      txQuery  = txQuery.eq('audit_date', today);
+      expQuery = expQuery.eq('audit_date', today);
+    }
+    // location only → no date filter on transactions (search all dates)
+    // expenditures have no location, so always date-filtered or today
+
+    if (hasLocation) {
+      txQuery = txQuery.ilike('location', `%${params.location!.trim()}%`);
+    }
+
+    const [txData, expData] = await Promise.all([txQuery, expQuery]);
 
     if (txData.error)  throw new Error(`Failed to get transactions: ${txData.error.message}`);
     if (expData.error) throw new Error(`Failed to get expenditures: ${expData.error.message}`);
@@ -521,31 +563,23 @@ export class AuditService {
     const transactions = txData.data ?? [];
     const expenditures = expData.data ?? [];
 
-    // Gross Revenue = SUM of all Charge Price (total collected from customers)
-    const grossRevenue = transactions.reduce(
-      (s, r) => s + parseFloat(r.charge_price ?? 0), 0
-    );
-
-    // Gross Expenses = SUM of all Amount Paid (payouts to riders/vendors)
-    //                + SUM of all Transaction Expenses (per-transaction costs)
-    //                + SUM of all Expenditures (daily operational costs)
-    const totalPayouts     = transactions.reduce((s, r) => s + parseFloat(r.amount_paid        ?? 0), 0);
-    const totalTxExpenses  = transactions.reduce((s, r) => s + parseFloat(r.transaction_expenses ?? 0), 0);
-    const totalOpex        = expenditures.reduce((s, r) => s + parseFloat(r.expenditure_amount   ?? 0), 0);
-    const grossExpenses    = totalPayouts + totalTxExpenses + totalOpex;
-
-    // Net Revenue = Gross Revenue − Gross Expenses
-    // Positive = profit for the day. Negative = deficit.
-    const netRevenue = grossRevenue - grossExpenses;
+    const grossRevenue    = transactions.reduce((s, r) => s + parseFloat(r.charge_price         ?? 0), 0);
+    const totalPayouts    = transactions.reduce((s, r) => s + parseFloat(r.amount_paid          ?? 0), 0);
+    const totalTxExpenses = transactions.reduce((s, r) => s + parseFloat(r.transaction_expenses ?? 0), 0);
+    const totalOpex       = expenditures.reduce((s, r) => s + parseFloat(r.expenditure_amount   ?? 0), 0);
+    const grossExpenses   = totalPayouts + totalTxExpenses + totalOpex;
+    const netRevenue      = grossRevenue - grossExpenses;
 
     return {
-      date,
-      transaction_count:              transactions.length,
-      gross_revenue:                  round2(grossRevenue),
-      gross_expenses:                 round2(grossExpenses),
-      total_transaction_expenses:     round2(totalTxExpenses),
-      total_operational_expenditure:  round2(totalOpex),
-      net_revenue:                    round2(netRevenue),
+      from:     params.from ?? null,
+      to:       params.to   ?? null,
+      location: params.location ?? null,
+      transaction_count:             transactions.length,
+      gross_revenue:                 round2(grossRevenue),
+      gross_expenses:                round2(grossExpenses),
+      total_transaction_expenses:    round2(totalTxExpenses),
+      total_operational_expenditure: round2(totalOpex),
+      net_revenue:                   round2(netRevenue),
     };
   }
 
@@ -697,9 +731,9 @@ export class AuditService {
 
   async exportDailyCSV(date: string): Promise<string> {
     const [transactions, expenditures, summary] = await Promise.all([
-      this.listTransactions({ date }),
-      this.listExpenditures(date),
-      this.getDailySummary(date),
+      this.listTransactions({ from: date, to: date }),
+      this.listExpenditures({ from: date, to: date }),
+      this.getDailySummary({ from: date, to: date }),
     ]);
 
     const headers = [
