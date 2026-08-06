@@ -121,11 +121,27 @@ export class AirtimeAdminService {
       query = query.lte('created_at', toEnd.toISOString());
     }
 
-    // Search by phone or network
+    // Search by phone number, network, or user name/email
     if (search) {
-      query = query.or(
-        `phone_number.ilike.%${search}%,network.ilike.%${search}%`
-      );
+      // Find matching user IDs for name/email search
+      const { data: matchingUsers } = await supabase
+        .from('users')
+        .select('id')
+        .or(
+          `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
+        );
+
+      const matchingUserIds = (matchingUsers ?? []).map((u: any) => u.id);
+
+      if (matchingUserIds.length > 0) {
+        query = query.or(
+          `phone_number.ilike.%${search}%,network.ilike.%${search}%,user_id.in.(${matchingUserIds.join(',')})`
+        );
+      } else {
+        query = query.or(
+          `phone_number.ilike.%${search}%,network.ilike.%${search}%`
+        );
+      }
     }
 
     const { data: txns, count, error } = await query;
@@ -139,11 +155,11 @@ export class AirtimeAdminService {
 
     // Enrich with user names
     const userIds = [...new Set(rows.map(r => r.user_id).filter(Boolean))];
-    const userMap = new Map<string, { first_name: string; last_name: string; email: string }>();
+    const userMap = new Map<string, { first_name: string; last_name: string; email: string; phone: string | null }>();
     if (userIds.length > 0) {
       const { data: users } = await supabase
         .from('users')
-        .select('id, first_name, last_name, email')
+        .select('id, first_name, last_name, email, phone')
         .in('id', userIds);
       for (const u of users ?? []) userMap.set(u.id, u);
     }
@@ -154,8 +170,8 @@ export class AirtimeAdminService {
         sn: offset + idx + 1,
         id: tx.id,
         user: user
-          ? { id: tx.user_id, name: `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim(), email: user.email }
-          : { id: tx.user_id, name: 'Unknown', email: null },
+          ? { id: tx.user_id, name: `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim(), email: user.email, phone: user.phone ?? null }
+          : { id: tx.user_id, name: 'Unknown', email: null, phone: null },
         network:     formatNetwork(tx.network),
         rawNetwork:  tx.network,
         type:        tx.transaction_type === 'airtime' ? 'Airtime' : 'Data',

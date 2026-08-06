@@ -46,16 +46,17 @@ export class FoodAdminService {
 
     // Batch fetch customer names
     const customerIds = [...new Set(rows.map((o: any) => o.customer_id).filter(Boolean))];
-    const customerMap = new Map<string, { name: string; phone: string | null }>();
+    const customerMap = new Map<string, { name: string; phone: string | null; email: string | null }>();
     if (customerIds.length > 0) {
       const { data: users } = await supabase
         .from('users')
-        .select('id, first_name, last_name, phone')
+        .select('id, first_name, last_name, phone, email')
         .in('id', customerIds);
       for (const u of users ?? []) {
         customerMap.set(u.id, {
           name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Unknown',
           phone: u.phone ?? null,
+          email: u.email ?? null,
         });
       }
     }
@@ -106,6 +107,7 @@ export class FoodAdminService {
           id:    o.customer_id,
           name:  customer?.name  ?? 'Unknown',
           phone: customer?.phone ?? null,
+          email: customer?.email ?? null,
         },
         courier: o.courier_id ? {
           id:    o.courier_id,

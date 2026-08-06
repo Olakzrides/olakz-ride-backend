@@ -109,9 +109,24 @@ export class HireAdminService {
     }
 
     if (search) {
-      query = query.or(
-        `pickup_address.ilike.%${search}%,destination_address.ilike.%${search}%,hire_number.ilike.%${search}%`
-      );
+      const { data: matchingUsers } = await supabase
+        .from('users')
+        .select('id')
+        .or(
+          `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
+        );
+
+      const matchingUserIds = (matchingUsers ?? []).map((u: any) => u.id);
+
+      if (matchingUserIds.length > 0) {
+        query = query.or(
+          `pickup_address.ilike.%${search}%,destination_address.ilike.%${search}%,hire_number.ilike.%${search}%,customer_id.in.(${matchingUserIds.join(',')})`
+        );
+      } else {
+        query = query.or(
+          `pickup_address.ilike.%${search}%,destination_address.ilike.%${search}%,hire_number.ilike.%${search}%`
+        );
+      }
     }
 
     const { data: hires, count, error } = await query;
@@ -121,16 +136,17 @@ export class HireAdminService {
 
     // Batch fetch customer names
     const customerIds = [...new Set(rows.map((r: any) => r.customer_id).filter(Boolean))];
-    const customerMap = new Map<string, { name: string; phone: string | null }>();
+    const customerMap = new Map<string, { name: string; phone: string | null; email: string | null }>();
     if (customerIds.length > 0) {
       const { data: users } = await supabase
         .from('users')
-        .select('id, first_name, last_name, phone')
+        .select('id, first_name, last_name, phone, email')
         .in('id', customerIds);
       for (const u of users ?? []) {
         customerMap.set(u.id, {
           name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Unknown',
           phone: u.phone ?? null,
+          email: u.email ?? null,
         });
       }
     }
@@ -180,6 +196,7 @@ export class HireAdminService {
           id:    hire.customer_id,
           name:  customer?.name  ?? 'Unknown',
           phone: customer?.phone ?? null,
+          email: customer?.email ?? null,
         },
         driver: hire.driver_id ? {
           id:    hire.driver_id,
