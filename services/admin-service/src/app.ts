@@ -28,6 +28,7 @@ import subAdminRoutes from './routes/sub-admin.routes';
 
 import supportRoutes from './routes/support.routes';
 import auditRoutes from './routes/audit.routes';
+import dailyReportRoutes from './routes/daily-report.routes';
 import hireAdminRoutes from './routes/hire.routes';
 import systemRolesRoutes from './routes/system-roles.routes';
 
@@ -118,6 +119,9 @@ app.use('/api/admin/hire', hireAdminRoutes);
 
 // Step 23: system roles, RBAC, instant promote
 app.use('/api/admin/system-roles', systemRolesRoutes);
+
+// Step 24: admin daily work reports
+app.use('/api/admin/daily-reports', dailyReportRoutes);
 
 // 404
 app.use((req, res) => {

@@ -546,24 +546,89 @@ export class VendorAdminService {
     if (error || !existing) throw new Error('Vendor not found');
 
     const v = existing as Record<string, unknown>;
-    if (v.verification_status === 'terminated') throw new Error('ALREADY_TERMINATED');
+    if (v.verification_status === 'account_deleted') throw new Error('ALREADY_TERMINATED');
 
+    // Deactivate the vendor record and all their stores/products
     const { data: updated, error: updateError } = await supabase
       .from('vendors')
-      .update({ verification_status: 'terminated', is_active: false, updated_at: new Date().toISOString() })
-      .eq('id', vendorId)
+      .update({ verification_status: 'account_deleted', is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', (v.id as string))
       .select('id, user_id, verification_status, updated_at')
       .single();
 
-    if (updateError || !updated) throw new Error('Failed to terminate vendor account');
+    if (updateError || !updated) throw new Error('Failed to remove vendor account');
 
-    // Mirror on users table — data preserved
-    await supabase
+    const now = new Date().toISOString();
+
+    // Deactivate food restaurant + menu items (non-fatal)
+    const { data: restaurant } = await supabase
+      .from('food_restaurants')
+      .select('id')
+      .eq('owner_id', v.user_id as string)
+      .maybeSingle();
+
+    if (restaurant) {
+      await supabase
+        .from('food_restaurants')
+        .update({ is_active: false, is_open: false, updated_at: now })
+        .eq('owner_id', v.user_id as string);
+      await supabase
+        .from('food_menu_items')
+        .update({ is_active: false, is_available: false, updated_at: now })
+        .eq('restaurant_id', restaurant.id);
+    }
+
+    // Deactivate marketplace store + products (non-fatal)
+    const { data: store } = await supabase
+      .from('marketplace_stores')
+      .select('id')
+      .eq('owner_id', v.user_id as string)
+      .maybeSingle();
+
+    if (store) {
+      await supabase
+        .from('marketplace_stores')
+        .update({ is_active: false, is_open: false, updated_at: now })
+        .eq('owner_id', v.user_id as string);
+      await supabase
+        .from('marketplace_products')
+        .update({ is_active: false, is_available: false, updated_at: now })
+        .eq('store_id', store.id);
+    }
+
+    // Remove 'vendor' role from the user's roles array.
+    // The user account stays ACTIVE — they can still use the app as a customer.
+    const { data: userRow } = await supabase
       .from('users')
-      .update({ status: 'terminated', updated_at: new Date().toISOString() })
-      .eq('id', v.user_id as string);
+      .select('roles, active_role')
+      .eq('id', v.user_id as string)
+      .single();
 
-    logger.warn('Admin terminated vendor account', { adminId, vendorId, previousStatus: v.verification_status, reason: reason ?? 'No reason provided' });
+    if (userRow) {
+      const currentRoles: string[] = (userRow.roles as string[]) ?? [];
+      const newRoles = currentRoles.filter((r: string) => r !== 'vendor');
+      const newActiveRole = userRow.active_role === 'vendor'
+        ? (newRoles.includes('customer') ? 'customer' : newRoles[0] ?? 'customer')
+        : userRow.active_role;
+
+      await supabase
+        .from('users')
+        .update({
+          roles:       newRoles.length > 0 ? newRoles : ['customer'],
+          active_role: newActiveRole,
+          role:        newActiveRole,
+          updated_at:  now,
+        })
+        .eq('id', v.user_id as string);
+    }
+
+    logger.warn('Admin removed vendor account (user remains active as customer)', {
+      adminId,
+      vendorId,
+      userId: v.user_id,
+      previousStatus: v.verification_status,
+      reason: reason ?? 'No reason provided',
+    });
     return updated;
   }
 

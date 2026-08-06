@@ -324,15 +324,41 @@ export class UserAdminService {
   // ─── Suspend / Reactivate ─────────────────────────────────────────────────
 
   static async toggleSuspend(userId: string, adminId: string) {
+    // Resolve driver record ID to user ID if needed
+    let resolvedUserId = userId;
+
     const { data: existing, error: fetchError } = await supabase
       .from('users')
       .select('id, email, status')
       .eq('id', userId)
       .single();
 
-    if (fetchError || !existing) throw new Error('User not found');
+    if (fetchError || !existing) {
+      const { data: driverRow } = await supabase
+        .from('drivers')
+        .select('user_id')
+        .eq('id', userId)
+        .maybeSingle();
 
-    const current = (existing as Record<string, unknown>).status as string;
+      if (driverRow?.user_id) {
+        resolvedUserId = driverRow.user_id;
+      } else {
+        throw new Error('User not found');
+      }
+    }
+
+    const userRecord = existing && existing.id === resolvedUserId
+      ? existing
+      : await supabase
+          .from('users')
+          .select('id, email, status')
+          .eq('id', resolvedUserId)
+          .single()
+          .then(r => r.data);
+
+    if (!userRecord) throw new Error('User not found');
+
+    const current = (userRecord as Record<string, unknown>).status as string;
     if (current === 'terminated') throw new Error('ACCOUNT_TERMINATED');
 
     const newStatus = current === 'suspended' ? 'active' : 'suspended';
@@ -340,39 +366,68 @@ export class UserAdminService {
     const { data: user, error } = await supabase
       .from('users')
       .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', userId)
+      .eq('id', resolvedUserId)
       .select('id, email, status, updated_at')
       .single();
 
     if (error || !user) throw new Error('Failed to update account status');
 
-    logger.info('Admin toggled user suspension', { adminId, userId, from: current, to: newStatus });
+    logger.info('Admin toggled user suspension', { adminId, userId: resolvedUserId, from: current, to: newStatus });
     return { user, action: newStatus === 'suspended' ? 'suspended' : 'reactivated' };
   }
 
   // ─── Terminate ────────────────────────────────────────────────────────────
 
   static async terminateAccount(userId: string, adminId: string, reason?: string) {
+    // The caller may pass either a users.id or a drivers.id (from the driver profile page).
+    // Resolve to the actual user ID in both cases.
+    let resolvedUserId = userId;
+
     const { data: existing, error: fetchError } = await supabase
       .from('users')
       .select('id, email, status')
       .eq('id', userId)
       .single();
 
-    if (fetchError || !existing) throw new Error('User not found');
+    if (fetchError || !existing) {
+      // Not found as a user ID — check if it's a driver record ID
+      const { data: driverRow } = await supabase
+        .from('drivers')
+        .select('user_id')
+        .eq('id', userId)
+        .maybeSingle();
 
-    const current = (existing as Record<string, unknown>).status as string;
+      if (driverRow?.user_id) {
+        resolvedUserId = driverRow.user_id;
+      } else {
+        throw new Error('User not found');
+      }
+    }
+
+    // Re-fetch with the resolved user ID if it changed
+    const userRecord = existing && existing.id === resolvedUserId
+      ? existing
+      : await supabase
+          .from('users')
+          .select('id, email, status')
+          .eq('id', resolvedUserId)
+          .single()
+          .then(r => r.data);
+
+    if (!userRecord) throw new Error('User not found');
+
+    const current = (userRecord as Record<string, unknown>).status as string;
 
     // Idempotent — if already terminated, return success instead of throwing
     if (current === 'terminated') {
-      logger.info('terminateAccount: account already terminated (idempotent)', { adminId, userId });
-      return existing;
+      logger.info('terminateAccount: account already terminated (idempotent)', { adminId, userId: resolvedUserId });
+      return userRecord;
     }
 
     const { data: user, error } = await supabase
       .from('users')
       .update({ status: 'terminated', updated_at: new Date().toISOString() })
-      .eq('id', userId)
+      .eq('id', resolvedUserId)
       .select('id, email, status, updated_at')
       .single();
 
@@ -384,61 +439,61 @@ export class UserAdminService {
     await supabase
       .from('drivers')
       .update({ status: 'account_deleted', updated_at: now })
-      .eq('user_id', userId);
+      .eq('user_id', resolvedUserId);
 
     // Disable vendor record + deactivate all vendor products (non-fatal)
     const { data: vendor } = await supabase
       .from('vendors')
       .select('id, user_id')
-      .eq('user_id', userId)
+      .eq('user_id', resolvedUserId)
       .maybeSingle();
 
     if (vendor) {
       await supabase
         .from('vendors')
         .update({ verification_status: 'account_deleted', is_active: false, updated_at: now })
-        .eq('user_id', userId);
+        .eq('user_id', resolvedUserId);
 
       // Deactivate food restaurant + menu items
       const { data: restaurant } = await supabase
         .from('food_restaurants')
         .select('id')
-        .eq('owner_id', userId)
+        .eq('owner_id', resolvedUserId)
         .maybeSingle();
 
       if (restaurant) {
         await supabase
           .from('food_restaurants')
           .update({ is_active: false, is_open: false, updated_at: now })
-          .eq('owner_id', userId);
+          .eq('owner_id', resolvedUserId);
         await supabase
           .from('food_menu_items')
           .update({ is_active: false, is_available: false, updated_at: now })
           .eq('restaurant_id', restaurant.id);
-        logger.info('Food restaurant + menu deactivated on account termination', { userId, adminId, restaurantId: restaurant.id });
+        logger.info('Food restaurant + menu deactivated on account termination', { userId: resolvedUserId, adminId, restaurantId: restaurant.id });
       }
 
       // Deactivate marketplace store + products
       const { data: store } = await supabase
         .from('marketplace_stores')
         .select('id')
-        .eq('owner_id', userId)
+        .eq('owner_id', resolvedUserId)
         .maybeSingle();
 
       if (store) {
         await supabase
           .from('marketplace_stores')
           .update({ is_active: false, is_open: false, updated_at: now })
-          .eq('owner_id', userId);
+          .eq('owner_id', resolvedUserId);
         await supabase
           .from('marketplace_products')
           .update({ is_active: false, is_available: false, updated_at: now })
           .eq('store_id', store.id);
-        logger.info('Marketplace store + products deactivated on account termination', { userId, adminId, storeId: store.id });
+        logger.info('Marketplace store + products deactivated on account termination', { userId: resolvedUserId, adminId, storeId: store.id });
       }
     }
 
-    logger.warn('Admin terminated user account', { adminId, userId, previousStatus: current, reason: reason ?? 'No reason provided' });
+    logger.warn('Admin terminated user account', { adminId, userId: resolvedUserId, previousStatus: current, reason: reason ?? 'No reason provided' });
     return user;
   }
 
