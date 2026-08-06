@@ -79,8 +79,6 @@ export class HireService {
     return HIRE_VEHICLE_TYPES;
   }
 
-  // ── Fare estimate ──────────────────────────────────────────────────────────
-
   async estimateFare(params: {
     vehicle_sub_type: string;
     pickup_lat: number; pickup_lng: number; pickup_address: string;
