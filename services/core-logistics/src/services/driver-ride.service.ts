@@ -1079,7 +1079,8 @@ export class DriverRideService {
             payment_method,
             driver_fare,
             service_fee,
-            rounding_fee
+            rounding_fee,
+            variant_id
           )
         `)
         .eq('driver_id', driverId)
@@ -1099,6 +1100,29 @@ export class DriverRideService {
       const activeRequests = requests.filter(
         (r: any) => r.ride?.status === 'searching'
       );
+
+      // Collect all unique variant IDs from active requests for a batch lookup
+      const variantIds = [
+        ...new Set(
+          activeRequests
+            .map((r: any) => r.ride?.variant_id)
+            .filter(Boolean) as string[]
+        ),
+      ];
+
+      // Fetch variant titles + vehicle type names in one query
+      const variantMap = new Map<string, string>(); // variantId → vehicleType name
+      if (variantIds.length > 0) {
+        const { data: variants } = await supabase
+          .from('ride_variants')
+          .select('id, vehicle_type:vehicle_types(name)')
+          .in('id', variantIds);
+
+        for (const v of variants ?? []) {
+          const vt = (v as any).vehicle_type;
+          variantMap.set(v.id, vt?.name || 'Standard');
+        }
+      }
 
       // Collect all unique customer user_ids from the active rides
       const userIds = [
@@ -1139,7 +1163,7 @@ export class DriverRideService {
         const platformRemittance = serviceFee + roundingFee;
 
         // Strip raw fare/identity fields from ride — driver should not see them directly
-        const { service_fee, rounding_fee, driver_fare, estimated_fare, payment_method, user_id, ...ridePublic } = r.ride ?? {};
+        const { service_fee, rounding_fee, driver_fare, estimated_fare, payment_method, user_id, variant_id, ...ridePublic } = r.ride ?? {};
 
         return {
           id: r.id,
@@ -1156,6 +1180,7 @@ export class DriverRideService {
             photo: user?.avatar_url ?? null,
           },
           payment_method: r.ride?.payment_method ?? null,
+          vehicleType: variantMap.get(r.ride?.variant_id) ?? 'Standard',
           fare: {
             driver_fare: Number(r.ride?.driver_fare ?? 0),
             currency: 'NGN',
