@@ -21,6 +21,7 @@ export const PLATFORM_SECTIONS = [
   'notifications',
   'analytics',
   'system_roles',
+  'email_notifications',
 ] as const;
 
 export type PlatformSection = (typeof PLATFORM_SECTIONS)[number];
@@ -72,6 +73,7 @@ export function pathToSection(path: string): PlatformSection | null {
       path.includes('/broadcast'))            return 'notifications';
   if (path.includes('/analytics'))            return 'analytics';
   if (path.includes('/system-roles'))         return 'system_roles';
+  if (path.includes('/email-logs'))           return 'email_notifications';
   if (path.includes('/dashboard') ||
       path.includes('/health'))               return 'dashboard';
   return null;

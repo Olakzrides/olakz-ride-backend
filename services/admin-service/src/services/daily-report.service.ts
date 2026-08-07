@@ -154,29 +154,47 @@ export class DailyReportService {
   }
 
   /**
-   * Get all staff reports for a given date (super_admin only).
-   * Filterable by date and admin_name search.
+   * Get all staff reports (super_admin only).
+   *
+   * Default — no filters: returns ALL reports from ALL admins, newest first.
+   * Super admin sees the full history the moment they open "All Staff".
+   *
+   * Optional filters (any combination):
+   *   date       — single date (YYYY-MM-DD)
+   *   from/to    — date range
+   *   admin_id   — filter to one specific admin's history
+   *   admin_name — partial name search
    */
   static async getAllReports(params: {
-    date?:       string;
-    adminName?:  string;
-    page:        number;
-    limit:       number;
+    date?:      string;
+    adminId?:   string;
+    from?:      string;
+    to?:        string;
+    adminName?: string;
+    page:       number;
+    limit:      number;
   }) {
-    const targetDate = params.date ?? new Date().toISOString().split('T')[0];
     const { page, limit } = params;
     const offset = (page - 1) * limit;
 
     let query = supabase
       .from('admin_daily_reports')
       .select('*', { count: 'exact' })
-      .eq('report_date', targetDate)
+      .order('report_date', { ascending: false })
       .order('submitted_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (params.adminName?.trim()) {
-      query = query.ilike('admin_name', `%${params.adminName.trim()}%`);
+    // Date filter — only applied when explicitly provided
+    if (params.date) {
+      query = query.eq('report_date', params.date);
+    } else {
+      if (params.from) query = query.gte('report_date', params.from);
+      if (params.to)   query = query.lte('report_date', params.to);
     }
+
+    // Admin filter
+    if (params.adminId)          query = query.eq('admin_id', params.adminId);
+    if (params.adminName?.trim()) query = query.ilike('admin_name', `%${params.adminName.trim()}%`);
 
     const { data, count, error } = await query;
     if (error) throw new Error(`Failed to fetch all reports: ${error.message}`);
@@ -191,7 +209,8 @@ export class DailyReportService {
       },
       summary: {
         total_submitted: count ?? 0,
-        date: targetDate,
+        date:            params.date ?? null,
+        admin_id:        params.adminId ?? null,
       },
     };
   }
