@@ -16,6 +16,7 @@ export const PLATFORM_SECTIONS = [
   'administrators',
   'support_moderation',
   'payments_transactions',
+  'wallet_transactions',
   'audit_sheet',
   'pricing',
   'notifications',
@@ -67,6 +68,7 @@ export function pathToSection(path: string): PlatformSection | null {
   if (path.includes('/support'))              return 'support_moderation';
   if (path.includes('/payments') ||
       path.includes('/remittance'))           return 'payments_transactions';
+  if (path.includes('/wallet'))               return 'wallet_transactions';
   if (path.includes('/audit'))                return 'audit_sheet';
   if (path.includes('/pricing'))              return 'pricing';
   if (path.includes('/notifications') ||
