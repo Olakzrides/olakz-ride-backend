@@ -238,7 +238,7 @@ export class AdminDriverController {
       const msg = toMessage(err);
       if (msg === 'Driver not found') { ResponseUtil.notFound(res, 'Driver'); return; }
       if (msg === 'ALREADY_TERMINATED') {
-        ResponseUtil.badRequest(res, 'This driver account is already terminated', 'ALREADY_TERMINATED'); return;
+        ResponseUtil.badRequest(res, 'This driver account has already been removed', 'ALREADY_TERMINATED'); return;
       }
       logger.error('terminateDriver error', { error: msg });
       ResponseUtil.serverError(res, 'Failed to terminate driver account', 'DRIVER_TERMINATE_ERROR');

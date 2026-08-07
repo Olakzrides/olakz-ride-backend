@@ -359,7 +359,7 @@ export class AdminDriverService {
       .from('drivers')
       .select(
         `id, user_id, license_number, status, rating, total_rides, total_earnings,
-         identification_type, identification_number,
+         identification_type, identification_number, service_tier_id,
          approved_by, approved_at, rejection_reason, created_at, updated_at,
          vehicle_type:vehicle_types!drivers_vehicle_type_id_fkey(id, name, display_name),
          vehicles:driver_vehicles(id, plate_number, manufacturer, model, year, color, is_active),
@@ -374,6 +374,15 @@ export class AdminDriverService {
     const userMap = await this.fetchUsers([row.user_id as string]);
     const user = userMap.get(row.user_id as string) ?? {} as Record<string, unknown>;
     const walletBalance = await this.getWalletBalance(row.user_id as string);
+
+    // Resolve service tier from the fixed UUID map
+    const serviceTierMap: Record<string, { id: string; name: string; display_name: string }> = {
+      '00000000-0000-0000-0000-000000000011': { id: '00000000-0000-0000-0000-000000000011', name: 'standard', display_name: 'Standard Ride' },
+      '00000000-0000-0000-0000-000000000012': { id: '00000000-0000-0000-0000-000000000012', name: 'premium',  display_name: 'Premium Ride' },
+      '00000000-0000-0000-0000-000000000013': { id: '00000000-0000-0000-0000-000000000013', name: 'vip',      display_name: 'VIP Ride' },
+    };
+    const serviceTierId = row.service_tier_id as string | null;
+    const serviceTier   = serviceTierId ? (serviceTierMap[serviceTierId] ?? null) : null;
 
     // Pull personal_info_data from the most recent completed registration session
     const { data: session } = await supabase
@@ -428,6 +437,7 @@ export class AdminDriverService {
       vehicles:      row.vehicles,
       documents:     row.documents,
       wallet_balance: walletBalance,
+      service_tier:  serviceTier,   // { id, name, display_name } — Standard Ride / Premium Ride / VIP Ride
       // ── Vehicle details (from registration session) ───────────────────────
       vehicle_details: session ? {
         manufacturer:     vd.manufacturer     ?? null,
@@ -562,24 +572,52 @@ export class AdminDriverService {
     if (error || !existing) throw new Error('Driver not found');
 
     const row = existing as Record<string, unknown>;
-    if (row.status === 'terminated') throw new Error('ALREADY_TERMINATED');
+    if (row.status === 'account_deleted') throw new Error('ALREADY_TERMINATED');
 
+    // Mark the driver record as deleted
     const { data: updated, error: updateError } = await supabase
       .from('drivers')
-      .update({ status: 'terminated', updated_at: new Date().toISOString() })
+      .update({ status: 'account_deleted', updated_at: new Date().toISOString() })
       .eq('id', driverId)
       .select('id, user_id, status, updated_at')
       .single();
 
     if (updateError || !updated) throw new Error('Failed to terminate driver account');
 
-    // Mirror on users table — data preserved, account blocked
-    await supabase
+    // Remove 'driver' role from the user's roles array
+    // so they can no longer log in as a driver but remain an active customer.
+    // Their user account status stays 'active' — they can still use the app.
+    const { data: userRow } = await supabase
       .from('users')
-      .update({ status: 'terminated', updated_at: new Date().toISOString() })
-      .eq('id', row.user_id as string);
+      .select('roles, active_role')
+      .eq('id', row.user_id as string)
+      .single();
 
-    logger.warn('Admin terminated driver account', { adminId, driverId, previousStatus: row.status, reason: reason ?? 'No reason provided' });
+    if (userRow) {
+      const currentRoles: string[] = (userRow.roles as string[]) ?? [];
+      const newRoles = currentRoles.filter((r: string) => r !== 'driver');
+      const newActiveRole = userRow.active_role === 'driver'
+        ? (newRoles.includes('customer') ? 'customer' : newRoles[0] ?? 'customer')
+        : userRow.active_role;
+
+      await supabase
+        .from('users')
+        .update({
+          roles:       newRoles.length > 0 ? newRoles : ['customer'],
+          active_role: newActiveRole,
+          role:        newActiveRole,
+          updated_at:  new Date().toISOString(),
+        })
+        .eq('id', row.user_id as string);
+    }
+
+    logger.warn('Admin removed driver account (user remains active as customer)', {
+      adminId,
+      driverId,
+      userId: row.user_id,
+      previousStatus: row.status,
+      reason: reason ?? 'No reason provided',
+    });
     return updated;
   }
 
