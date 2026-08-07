@@ -168,9 +168,27 @@ export class PaymentAdminService {
       query = query.lte('created_at', toEnd.toISOString());
     }
 
-    // Reference search
+    // Search — by reference OR by user name/email/phone
     if (search) {
-      query = query.ilike('reference', `%${search}%`);
+      // First try to find matching user IDs for name/email/phone search
+      const { data: matchingUsers } = await supabase
+        .from('users')
+        .select('id')
+        .or(
+          `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
+        );
+
+      const matchingUserIds = (matchingUsers ?? []).map((u: any) => u.id);
+
+      if (matchingUserIds.length > 0) {
+        // Match by reference OR by user ID
+        query = query.or(
+          `reference.ilike.%${search}%,user_id.in.(${matchingUserIds.join(',')})`
+        );
+      } else {
+        // No matching users — fall back to reference search only
+        query = query.ilike('reference', `%${search}%`);
+      }
     }
 
     const { data: transactions, count, error } = await query;
@@ -204,12 +222,12 @@ export class PaymentAdminService {
 
     // Collect all user IDs for enrichment
     const userIds = [...new Set(rows.map(r => r.user_id).filter(Boolean))];
-    const userMap = new Map<string, { first_name: string; last_name: string; email: string }>();
+    const userMap = new Map<string, { first_name: string; last_name: string; email: string; phone: string | null }>();
 
     if (userIds.length > 0) {
       const { data: users } = await supabase
         .from('users')
-        .select('id, first_name, last_name, email')
+        .select('id, first_name, last_name, email, phone')
         .in('id', userIds);
 
       for (const u of users ?? []) {
@@ -282,8 +300,9 @@ export class PaymentAdminService {
               id: tx.user_id,
               name: `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || 'Unknown',
               email: user.email,
+              phone: user.phone ?? null,
             }
-          : { id: tx.user_id, name: 'Unknown', email: null },
+          : { id: tx.user_id, name: 'Unknown', email: null, phone: null },
         createdAt: tx.created_at,
         metadata: tx.metadata ?? {},
       };

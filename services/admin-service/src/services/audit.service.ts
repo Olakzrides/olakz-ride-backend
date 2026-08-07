@@ -19,6 +19,7 @@ export interface CreateTransactionInput {
   pickupAddress?:       string;
   destination?:         string;
   location?:            string;         // free-text location, e.g. "Ikeja, Lagos"
+  item?:                string;         // free-text description of what was transported/serviced
   auditDate?:           string;         // YYYY-MM-DD — optional, defaults to today if not provided
   // NOTE: staffOnDuty is intentionally removed — auto-set from authenticated admin's profile
   transactionExpenses?: number;
@@ -217,6 +218,7 @@ export class AuditService {
         pickup_address:       input.pickupAddress ?? null,
         destination:          input.destination ?? null,
         location:             input.location ?? null,
+        item:                 input.item?.trim() ?? null,
         staff_on_duty:        adminDisplayName,   // auto-set from authenticated admin's name
         transaction_expenses: input.transactionExpenses ?? 0,
         is_locked:            false,
@@ -297,6 +299,7 @@ export class AuditService {
     if (input.pickupAddress !== undefined) updatePayload.pickup_address = input.pickupAddress;
     if (input.destination !== undefined) updatePayload.destination = input.destination;
     if (input.location !== undefined) updatePayload.location = input.location;
+    if (input.item      !== undefined) updatePayload.item     = input.item?.trim() ?? null;
     if (input.transactionExpenses !== undefined) updatePayload.transaction_expenses = input.transactionExpenses;
     // staff_on_duty is never updated — it is permanently set at creation time
 
@@ -738,7 +741,8 @@ export class AuditService {
 
     const headers = [
       'S/N', 'Date', 'Service Type', 'Ride Type',
-      'Charge Price (CP)', 'Amount Paid (AP)',
+      'Charge Price (CP)', 'Amount Paid (AP)', 'Profit', 'Loss',
+      'Item',
       'Pickup Time', 'Dropoff Time',
       'Sender Phone', 'Receiver Phone', 'Rider Phone',
       'Pickup Address', 'Destination', 'Location',
@@ -747,7 +751,8 @@ export class AuditService {
 
     const rows = transactions.map((t: any) => [
       t.serial_number, t.audit_date, t.service_type, t.ride_type ?? '',
-      t.charge_price, t.amount_paid,
+      t.charge_price, t.amount_paid, t.profit ?? 0, t.loss ?? 0,
+      `"${(t.item ?? '').replace(/"/g, '""')}"`,
       t.pickup_time ?? '', t.dropoff_time ?? '',
       t.sender_phone ?? '', t.receiver_phone ?? '', t.rider_phone ?? '',
       `"${(t.pickup_address ?? '').replace(/"/g, '""')}"`,

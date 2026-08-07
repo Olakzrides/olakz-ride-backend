@@ -75,7 +75,8 @@ export class AuditController {
         pickupAddress:       pickup_address,
         destination,
         location:            req.body.location,
-        auditDate:           req.body.audit_date,   // optional — defaults to today if not sent
+        item:                req.body.item,          // optional item description
+        auditDate:           req.body.audit_date,
         transactionExpenses: transaction_expenses !== undefined ? Number(transaction_expenses) : 0,
       });
 
@@ -154,6 +155,7 @@ export class AuditController {
         pickupAddress:       req.body.pickup_address,
         destination:         req.body.destination,
         location:            req.body.location,
+        item:                req.body.item,           // optional item description
         transactionExpenses: req.body.transaction_expenses !== undefined ? Number(req.body.transaction_expenses) : undefined,
         // staff_on_duty is NOT editable — it was set at creation and is immutable
       });

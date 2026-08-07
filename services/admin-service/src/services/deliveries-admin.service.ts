@@ -106,9 +106,24 @@ export class DeliveriesAdminService {
     }
 
     if (search) {
-      query = query.or(
-        `pickup_address.ilike.%${search}%,dropoff_address.ilike.%${search}%,recipient_name.ilike.%${search}%,order_number.ilike.%${search}%`
-      );
+      const { data: matchingUsers } = await supabase
+        .from('users')
+        .select('id')
+        .or(
+          `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
+        );
+
+      const matchingUserIds = (matchingUsers ?? []).map((u: any) => u.id);
+
+      if (matchingUserIds.length > 0) {
+        query = query.or(
+          `pickup_address.ilike.%${search}%,dropoff_address.ilike.%${search}%,recipient_name.ilike.%${search}%,order_number.ilike.%${search}%,customer_id.in.(${matchingUserIds.join(',')})`
+        );
+      } else {
+        query = query.or(
+          `pickup_address.ilike.%${search}%,dropoff_address.ilike.%${search}%,recipient_name.ilike.%${search}%,order_number.ilike.%${search}%`
+        );
+      }
     }
 
     const { data: deliveries, count, error } = await query;
@@ -122,11 +137,11 @@ export class DeliveriesAdminService {
 
     // Customer IDs
     const customerIds = [...new Set(rows.map(r => r.customer_id).filter(Boolean))];
-    const customerMap = new Map<string, { first_name: string; last_name: string; phone: string }>();
+    const customerMap = new Map<string, { first_name: string; last_name: string; phone: string; email: string }>();
     if (customerIds.length > 0) {
       const { data: users } = await supabase
         .from('users')
-        .select('id, first_name, last_name, phone')
+        .select('id, first_name, last_name, phone, email')
         .in('id', customerIds);
       for (const u of users ?? []) customerMap.set(u.id, u);
     }
@@ -163,8 +178,8 @@ export class DeliveriesAdminService {
         id: d.id,
         orderNumber: d.order_number,
         customer: customer
-          ? { id: d.customer_id, name: `${customer.first_name ?? ''} ${customer.last_name ?? ''}`.trim(), phone: customer.phone }
-          : { id: d.customer_id, name: 'Unknown', phone: null },
+          ? { id: d.customer_id, name: `${customer.first_name ?? ''} ${customer.last_name ?? ''}`.trim(), phone: customer.phone, email: customer.email ?? null }
+          : { id: d.customer_id, name: 'Unknown', phone: null, email: null },
         courier: courierUser
           ? { id: d.courier_id, name: `${courierUser.first_name ?? ''} ${courierUser.last_name ?? ''}`.trim(), phone: courierUser.phone }
           : d.courier_id
