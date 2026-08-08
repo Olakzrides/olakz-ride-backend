@@ -120,13 +120,14 @@ export class OrderService {
       });
     }
 
-    // 4. Calculate delivery fare
+    // 4. Calculate delivery fare — city tier resolved automatically from delivery address
     const fare = await FareService.calculateFare({
       restaurantLat: restLat,
       restaurantLng: restLng,
       deliveryLat: deliveryAddress.lat,
       deliveryLng: deliveryAddress.lng,
       vehicleType: vehicleType,
+      deliveryAddress: deliveryAddress.address ?? '',
     });
 
     const totalAmount = subtotal + fare.deliveryFee + fare.serviceFee + fare.roundingFee;
@@ -532,7 +533,7 @@ export class OrderService {
   static async estimateTotal(params: {
     restaurantId: string;
     items: Array<{ item_id: string; quantity: number; extras?: string[] }>;
-    deliveryAddress: { lat: number; lng: number };
+    deliveryAddress: { lat: number; lng: number; address?: string };
     vehicle_type?: string;
   }) {
     const { data: restaurant } = await supabase
@@ -572,6 +573,7 @@ export class OrderService {
       deliveryLat: params.deliveryAddress.lat,
       deliveryLng: params.deliveryAddress.lng,
       vehicleType: params.vehicle_type || 'motorcycle',
+      deliveryAddress: params.deliveryAddress.address ?? '',
     });
 
     return {
