@@ -10,6 +10,7 @@ interface FareCalculationParams {
   dropoffLatitude:  number;
   dropoffLongitude: number;
   deliveryType:     'instant' | 'scheduled';
+  pickupAddress?:   string;   // used for address-based city tier resolution (faster + no DB hit)
 }
 
 export interface FareBreakdown {
@@ -30,36 +31,75 @@ export class DeliveryFareService {
 
   // ── City tier resolution ───────────────────────────────────────────────────
   /**
-   * Resolve a city tier from a regionId.
-   * Looks up the region name (e.g. "Lagos") then checks city_tier_states.
-   * Falls back to 'low' if the state is not explicitly assigned to high or middle.
+   * Resolve city tier for a delivery.
+   *
+   * Strategy (in order):
+   *   1. Extract state from pickupAddress string (fast, no DB hit).
+   *      e.g. "11, Ogbunike Street, Ikorodu, Lagos" → "Lagos"
+   *   2. Fallback: look up the region row by regionId → get its name →
+   *      query city_tier_states.
+   *   3. Default to 'low' if both fail.
    */
-  private static async resolveCityTier(regionId: string): Promise<'high' | 'middle' | 'low'> {
-    // 1. Get region name from regions table
+  private static async resolveCityTier(
+    regionId: string,
+    pickupAddress?: string
+  ): Promise<'high' | 'middle' | 'low'> {
+
+    // ── Strategy 1: address-string extraction (same lookup as ride/food/marketplace) ──
+    if (pickupAddress) {
+      const stateName = MapsUtil.extractStateFromAddress(pickupAddress);
+      if (stateName) {
+        const normalized = stateName
+          .replace(/\s+state$/i, '')
+          .replace(/^abuja$/i, 'FCT')
+          .trim();
+
+        const { data: tierRow } = await supabase
+          .from('city_tier_states')
+          .select('city_tier')
+          .ilike('state_name', normalized)
+          .maybeSingle();
+
+        if (tierRow?.city_tier) {
+          logger.info('Resolved city tier for delivery (address)', {
+            pickupAddress, stateName, normalized, cityTier: tierRow.city_tier,
+          });
+          return tierRow.city_tier as 'high' | 'middle' | 'low';
+        }
+      }
+    }
+
+    // ── Strategy 2: region name lookup ────────────────────────────────────────
     const { data: region } = await supabase
       .from('regions')
       .select('name')
       .eq('id', regionId)
       .maybeSingle();
 
-    if (!region?.name) {
-      logger.warn('Region not found for city tier resolution, defaulting to low', { regionId });
-      return 'low';
+    if (region?.name) {
+      const normalized = region.name
+        .replace(/\s+state$/i, '')
+        .replace(/^abuja$/i, 'FCT')
+        .trim();
+
+      const { data: tierRow } = await supabase
+        .from('city_tier_states')
+        .select('city_tier')
+        .ilike('state_name', normalized)
+        .maybeSingle();
+
+      if (tierRow?.city_tier) {
+        logger.info('Resolved city tier for delivery (region)', {
+          regionId, regionName: region.name, cityTier: tierRow.city_tier,
+        });
+        return tierRow.city_tier as 'high' | 'middle' | 'low';
+      }
     }
 
-    const regionName = region.name; // e.g. "Lagos"
-
-    // 2. Look up in city_tier_states (shared with ride + marketplace pricing)
-    const { data: tierRow } = await supabase
-      .from('city_tier_states')
-      .select('city_tier')
-      .ilike('state_name', regionName) // case-insensitive match
-      .maybeSingle();
-
-    const tier = (tierRow?.city_tier ?? 'low') as 'high' | 'middle' | 'low';
-
-    logger.info('Resolved city tier for delivery', { regionId, regionName, cityTier: tier });
-    return tier;
+    logger.warn('Could not resolve city tier for delivery — defaulting to low', {
+      regionId, pickupAddress: pickupAddress ?? '(not provided)',
+    });
+    return 'low';
   }
 
   // ── Config lookup ─────────────────────────────────────────────────────────
@@ -82,8 +122,8 @@ export class DeliveryFareService {
     if (error) throw new Error('Failed to fetch fare configuration');
     if (data) return data;
 
-    // Fallback: same vehicle + region but any tier (e.g. only 'low' row exists)
-    const { data: fallback } = await supabase
+    // Fallback 1: same vehicle + region, any tier
+    const { data: fallback1 } = await supabase
       .from('delivery_fare_config')
       .select('*')
       .eq('vehicle_type_id', vehicleTypeId)
@@ -93,7 +133,32 @@ export class DeliveryFareService {
       .limit(1)
       .maybeSingle();
 
-    if (fallback) return fallback;
+    if (fallback1) return fallback1;
+
+    // Fallback 2: same vehicle + correct tier, any region
+    // Covers the case where admin saved pricing but region_id differs
+    const { data: fallback2 } = await supabase
+      .from('delivery_fare_config')
+      .select('*')
+      .eq('vehicle_type_id', vehicleTypeId)
+      .eq('city_tier', cityTier)
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+
+    if (fallback2) return fallback2;
+
+    // Fallback 3: same vehicle, any tier, any region
+    const { data: fallback3 } = await supabase
+      .from('delivery_fare_config')
+      .select('*')
+      .eq('vehicle_type_id', vehicleTypeId)
+      .eq('is_active', true)
+      .order('city_tier', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (fallback3) return fallback3;
 
     throw new Error('Fare configuration not found for this vehicle type and region');
   }
@@ -101,8 +166,8 @@ export class DeliveryFareService {
   // ── Fare calculation ──────────────────────────────────────────────────────
 
   public static async calculateFare(params: FareCalculationParams): Promise<FareBreakdown> {
-    // Resolve city tier from the region name → city_tier_states lookup
-    const cityTier = await this.resolveCityTier(params.regionId);
+    // Resolve city tier — address extraction first, region lookup as fallback
+    const cityTier = await this.resolveCityTier(params.regionId, params.pickupAddress);
 
     const [fareConfig, routeInfo] = await Promise.all([
       this.getFareConfig(params.vehicleTypeId, params.regionId, cityTier),
@@ -168,7 +233,8 @@ export class DeliveryFareService {
     pickupLongitude:  number,
     dropoffLatitude:  number,
     dropoffLongitude: number,
-    deliveryType:     'instant' | 'scheduled' = 'instant'
+    deliveryType:     'instant' | 'scheduled' = 'instant',
+    pickupAddress?:   string
   ): Promise<FareBreakdown> {
     return this.calculateFare({
       vehicleTypeId,
@@ -178,6 +244,7 @@ export class DeliveryFareService {
       dropoffLatitude,
       dropoffLongitude,
       deliveryType,
+      pickupAddress,
     });
   }
 

@@ -29,6 +29,7 @@ import subAdminRoutes from './routes/sub-admin.routes';
 import supportRoutes from './routes/support.routes';
 import auditRoutes from './routes/audit.routes';
 import dailyReportRoutes from './routes/daily-report.routes';
+import emailLogRoutes from './routes/email-log.routes';
 import hireAdminRoutes from './routes/hire.routes';
 import systemRolesRoutes from './routes/system-roles.routes';
 
@@ -96,9 +97,6 @@ app.use('/api/admin/airtime', airtimeRoutes);
 // Step 15: private storage proxy — signed URLs for driver documents & other assets
 app.use('/api/admin/storage', storageRoutes);
 
-// Step 16: marketplace delivery pricing config
-app.use('/api/admin/marketplace/pricing', marketplacePricingRoutes);
-
 // Step 17: signup promo campaign management
 app.use('/api/admin/promos', promosRoutes);
 
@@ -122,6 +120,9 @@ app.use('/api/admin/system-roles', systemRolesRoutes);
 
 // Step 24: admin daily work reports
 app.use('/api/admin/daily-reports', dailyReportRoutes);
+
+// Step 25: email transaction logs
+app.use('/api/admin/email-logs', emailLogRoutes);
 
 // 404
 app.use((req, res) => {

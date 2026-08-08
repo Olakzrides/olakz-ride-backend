@@ -1669,7 +1669,8 @@ export class DeliveriesController {
         parsedPickupLocation.longitude,
         parsedDropoffLocation.latitude,
         parsedDropoffLocation.longitude,
-        deliveryType || 'instant'
+        deliveryType || 'instant',
+        parsedPickupLocation.address ?? ''    // address-based city tier resolution
       );
 
       return ResponseUtil.success(res, {

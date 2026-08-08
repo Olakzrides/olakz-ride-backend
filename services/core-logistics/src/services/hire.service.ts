@@ -987,10 +987,14 @@ export class HireService {
     let driverEarning = 0;
 
     if (cfg && distanceCoveredKm != null && distanceCoveredKm > 0) {
+      // Resolve pickup state from the stored address so the partial charge uses
+      // the same city tier that was applied when the hire was originally priced.
+      const pickupState = MapsUtil.extractStateFromAddress(hire.pickup_address ?? '') ?? undefined;
+
       const fareConfig = await this.fareService.getFareConfig(
         cfg.vehicle_category,
         cfg.service_tier,
-        undefined,
+        pickupState,
       );
 
       if (fareConfig) {

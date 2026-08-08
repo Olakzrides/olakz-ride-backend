@@ -30,6 +30,7 @@ export const MARKETPLACE_VEHICLE_TYPES = [
   'motorcycle',
   'bicycle',
   'bus',
+  'truck',
   'fleet',
 ] as const;
 
@@ -177,45 +178,66 @@ export class MarketplacePricingService {
       service_fee: payload.service_fee,
     });
 
-    // ── 2. Sync to food_fare_config ───────────────────────────────────────────
-    const foodPayload = {
-      vehicle_type:                        vehicleType,
-      city_tier:                           cityTier,
-      estimated_billing_unit:              payload.estimated_billing_unit,
-      high_traffic_estimated_billing_unit: payload.high_traffic_estimated_billing_unit,
-      min_amount_less_than_3km:            payload.min_amount_less_than_3km,
-      service_fee:                         payload.service_fee,
-      rounding_fee:                        payload.rounding_fee,
-      booking_fee:                         payload.booking_fee,
-      fleet_commission_percent:            payload.fleet_commission_percent,
-      is_active:                           payload.is_active,
-      updated_at:                          payload.updated_at,
-    };
+    // ── 2 & 3. Sync to food_fare_config, marketplace_fare_config (truck mirror), delivery_fare_config ──
+    // The frontend shows Bus and Truck as one combined "Bus/Truck" tab and always
+    // sends vehicle_type = "bus". When saving "bus" we automatically mirror the
+    // same config to "truck" across all three tables so truck orders price correctly.
+    const vehicleTypesToSync = vehicleType === 'bus' ? ['bus', 'truck'] : [vehicleType];
 
-    const { error: foodErr } = await supabase
-      .from('food_fare_config')
-      .upsert(foodPayload, { onConflict: 'vehicle_type,city_tier', ignoreDuplicates: false });
+    for (const vtName of vehicleTypesToSync) {
 
-    if (foodErr) {
-      logger.warn('Failed to sync pricing to food_fare_config', {
-        error: foodErr.message, vehicleType, cityTier,
-      });
-    } else {
-      logger.info('food_fare_config synced', { vehicleType, cityTier });
-    }
+      // ── food_fare_config ────────────────────────────────────────────────────
+      const foodPayload = {
+        vehicle_type:                        vtName,
+        city_tier:                           cityTier,
+        estimated_billing_unit:              payload.estimated_billing_unit,
+        high_traffic_estimated_billing_unit: payload.high_traffic_estimated_billing_unit,
+        min_amount_less_than_3km:            payload.min_amount_less_than_3km,
+        service_fee:                         payload.service_fee,
+        rounding_fee:                        payload.rounding_fee,
+        booking_fee:                         payload.booking_fee,
+        fleet_commission_percent:            payload.fleet_commission_percent,
+        is_active:                           payload.is_active,
+        updated_at:                          payload.updated_at,
+      };
 
-    // ── 3. Sync to delivery_fare_config ───────────────────────────────────────
-    // delivery_fare_config is keyed by (vehicle_type_id, region_id).
-    // We look up the vehicle_type UUID from vehicle_types by name, then update
-    // ALL rows for that vehicle type (all regions) with the new pricing values.
-    // city_tier on delivery_fare_config is also updated to reflect the admin setting.
-    const { data: vehicleTypeRow } = await supabase
-      .from('vehicle_types')
-      .select('id, name')
-      .ilike('name', vehicleType)
-      .maybeSingle();
+      const { error: foodErr } = await supabase
+        .from('food_fare_config')
+        .upsert(foodPayload, { onConflict: 'vehicle_type,city_tier', ignoreDuplicates: false });
 
-    if (vehicleTypeRow) {
+      if (foodErr) {
+        logger.warn('Failed to sync pricing to food_fare_config', { error: foodErr.message, vehicleType: vtName, cityTier });
+      } else {
+        logger.info('food_fare_config synced', { vehicleType: vtName, cityTier });
+      }
+
+      // ── marketplace_fare_config mirror for truck ────────────────────────────
+      // (bus is already saved above as the primary save; only truck needs mirroring)
+      if (vtName === 'truck') {
+        const truckMarketPayload = { ...payload, vehicle_type: 'truck' };
+        const { error: truckMktErr } = await supabase
+          .from('marketplace_fare_config')
+          .upsert(truckMarketPayload, { onConflict: 'vehicle_type,city_tier', ignoreDuplicates: false });
+
+        if (truckMktErr) {
+          logger.warn('Failed to mirror bus pricing to truck in marketplace_fare_config', { error: truckMktErr.message, cityTier });
+        } else {
+          logger.info('marketplace_fare_config truck mirrored from bus', { cityTier });
+        }
+      }
+
+      // ── delivery_fare_config ────────────────────────────────────────────────
+      const { data: vehicleTypeRow } = await supabase
+        .from('vehicle_types')
+        .select('id, name')
+        .ilike('name', vtName)
+        .maybeSingle();
+
+      if (!vehicleTypeRow) {
+        logger.warn('vehicle_type not found in vehicle_types table — delivery sync skipped', { vehicleType: vtName });
+        continue;
+      }
+
       const deliveryPayload = {
         estimated_billing_unit:              payload.estimated_billing_unit,
         high_traffic_estimated_billing_unit: payload.high_traffic_estimated_billing_unit,
@@ -229,7 +251,7 @@ export class MarketplacePricingService {
         updated_at:                          payload.updated_at,
       };
 
-      // Update the row for this vehicle_type_id + city_tier (all regions)
+      // Update existing rows for this vehicle_type_id + city_tier
       const { data: deliveryUpdated, error: deliveryErr } = await supabase
         .from('delivery_fare_config')
         .update(deliveryPayload)
@@ -239,10 +261,13 @@ export class MarketplacePricingService {
 
       if (deliveryErr) {
         logger.warn('Failed to sync pricing to delivery_fare_config', {
-          error: deliveryErr.message, vehicleType, vehicleTypeId: vehicleTypeRow.id, cityTier,
+          error: deliveryErr.message, vehicleType: vtName, vehicleTypeId: vehicleTypeRow.id, cityTier,
         });
-      } else if ((deliveryUpdated?.length ?? 0) === 0) {
-        // No row yet for this vehicle + tier — insert one for the default Lagos region
+        continue;
+      }
+
+      if ((deliveryUpdated?.length ?? 0) === 0) {
+        // No row yet — insert one for the default Lagos region
         const DEFAULT_REGION_ID = '00000000-0000-0000-0000-000000000001';
 
         const { error: insertErr } = await supabase
@@ -251,14 +276,14 @@ export class MarketplacePricingService {
             vehicle_type_id: vehicleTypeRow.id,
             region_id:       DEFAULT_REGION_ID,
             ...deliveryPayload,
-            base_fare:    0,
-            price_per_km: payload.estimated_billing_unit,
-            minimum_fare: payload.min_amount_less_than_3km,
+            base_fare:     0,
+            price_per_km:  payload.estimated_billing_unit,
+            minimum_fare:  payload.min_amount_less_than_3km,
             currency_code: 'NGN',
           });
 
         if (insertErr) {
-          // Legacy columns may have been dropped — try without them
+          // Legacy columns may have been dropped — retry without them
           const { error: insertErr2 } = await supabase
             .from('delivery_fare_config')
             .insert({
@@ -269,23 +294,19 @@ export class MarketplacePricingService {
             });
 
           if (insertErr2) {
-            logger.warn('Failed to seed delivery_fare_config row', {
-              error: insertErr2.message, vehicleType, cityTier,
-            });
+            logger.warn('Failed to seed delivery_fare_config row', { error: insertErr2.message, vehicleType: vtName, cityTier });
           } else {
-            logger.info('delivery_fare_config seeded (no legacy cols)', { vehicleType, cityTier });
+            logger.info('delivery_fare_config seeded (no legacy cols)', { vehicleType: vtName, cityTier });
           }
         } else {
-          logger.info('delivery_fare_config seeded with default region', { vehicleType, cityTier });
+          logger.info('delivery_fare_config seeded with default region', { vehicleType: vtName, cityTier });
         }
       } else {
         logger.info('delivery_fare_config synced', {
-          vehicleType, vehicleTypeId: vehicleTypeRow.id, cityTier,
+          vehicleType: vtName, vehicleTypeId: vehicleTypeRow.id, cityTier,
           rowsUpdated: deliveryUpdated?.length ?? 0,
         });
       }
-    } else {
-      logger.warn('vehicle_type not found in vehicle_types table — delivery sync skipped', { vehicleType });
     }
 
     logger.info('Marketplace pricing config saved + synced', { adminId, vehicleType, cityTier });

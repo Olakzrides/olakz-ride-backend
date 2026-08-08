@@ -112,9 +112,12 @@ export class DailyReportController {
       const page      = Math.max(1, parseInt(req.query.page  as string) || 1);
       const limit     = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
       const date      = req.query.date       as string | undefined;
+      const adminId   = req.query.admin_id   as string | undefined;
+      const from      = req.query.from       as string | undefined;
+      const to        = req.query.to         as string | undefined;
       const adminName = req.query.admin_name as string | undefined;
 
-      const result = await DailyReportService.getAllReports({ date, adminName, page, limit });
+      const result = await DailyReportService.getAllReports({ date, adminId, from, to, adminName, page, limit });
       ResponseUtil.success(res, result, 'All staff reports retrieved');
     } catch (err) {
       logger.error('getAllReports error', { error: toMsg(err) });

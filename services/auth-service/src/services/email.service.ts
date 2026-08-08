@@ -1,6 +1,56 @@
 import axios from 'axios';
 import config from '../config';
 import logger from '../utils/logger';
+import supabase from '../utils/supabase';
+
+// ── Email log helper ──────────────────────────────────────────────────────────
+// Writes to the shared email_logs table in Supabase after every send attempt.
+// Non-blocking — failures here never affect the email send result.
+
+type AuthEmailType = 'otp' | 'welcome' | 'driver_approval' | 'driver_rejection' | 'other';
+
+async function logEmail(params: {
+  recipientEmail: string;
+  subject:        string;
+  bodyHtml:       string;
+  emailType:      AuthEmailType;
+  status:         'sent' | 'failed';
+  errorMessage?:  string;
+}): Promise<void> {
+  try {
+    // Resolve recipient name from users table (non-fatal if not found)
+    let recipientName: string | null = null;
+    try {
+      const { data: userRow } = await supabase
+        .from('users')
+        .select('first_name, last_name')
+        .eq('email', params.recipientEmail.toLowerCase())
+        .maybeSingle();
+
+      if (userRow) {
+        const first = (userRow.first_name ?? '').trim();
+        const last  = (userRow.last_name  ?? '').trim();
+        if (first || last) recipientName = `${first} ${last}`.trim();
+      }
+    } catch {
+      // name lookup failure is non-fatal
+    }
+
+    await supabase.from('email_logs').insert({
+      recipient_email: params.recipientEmail,
+      recipient_name:  recipientName,
+      subject:         params.subject,
+      body_html:       params.bodyHtml,
+      email_type:      params.emailType,
+      status:          params.status,
+      error_message:   params.errorMessage ?? null,
+      sent_at:         params.status === 'sent' ? new Date().toISOString() : null,
+    });
+  } catch (err: any) {
+    // Logging failure must never crash the auth flow
+    logger.warn('[EmailLog] Failed to write to email_logs', { error: err?.message });
+  }
+}
 
 class EmailService {
   constructor() {
@@ -21,8 +71,7 @@ class EmailService {
       : 'Reset Your Password - Olakz Ride';
 
     const html = this.getOTPEmailTemplate(firstName, otp, type);
-
-    await this.sendEmail(to, subject, html);
+    await this.sendEmail(to, subject, html, 'otp');
   }
 
   /**
@@ -31,8 +80,7 @@ class EmailService {
   async sendWelcomeEmail(to: string, firstName: string): Promise<void> {
     const subject = 'Welcome to Olakz Ride!';
     const html = this.getWelcomeEmailTemplate(firstName);
-
-    await this.sendEmail(to, subject, html);
+    await this.sendEmail(to, subject, html, 'welcome');
   }
 
   /**
@@ -48,8 +96,8 @@ class EmailService {
   ): Promise<void> {
     const subject = this.getDocumentNotificationSubject(status, documentType);
     const html = this.getDocumentNotificationTemplate(firstName, documentType, status, notes, rejectionReason);
-
-    await this.sendEmail(to, subject, html);
+    const emailType: AuthEmailType = status === 'approved' ? 'driver_approval' : status === 'rejected' ? 'driver_rejection' : 'other';
+    await this.sendEmail(to, subject, html, emailType);
   }
 
   /**
@@ -136,10 +184,12 @@ class EmailService {
 
   /**
    * Send generic email via ZeptoMail API (public method for internal API)
+   * Automatically logs to email_logs table — sent or failed.
    */
-  async sendEmail(to: string, subject: string, html: string): Promise<void> {
+  async sendEmail(to: string, subject: string, html: string, emailType: AuthEmailType = 'other'): Promise<void> {
     if (!process.env.ZEPTO_API_URL || !process.env.ZEPTO_API_KEY) {
       logger.warn(`Email sending skipped (API not configured): ${subject} to ${to}`);
+      await logEmail({ recipientEmail: to, subject, bodyHtml: html, emailType, status: 'failed', errorMessage: 'ZeptoMail not configured' });
       return;
     }
 
@@ -166,18 +216,25 @@ class EmailService {
           'Content-Type': 'application/json',
           'Authorization': `Zoho-enczapikey ${process.env.ZEPTO_API_KEY}`
         },
-        timeout: 10000 // 10 second timeout
+        timeout: 10000
       });
 
       logger.info(`Email sent successfully via API to ${to}`, { 
         messageId: response.data.data?.[0]?.message_id 
       });
+
+      // Log successful send
+      await logEmail({ recipientEmail: to, subject, bodyHtml: html, emailType, status: 'sent' });
     } catch (error: unknown) {
       const axiosError = error as { response?: { data?: unknown }; message?: string };
+      const errorMessage = (axiosError.response?.data as any)?.message || axiosError.message || 'Failed to send email';
       logger.error('Error sending email via API:', {
         error: axiosError.message,
         response: axiosError.response?.data,
       });
+
+      // Log failed send
+      await logEmail({ recipientEmail: to, subject, bodyHtml: html, emailType, status: 'failed', errorMessage });
       throw new Error('Failed to send email via API');
     }
   }

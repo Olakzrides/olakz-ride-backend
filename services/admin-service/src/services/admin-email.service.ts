@@ -1,9 +1,10 @@
-import axios from 'axios';
 import { logger } from '../utils/logger';
+import { EmailLogService, EmailType } from './email-log.service';
 
 /**
  * Lightweight email service for admin-service.
  * Uses the same ZeptoMail transport as auth-service.
+ * Every email sent is automatically logged to email_logs table.
  * All methods are non-throwing — email failures are logged but never
  * crash the main request flow.
  */
@@ -11,42 +12,16 @@ class AdminEmailService {
 
   // ── Transport ──────────────────────────────────────────────────────────────
 
-  private async send(to: string, subject: string, html: string): Promise<void> {
-    const apiUrl = process.env.ZEPTO_API_URL;
-    const apiKey = process.env.ZEPTO_API_KEY;
-
-    if (!apiUrl || !apiKey) {
-      logger.warn(`[AdminEmail] Skipped — ZeptoMail not configured: "${subject}" → ${to}`);
-      return;
-    }
-
+  private async send(to: string, subject: string, html: string, emailType: EmailType = 'other'): Promise<void> {
     try {
-      await axios.post(
-        apiUrl,
-        {
-          from: {
-            address: process.env.ZEPTO_FROM_EMAIL || 'noreply@olakzrides.com',
-            name:    process.env.ZEPTO_FROM_NAME  || 'Olakz Ride',
-          },
-          to: [{ email_address: { address: to } }],
-          subject,
-          htmlbody: html,
-        },
-        {
-          headers: {
-            Accept:         'application/json',
-            'Content-Type': 'application/json',
-            Authorization:  `Zoho-enczapikey ${apiKey}`,
-          },
-          timeout: 10000,
-        }
-      );
-
-      logger.info(`[AdminEmail] Sent "${subject}" → ${to}`);
-    } catch (err: any) {
-      logger.error(`[AdminEmail] Failed to send "${subject}" → ${to}`, {
-        error: err.response?.data || err.message,
+      await EmailLogService.sendAndLog({
+        recipientEmail: to,
+        subject,
+        bodyHtml: html,
+        emailType,
       });
+    } catch (err: any) {
+      logger.error(`[AdminEmail] Failed to send "${subject}" → ${to}`, { error: err?.message });
     }
   }
 
@@ -66,7 +41,7 @@ class AdminEmailService {
     const { to, firstName, role, email, password } = params;
     const subject = 'Your Olakz Ride Admin Account — Pending Approval';
     const html    = this.pendingTemplate({ firstName, role, email, password });
-    await this.send(to, subject, html);
+    await this.send(to, subject, html, 'admin_pending');
   }
 
   /**
@@ -83,7 +58,7 @@ class AdminEmailService {
     const { to, firstName, role, email, password } = params;
     const subject = 'Welcome to Olakz Ride — Your Admin Account is Active!';
     const html    = this.approvalTemplate({ firstName, role, email, password });
-    await this.send(to, subject, html);
+    await this.send(to, subject, html, 'admin_approval');
   }
 
   // ── Email templates ────────────────────────────────────────────────────────
