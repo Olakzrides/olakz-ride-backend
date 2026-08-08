@@ -74,6 +74,7 @@ export class DeliveryService {
         dropoffLatitude:  params.dropoffLatitude,
         dropoffLongitude: params.dropoffLongitude,
         deliveryType:     params.deliveryType,
+        pickupAddress:    params.pickupAddress,   // used for address-based city tier resolution
       });
 
       // Step 3: Create delivery record
