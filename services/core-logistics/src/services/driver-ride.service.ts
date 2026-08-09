@@ -38,9 +38,25 @@ export class DriverRideService {
   /**
    * Accept a ride request
    */
+  /**
+   * Accept a ride request.
+   *
+   * Supports two modes:
+   *
+   * A) Push-based (original): driver was dispatched a ride_requests row.
+   *    Call with rideRequestId set, rideId omitted.
+   *    Resolves ride ID from the existing ride_requests row.
+   *
+   * B) Pull-based (new): driver found the ride by polling /rides/pending.
+   *    Call with rideId set, rideRequestId omitted (or null).
+   *    Creates a ride_requests row on the fly then proceeds with the same
+   *    acceptance logic, ensuring the race-condition guard (.eq('status','searching'))
+   *    still prevents two drivers accepting simultaneously.
+   */
   async acceptRideRequest(
     driverId: string,
-    rideRequestId: string
+    rideRequestId: string | null,
+    rideId?: string,
   ): Promise<{
     success: boolean;
     ride?: any;
@@ -48,7 +64,7 @@ export class DriverRideService {
     errorCode?: string;
   }> {
     try {
-      // Check if driver is remittance-blocked before allowing acceptance
+      // ── Guard: remittance block ───────────────────────────────────────────
       const remittanceStatus = await RemittanceService.getRemittanceStatus(driverId);
       if (remittanceStatus.blocked) {
         return {
@@ -58,38 +74,135 @@ export class DriverRideService {
         };
       }
 
-      // Get ride request details
-      const { data: rideRequest, error: fetchError } = await supabase
-        .from('ride_requests')
-        .select('ride_id, status')
-        .eq('id', rideRequestId)
-        .eq('driver_id', driverId)
-        .single();
+      // ── Step 1: Resolve the ride ID and ensure a ride_requests row exists ─
+      let resolvedRideId: string;
+      let resolvedRequestId: string;
 
-      if (fetchError || !rideRequest) {
+      if (rideRequestId) {
+        // ── Mode A: push-based — ride_requests row already exists ──────────
+        const { data: rideRequest, error: fetchError } = await supabase
+          .from('ride_requests')
+          .select('ride_id, status')
+          .eq('id', rideRequestId)
+          .eq('driver_id', driverId)
+          .single();
+
+        if (fetchError || !rideRequest) {
+          return {
+            success: false,
+            error: 'Ride request not found',
+            errorCode: 'REQUEST_NOT_FOUND',
+          };
+        }
+
+        if (rideRequest.status !== 'pending') {
+          return {
+            success: false,
+            error: 'Ride request is no longer available',
+            errorCode: 'REQUEST_NO_LONGER_AVAILABLE',
+          };
+        }
+
+        resolvedRideId    = rideRequest.ride_id;
+        resolvedRequestId = rideRequestId;
+
+      } else if (rideId) {
+        // ── Mode B: pull-based — driver found ride via pending poll ─────────
+        // Check if a ride_requests row already exists for this driver + ride
+        // (e.g. they were dispatched earlier but the row expired, or it's fresh).
+        const { data: existingReq } = await supabase
+          .from('ride_requests')
+          .select('id, status')
+          .eq('ride_id', rideId)
+          .eq('driver_id', driverId)
+          .maybeSingle();
+
+        if (existingReq) {
+          // Row exists — check it hasn't been declined/cancelled
+          if (['declined', 'cancelled'].includes(existingReq.status)) {
+            return {
+              success: false,
+              error: 'Ride request is no longer available',
+              errorCode: 'REQUEST_NO_LONGER_AVAILABLE',
+            };
+          }
+          resolvedRequestId = existingReq.id;
+        } else {
+          // No row yet — create one on the fly so the rest of the flow is uniform.
+          // Use a far-future expires_at so it doesn't expire before we mark accepted.
+          const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
+
+          // Compute distance from driver's last location for the row record
+          let distanceFromPickup = 0;
+          let estimatedArrival   = 0;
+
+          const { data: rideForDistance } = await supabase
+            .from('rides')
+            .select('pickup_latitude, pickup_longitude')
+            .eq('id', rideId)
+            .single();
+
+          const { data: driverLoc } = await supabase
+            .from('driver_location_tracking')
+            .select('latitude, longitude')
+            .eq('driver_id', driverId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+          if (rideForDistance && driverLoc) {
+            distanceFromPickup = parseFloat(
+              this.haversineKm(
+                parseFloat(driverLoc.latitude),
+                parseFloat(driverLoc.longitude),
+                parseFloat(rideForDistance.pickup_latitude),
+                parseFloat(rideForDistance.pickup_longitude),
+              ).toFixed(2)
+            );
+            estimatedArrival = Math.ceil((distanceFromPickup / 30) * 60);
+          }
+
+          const { data: newReq, error: insertErr } = await supabase
+            .from('ride_requests')
+            .insert({
+              ride_id:              rideId,
+              driver_id:            driverId,
+              status:               'pending',
+              expires_at:           expiresAt,
+              batch_number:         0, // 0 = pull-based, not part of any dispatch batch
+              distance_from_pickup: distanceFromPickup,
+              estimated_arrival:    estimatedArrival,
+            })
+            .select('id')
+            .single();
+
+          if (insertErr || !newReq) {
+            logger.error('acceptRideRequest: failed to create pull-based ride_request row', insertErr);
+            return {
+              success: false,
+              error: 'Failed to process ride acceptance',
+              errorCode: 'ACCEPTANCE_FAILED',
+            };
+          }
+
+          resolvedRequestId = newReq.id;
+        }
+
+        resolvedRideId = rideId;
+
+      } else {
         return {
           success: false,
-          error: 'Ride request not found',
-          errorCode: 'REQUEST_NOT_FOUND',
+          error: 'Either rideRequestId or rideId must be provided',
+          errorCode: 'INVALID_REQUEST',
         };
       }
 
-      // Check if request is still pending
-      if (rideRequest.status !== 'pending') {
-        return {
-          success: false,
-          error: 'Ride request is no longer available',
-          errorCode: 'REQUEST_NO_LONGER_AVAILABLE',
-        };
-      }
-
-      const rideId = rideRequest.ride_id;
-
-      // Check if ride is still searching
+      // ── Step 2: Verify the ride is still searching ────────────────────────
       const { data: ride } = await supabase
         .from('rides')
-        .select('status, driver_id')
-        .eq('id', rideId)
+        .select('status, user_id')
+        .eq('id', resolvedRideId)
         .single();
 
       if (!ride || ride.status !== 'searching') {
@@ -100,18 +213,18 @@ export class DriverRideService {
         };
       }
 
-      // Atomic update: Accept request and assign driver to ride
+      // ── Step 3: Mark the ride_requests row as accepted ────────────────────
       const { error: updateRequestError } = await supabase
         .from('ride_requests')
         .update({
-          status: 'accepted',
+          status:       'accepted',
           responded_at: new Date().toISOString(),
         })
-        .eq('id', rideRequestId)
-        .eq('status', 'pending'); // Only update if still pending
+        .eq('id', resolvedRequestId)
+        .eq('status', 'pending'); // race-condition guard
 
       if (updateRequestError) {
-        logger.error('Error accepting ride request:', updateRequestError);
+        logger.error('Error accepting ride request row:', updateRequestError);
         return {
           success: false,
           error: 'Failed to accept ride request',
@@ -119,54 +232,61 @@ export class DriverRideService {
         };
       }
 
-      // Update ride with driver assignment
+      // ── Step 4: Atomically assign driver to ride ──────────────────────────
+      // .eq('status', 'searching') ensures only one driver wins the race
       const { data: updatedRide, error: updateRideError } = await supabase
         .from('rides')
         .update({
-          driver_id: driverId,
-          status: RideStatus.DRIVER_ASSIGNED,
+          driver_id:  driverId,
+          status:     RideStatus.DRIVER_ASSIGNED,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', rideId)
-        .eq('status', 'searching') // Only update if still searching
+        .eq('id', resolvedRideId)
+        .eq('status', 'searching') // race-condition guard — only succeeds once
         .select()
         .single();
 
       if (updateRideError || !updatedRide) {
-        logger.error('Error assigning driver to ride:', updateRideError);
+        // Another driver accepted first — roll back our request row to pending
+        await supabase
+          .from('ride_requests')
+          .update({ status: 'cancelled', responded_at: new Date().toISOString() })
+          .eq('id', resolvedRequestId);
+
+        logger.warn(`acceptRideRequest: ride ${resolvedRideId} taken by another driver before ${driverId}`);
         return {
           success: false,
-          error: 'Failed to assign driver to ride',
-          errorCode: 'ASSIGNMENT_FAILED',
+          error: 'Ride was just accepted by another driver',
+          errorCode: 'REQUEST_NO_LONGER_AVAILABLE',
         };
       }
 
-      // Cancel all other pending requests for this ride
+      // ── Step 5: Cancel all other pending requests for this ride ──────────
       await supabase
         .from('ride_requests')
         .update({
-          status: 'cancelled',
+          status:       'cancelled',
           responded_at: new Date().toISOString(),
         })
-        .eq('ride_id', rideId)
-        .neq('id', rideRequestId)
+        .eq('ride_id', resolvedRideId)
+        .neq('id', resolvedRequestId)
         .eq('status', 'pending');
 
-      // Set driver as unavailable
+      // ── Step 6: Set driver unavailable ───────────────────────────────────
       await this.availabilityService.setAvailable(driverId, false);
 
-      // Create status update record
+      // ── Step 7: Record status history ────────────────────────────────────
       await supabase.from('ride_status_updates').insert({
-        ride_id: rideId,
-        status: RideStatus.DRIVER_ASSIGNED,
+        ride_id:         resolvedRideId,
+        status:          RideStatus.DRIVER_ASSIGNED,
         previous_status: 'searching',
-        updated_by: driverId,
+        updated_by:      driverId,
         updated_by_type: 'driver',
-        message: 'Driver accepted ride request',
+        message:         'Driver accepted ride request',
       });
 
-      // Get driver details for notification
-      const { data: driver } = await supabase
+      // ── Step 8: Push notification to passenger ───────────────────────────
+      const { data: driverRecord } = await supabase
         .from('drivers')
         .select('user_id')
         .eq('id', driverId)
@@ -175,30 +295,23 @@ export class DriverRideService {
       const { data: driverUser } = await supabase
         .from('users')
         .select('first_name, last_name')
-        .eq('id', driver?.user_id)
+        .eq('id', driverRecord?.user_id)
         .single();
 
-      const driverName = driverUser 
+      const driverName = driverUser
         ? `${driverUser.first_name} ${driverUser.last_name}`
         : 'Your driver';
 
-      // Send push notification to passenger
       await this.pushService.sendRideNotification(
         updatedRide.user_id,
-        rideId,
+        resolvedRideId,
         'driver_assigned',
-        {
-          driverId,
-          driverName,
-        }
+        { driverId, driverName },
       );
 
-      logger.info(`Driver ${driverId} accepted ride ${rideId}`);
+      logger.info(`Driver ${driverId} accepted ride ${resolvedRideId} (request ${resolvedRequestId})`);
 
-      return {
-        success: true,
-        ride: updatedRide,
-      };
+      return { success: true, ride: updatedRide };
     } catch (error: any) {
       logger.error('Accept ride request error:', error);
       return {
@@ -1048,106 +1161,268 @@ export class DriverRideService {
     }
   }
 
-  /**
-   * Get pending ride requests for driver
-   */
-  async getPendingRequests(driverId: string): Promise<any[]> {
-    try {
-      const { data: requests, error } = await supabase
-        .from('ride_requests')
-        .select(`
-          id,
-          ride_id,
-          status,
-          expires_at,
-          distance_from_pickup,
-          estimated_arrival,
-          created_at,
-          ride:rides(
-            id,
-            user_id,
-            status,
-            pickup_latitude,
-            pickup_longitude,
-            pickup_address,
-            dropoff_latitude,
-            dropoff_longitude,
-            dropoff_address,
-            estimated_fare,
-            estimated_distance,
-            estimated_duration,
-            payment_method,
-            driver_fare,
-            service_fee,
-            rounding_fee,
-            variant_id
-          )
-        `)
-        .eq('driver_id', driverId)
-        .eq('status', 'pending')
-        .gt('expires_at', new Date().toISOString())
-        .order('created_at', { ascending: false });
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Tier hierarchy (mirrors ride-matching.service.ts)
+  // Standard driver  → can only see Standard rides
+  // Premium driver   → can see Standard + Premium rides
+  // VIP driver       → can see Standard + Premium + VIP rides
+  // ─────────────────────────────────────────────────────────────────────────────
+  private static readonly TIER_IDS = {
+    standard: '00000000-0000-0000-0000-000000000011',
+    premium:  '00000000-0000-0000-0000-000000000012',
+    vip:      '00000000-0000-0000-0000-000000000013',
+  } as const;
 
-      if (error) {
-        logger.error('Get pending requests error:', error);
+  /**
+   * Given a driver's tier UUID return the list of ride variant tier UUIDs
+   * they are eligible to serve.
+   *
+   * Standard driver  → Standard rides only
+   * Premium driver   → Standard + Premium rides
+   * VIP driver       → Standard + Premium + VIP rides
+   */
+  private getEligibleRideTierIds(driverTierId: string): string[] {
+    const { standard, premium, vip } = DriverRideService.TIER_IDS;
+    if (driverTierId === vip)     return [standard, premium, vip];
+    if (driverTierId === premium) return [standard, premium];
+    return [standard]; // standard driver — standard rides only
+  }
+
+  /**
+   * Haversine distance between two coordinates (km).
+   */
+  private haversineKm(
+    lat1: number, lon1: number,
+    lat2: number, lon2: number,
+  ): number {
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  /**
+   * Get pending ride requests for driver.
+   *
+   * Pull-based model: queries the rides table directly for any ride in
+   * 'searching' status that matches the driver's eligible service tiers and
+   * is within the search radius. Does NOT require a prior ride_requests row —
+   * drivers who were offline when the ride was created can still see and
+   * accept it as long as it is still searching.
+   *
+   * GET /api/drivers/rides/pending?latitude=X&longitude=Y
+   */
+  async getPendingRequests(
+    driverId: string,
+    driverLatitude?: number,
+    driverLongitude?: number,
+  ): Promise<any[]> {
+    const PULL_RADIUS_KM = 30; // same radius used at dispatch time
+
+    try {
+      // ── 1. Fetch driver profile: tier + last known location ───────────────
+      const { data: driver, error: driverErr } = await supabase
+        .from('drivers')
+        .select('id, service_tier_id, status')
+        .eq('id', driverId)
+        .single();
+
+      if (driverErr || !driver) {
+        logger.error('getPendingRequests: driver not found', driverErr);
         return [];
       }
 
-      if (!requests || requests.length === 0) return [];
+      // Driver must be approved to pull rides
+      if (driver.status !== 'approved') {
+        logger.info(`getPendingRequests: driver ${driverId} is not approved (status: ${driver.status})`);
+        return [];
+      }
 
-      // Filter out requests where the ride is no longer searching
-      // (cancelled, accepted by another driver, completed, etc.)
-      const activeRequests = requests.filter(
-        (r: any) => r.ride?.status === 'searching'
-      );
+      // ── 2. Resolve driver location ────────────────────────────────────────
+      // Prefer freshly supplied coords from the request.
+      // Fallback to DB only when no coords are supplied — and only if the
+      // stored location is fresh (within the last 30 minutes). A stale DB
+      // location could place the driver in the wrong area and show them rides
+      // that are nowhere near them, or hide rides that are close.
+      let driverLat = driverLatitude;
+      let driverLng = driverLongitude;
 
-      // Collect all unique variant IDs from active requests for a batch lookup
-      const variantIds = [
-        ...new Set(
-          activeRequests
-            .map((r: any) => r.ride?.variant_id)
-            .filter(Boolean) as string[]
-        ),
-      ];
+      const LOCATION_STALENESS_MINUTES = 30;
+      const stalenessThreshold = new Date(
+        Date.now() - LOCATION_STALENESS_MINUTES * 60 * 1000
+      ).toISOString();
 
-      // Fetch variant titles + vehicle type names in one query
-      const variantMap = new Map<string, string>(); // variantId → vehicleType name
+      if (driverLat == null || driverLng == null) {
+        // Only use DB location if it was recorded within the last 30 minutes
+        const { data: tracking } = await supabase
+          .from('driver_location_tracking')
+          .select('latitude, longitude, created_at')
+          .eq('driver_id', driverId)
+          .gt('created_at', stalenessThreshold)   // freshness guard
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (tracking) {
+          driverLat = parseFloat(tracking.latitude);
+          driverLng = parseFloat(tracking.longitude);
+          logger.info(`getPendingRequests: using DB location for driver ${driverId} (age < 30 min)`);
+        } else {
+          // Try driver_locations table as a second fallback — same freshness rule
+          const { data: fallback } = await supabase
+            .from('driver_locations')
+            .select('latitude, longitude, created_at')
+            .eq('driver_id', driverId)
+            .gt('created_at', stalenessThreshold)  // freshness guard
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+          if (fallback) {
+            driverLat = parseFloat(fallback.latitude);
+            driverLng = parseFloat(fallback.longitude);
+            logger.info(`getPendingRequests: using fallback DB location for driver ${driverId} (age < 30 min)`);
+          }
+        }
+      }
+
+      if (driverLat == null || driverLng == null) {
+        logger.warn(
+          `getPendingRequests: no usable location for driver ${driverId} — ` +
+          `either send lat/lng in the request or ensure location was updated within the last ${LOCATION_STALENESS_MINUTES} minutes`
+        );
+        return [];
+      }
+
+      // ── 3. Determine which ride tiers this driver can serve ───────────────
+      const eligibleTierIds = this.getEligibleRideTierIds(driver.service_tier_id);
+
+      // Map tier UUID → variant title so we can filter variants correctly.
+      // ride_variants.title is 'Standard' | 'Premium' | 'VIP' (lowercase safe via ilike)
+      // We join via ride_variants → vehicle_type_id which equals service_tier_id on drivers.
+      // Actually variant_id on rides maps to ride_variants which has a vehicle_type_id.
+      // The eligible check: ride.variant must belong to a vehicle_type whose id is in eligibleTierIds.
+
+      // ── 4. Fetch all rides currently in 'searching' status ────────────────
+      //    We pull searching rides, then filter by tier and radius in JS.
+      //    This avoids a complex multi-join that Supabase/PostgREST struggles with.
+      const { data: searchingRides, error: ridesErr } = await supabase
+        .from('rides')
+        .select(`
+          id,
+          user_id,
+          status,
+          pickup_latitude,
+          pickup_longitude,
+          pickup_address,
+          dropoff_latitude,
+          dropoff_longitude,
+          dropoff_address,
+          estimated_fare,
+          estimated_distance,
+          estimated_duration,
+          payment_method,
+          driver_fare,
+          service_fee,
+          rounding_fee,
+          variant_id,
+          created_at
+        `)
+        .eq('status', 'searching')
+        .order('created_at', { ascending: false });
+
+      if (ridesErr) {
+        logger.error('getPendingRequests: error fetching searching rides', ridesErr);
+        return [];
+      }
+
+      if (!searchingRides || searchingRides.length === 0) return [];
+
+      // ── 5. Collect variant IDs and fetch variants with their vehicle_type_id ─
+      const variantIds = [...new Set(searchingRides.map((r: any) => r.variant_id).filter(Boolean))] as string[];
+
+      const variantMap = new Map<string, { vehicleTypeName: string; vehicleTypeId: string }>();
       if (variantIds.length > 0) {
         const { data: variants } = await supabase
           .from('ride_variants')
-          .select('id, vehicle_type:vehicle_types(name)')
+          .select('id, vehicle_type_id, vehicle_type:vehicle_types(id, name)')
           .in('id', variantIds);
 
         for (const v of variants ?? []) {
           const vt = (v as any).vehicle_type;
-          variantMap.set(v.id, vt?.name || 'Standard');
+          variantMap.set(v.id, {
+            vehicleTypeName: vt?.name || 'Standard',
+            vehicleTypeId: v.vehicle_type_id,
+          });
         }
       }
 
-      // Collect all unique customer user_ids from the active rides
-      const userIds = [
-        ...new Set(
-          activeRequests
-            .map((r: any) => r.ride?.user_id)
-            .filter(Boolean) as string[]
-        ),
-      ];
+      // ── 6. Fetch ride_requests rows for this driver (to get existing request  ─
+      //    IDs and to exclude rides they already declined).
+      const rideIds = searchingRides.map((r: any) => r.id) as string[];
+      const existingRequestMap = new Map<string, { id: string; status: string; expires_at: string; distance_from_pickup: number; estimated_arrival: number }>();
 
-      // Fetch customer details in one query
-      const { data: users } = await supabase
-        .from('users')
-        .select('id, first_name, last_name, email, phone, avatar_url')
-        .in('id', userIds);
+      if (rideIds.length > 0) {
+        const { data: existingRequests } = await supabase
+          .from('ride_requests')
+          .select('id, ride_id, status, expires_at, distance_from_pickup, estimated_arrival')
+          .eq('driver_id', driverId)
+          .in('ride_id', rideIds);
 
-      const userMap = new Map<string, any>();
-      for (const u of users ?? []) {
-        userMap.set(u.id, u);
+        for (const req of existingRequests ?? []) {
+          existingRequestMap.set(req.ride_id, req);
+        }
       }
 
-      // Enrich each request with customer name
-      return activeRequests.map((r: any) => {
-        const userId = r.ride?.user_id;
-        const user = userId ? userMap.get(userId) : null;
+      // ── 7. Filter rides by tier eligibility + radius + declined exclusion ──
+      const eligibleRides = searchingRides.filter((ride: any) => {
+        const variant = variantMap.get(ride.variant_id);
+        if (!variant) return false; // unknown variant — skip
+
+        // Tier check: variant's vehicle_type_id must be in driver's eligible tiers
+        if (!eligibleTierIds.includes(variant.vehicleTypeId)) return false;
+
+        // Declined/cancelled exclusion: skip rides this driver already responded to
+        const existingReq = existingRequestMap.get(ride.id);
+        if (existingReq && ['declined', 'cancelled'].includes(existingReq.status)) return false;
+
+        // Radius check
+        const pickupLat = parseFloat(ride.pickup_latitude);
+        const pickupLng = parseFloat(ride.pickup_longitude);
+        const distKm = this.haversineKm(driverLat!, driverLng!, pickupLat, pickupLng);
+        if (distKm > PULL_RADIUS_KM) return false;
+
+        // Attach computed distance onto the ride object for use in the response
+        (ride as any)._distanceKm = distKm;
+
+        return true;
+      });
+
+      if (eligibleRides.length === 0) return [];
+
+      // ── 8. Fetch customer details in one batch query ──────────────────────
+      const userIds = [...new Set(eligibleRides.map((r: any) => r.user_id).filter(Boolean))] as string[];
+      const userMap = new Map<string, any>();
+
+      if (userIds.length > 0) {
+        const { data: users } = await supabase
+          .from('users')
+          .select('id, first_name, last_name, email, phone, avatar_url')
+          .in('id', userIds);
+
+        for (const u of users ?? []) {
+          userMap.set(u.id, u);
+        }
+      }
+
+      // ── 9. Build response — same shape as before so frontend needs no changes ─
+      return eligibleRides.map((ride: any) => {
+        const user = userMap.get(ride.user_id) ?? null;
         const customerName = user
           ? (
               `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() ||
@@ -1156,36 +1431,48 @@ export class DriverRideService {
             )
           : 'Customer';
 
-        const isCash = r.ride?.payment_method === 'cash';
-        const serviceFee         = Number(r.ride?.service_fee  ?? 0);
-        const roundingFee        = Number(r.ride?.rounding_fee ?? 0);
-        // booking_fee is not a column on rides — remittance is service_fee + rounding_fee only
+        const distanceKm: number = (ride as any)._distanceKm ?? 0;
+        const estimatedArrivalMin = Math.ceil((distanceKm / 30) * 60); // 30 km/h estimate
+
+        const existingReq  = existingRequestMap.get(ride.id);
+        const isCash       = ride.payment_method === 'cash';
+        const serviceFee   = Number(ride.service_fee  ?? 0);
+        const roundingFee  = Number(ride.rounding_fee ?? 0);
         const platformRemittance = serviceFee + roundingFee;
 
-        // Strip raw fare/identity fields from ride — driver should not see them directly
-        const { service_fee, rounding_fee, driver_fare, estimated_fare, payment_method, user_id, variant_id, ...ridePublic } = r.ride ?? {};
+        // ride_request row may or may not exist yet for this driver
+        // If it exists use its id and expires_at, otherwise use null id
+        // (the accept endpoint will create the row on the fly if needed)
+        const reqId       = existingReq?.id ?? null;
+        const expiresAt   = existingReq?.expires_at ?? null;
+        const distFromPickup = existingReq?.distance_from_pickup ?? parseFloat(distanceKm.toFixed(2));
+        const estArrival     = existingReq?.estimated_arrival    ?? estimatedArrivalMin;
+
+        const { service_fee, rounding_fee, driver_fare, estimated_fare, payment_method, user_id, variant_id, _distanceKm, ...ridePublic } = ride;
 
         return {
-          id: r.id,
-          ride_id: r.ride_id,
-          status: r.status,
-          expires_at: r.expires_at,
-          distance_from_pickup: r.distance_from_pickup,
-          estimated_arrival: r.estimated_arrival,
-          created_at: r.created_at,
+          // id is the ride_requests.id if it exists, else null.
+          // The accept endpoint can receive either a request id or a ride id.
+          id: reqId,
+          ride_id: ride.id,
+          status: 'pending',
+          expires_at: expiresAt,
+          distance_from_pickup: distFromPickup,
+          estimated_arrival: estArrival,
+          created_at: ride.created_at,
           ride: ridePublic,
           customer: {
             name: customerName,
             phone: user?.phone ?? null,
             photo: user?.avatar_url ?? null,
           },
-          payment_method: r.ride?.payment_method ?? null,
-          vehicleType: variantMap.get(r.ride?.variant_id) ?? 'Standard',
+          payment_method: ride.payment_method ?? null,
+          vehicleType: variantMap.get(ride.variant_id)?.vehicleTypeName ?? 'Standard',
           fare: {
-            driver_fare: Number(r.ride?.driver_fare ?? 0),
+            driver_fare: Number(ride.driver_fare ?? 0),
             currency: 'NGN',
             ...(isCash ? {
-              collect_from_customer: Number(r.ride?.estimated_fare ?? 0),
+              collect_from_customer: Number(ride.estimated_fare ?? 0),
               platform_remittance: platformRemittance,
             } : {}),
           },

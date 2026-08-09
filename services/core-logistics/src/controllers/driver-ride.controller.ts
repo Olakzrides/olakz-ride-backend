@@ -17,17 +17,26 @@ export class DriverRideController {
   /**
    * Accept ride request
    * POST /api/drivers/rides/requests/:id/accept
+   *
+   * :id can be either:
+   *   - a ride_requests UUID  (push-based — driver was dispatched)
+   *   - a rides UUID          (pull-based — driver found ride via pending poll)
+   *
+   * The service resolves which mode to use by checking whether a
+   * ride_requests row exists for this driver + the supplied ID.
+   * If :id matches an existing ride_requests row → Mode A (push).
+   * If not, it is treated as a rides.id                → Mode B (pull).
    */
   acceptRideRequest = async (req: Request, res: Response): Promise<Response> => {
     try {
       const userId = (req as any).user?.id;
-      const userRole = (req as any).user?.role; // Changed from active_role to role
+      const userRole = (req as any).user?.role;
 
       if (!userId || userRole !== 'driver') {
         return ResponseUtil.unauthorized(res, 'Driver access required');
       }
 
-      const { id: rideRequestId } = req.params;
+      const { id } = req.params;
 
       // Get driver ID from user ID
       const driverId = await this.getDriverIdFromUserId(userId);
@@ -35,7 +44,21 @@ export class DriverRideController {
         return ResponseUtil.notFound(res, 'Driver profile not found');
       }
 
-      const result = await this.rideService.acceptRideRequest(driverId, rideRequestId);
+      // Determine mode: check if :id is an existing ride_requests row for this driver
+      const { supabase } = await import('../config/database');
+      const { data: existingReq } = await supabase
+        .from('ride_requests')
+        .select('id')
+        .eq('id', id)
+        .eq('driver_id', driverId)
+        .maybeSingle();
+
+      // Mode A: id is a ride_requests.id  → pass as rideRequestId
+      // Mode B: id is a rides.id          → pass as rideId (rideRequestId = null)
+      const rideRequestId: string | null = existingReq ? id : null;
+      const rideId: string | undefined   = existingReq ? undefined : id;
+
+      const result = await this.rideService.acceptRideRequest(driverId, rideRequestId, rideId);
 
       if (!result.success) {
         if (result.errorCode === 'OUTSTANDING_REMITTANCE') {
@@ -111,7 +134,11 @@ export class DriverRideController {
 
   /**
    * Get pending ride requests
-   * GET /api/drivers/rides/pending
+   * GET /api/drivers/rides/pending?latitude=X&longitude=Y
+   *
+   * latitude / longitude are optional. When supplied they are used directly
+   * as the driver's current position for the radius filter. When omitted the
+   * service falls back to the driver's last recorded location in the DB.
    */
   getPendingRequests = async (req: Request, res: Response): Promise<Response> => {
     try {
@@ -128,7 +155,18 @@ export class DriverRideController {
         return ResponseUtil.notFound(res, 'Driver profile not found');
       }
 
-      const requests = await this.rideService.getPendingRequests(driverId);
+      // Accept lat/lng from any of the param names the frontend may send
+      const rawLat = (req.query.latitude ?? req.query.lat) as string | undefined;
+      const rawLng = (req.query.longitude ?? req.query.lng) as string | undefined;
+
+      const driverLatitude  = rawLat ? parseFloat(rawLat)  : undefined;
+      const driverLongitude = rawLng ? parseFloat(rawLng) : undefined;
+
+      const requests = await this.rideService.getPendingRequests(
+        driverId,
+        Number.isFinite(driverLatitude)  ? driverLatitude  : undefined,
+        Number.isFinite(driverLongitude) ? driverLongitude : undefined,
+      );
 
       return ResponseUtil.success(res, {
         requests,
