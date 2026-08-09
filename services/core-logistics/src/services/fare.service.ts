@@ -51,25 +51,40 @@ export class FareService {
    * Resolve which city_tier a given Nigerian state belongs to.
    * Looks up city_tier_states table. Returns 'low' if not found
    * (unassigned states implicitly belong to low tier).
+   *
+   * Normalizes common variants:
+   *   "Lagos State" → "Lagos"
+   *   "FCT Abuja" → "FCT"
+   *   "Rivers State" → "Rivers"
    */
   private async resolveCityTierForState(state: string): Promise<string> {
+    // Normalize: strip " State" suffix, trim whitespace
+    const normalized = state
+      .replace(/\s+state$/i, '')       // "Lagos State" → "Lagos"
+      .replace(/\s+abuja$/i, '')       // "FCT Abuja" → "FCT"
+      .replace(/^abuja$/i, 'FCT')      // "Abuja" → "FCT"
+      .replace(/^federal capital territory$/i, 'FCT')
+      .trim();
+
     const { data, error } = await supabase
       .from('city_tier_states')
       .select('city_tier')
-      .ilike('state_name', state)
+      .ilike('state_name', normalized)
+      .order('city_tier', { ascending: true })  // deterministic: 'high' < 'low' < 'middle'
+      .limit(1)
       .maybeSingle();
 
     if (error) {
-      logger.error('resolveCityTierForState DB error', { state, error: error.message });
+      logger.error('resolveCityTierForState DB error', { state, normalized, error: error.message });
       return 'low';
     }
 
     if (!data) {
-      logger.warn('resolveCityTierForState: state not found in city_tier_states — defaulting to low', { state });
+      logger.warn('resolveCityTierForState: state not found in city_tier_states — defaulting to low', { state, normalized });
       return 'low';
     }
 
-    logger.info('resolveCityTierForState: resolved', { state, cityTier: data.city_tier });
+    logger.info('resolveCityTierForState: resolved', { state, normalized, cityTier: data.city_tier });
     return data.city_tier;
   }
 
@@ -103,13 +118,24 @@ export class FareService {
       .eq('service_tier', serviceTier)
       .eq('city_tier', cityTier)
       .eq('is_active', true)
-      .single();
+      .maybeSingle();
 
-    if (!error && data) return data as RideFareConfig;
+    if (!error && data) {
+      logger.info('getFareConfig: exact match found', { vehicleCategory, serviceTier, cityTier });
+      return data as RideFareConfig;
+    }
 
-    // If city-tier config not found, fall back to 'low' (universal fallback)
+    // Log clearly when exact match is missing so admin can diagnose config gaps
+    logger.warn('getFareConfig: no exact match in ride_fare_config', {
+      vehicleCategory,
+      serviceTier,
+      cityTier,
+      pickupState,
+      dbError: error?.message ?? null,
+    });
+
+    // Fallback 1: same vehicle + service tier, but low city
     if (cityTier !== 'low') {
-      logger.warn(`No fare config for ${vehicleCategory}/${serviceTier}/${cityTier}, falling back to low`, { pickupState });
       const { data: lowConfig } = await supabase
         .from('ride_fare_config')
         .select('*')
@@ -117,11 +143,15 @@ export class FareService {
         .eq('service_tier', serviceTier)
         .eq('city_tier', 'low')
         .eq('is_active', true)
-        .single();
-      if (lowConfig) return lowConfig as RideFareConfig;
+        .maybeSingle();
+
+      if (lowConfig) {
+        logger.warn('getFareConfig: using low-tier fallback', { vehicleCategory, serviceTier, originalCityTier: cityTier });
+        return lowConfig as RideFareConfig;
+      }
     }
 
-    // Final fallback: 'default' service tier + low city tier
+    // Fallback 2: default service tier + low city tier
     const { data: fallback } = await supabase
       .from('ride_fare_config')
       .select('*')
@@ -129,7 +159,13 @@ export class FareService {
       .eq('service_tier', 'default')
       .eq('city_tier', 'low')
       .eq('is_active', true)
-      .single();
+      .maybeSingle();
+
+    if (fallback) {
+      logger.warn('getFareConfig: using default/low ultimate fallback', { vehicleCategory, originalServiceTier: serviceTier, originalCityTier: cityTier });
+    } else {
+      logger.error('getFareConfig: NO config found at all — ride will use variant base pricing', { vehicleCategory, serviceTier, cityTier });
+    }
 
     return fallback ?? null;
   }

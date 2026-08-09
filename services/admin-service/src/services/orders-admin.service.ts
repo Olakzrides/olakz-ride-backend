@@ -27,13 +27,17 @@ export interface UserRegistrationFilters {
 }
 
 interface NormalisedOrder {
-  sn: number;
-  id: string;
-  user_name: string;
-  email: string;
-  service: string;
-  status: string;
-  date: string;       // date only: "12 Aug 2022"
+  sn:           number;
+  id:           string;
+  user_name:    string;
+  email:        string;
+  phone:        string | null;
+  service:      string;       // display label: "Olakz Ride"
+  service_key:  string;       // route key: "rides" | "deliveries" | "food" | "marketplace" | "airtime" | "hire"
+  amount:       number | null; // numeric amount for display
+  amount_display: string | null; // e.g. "₦2,588.50"
+  status:       string;
+  date:         string;
 }
 
 // Helpers
@@ -162,16 +166,16 @@ function rawStatuses(displayStatus: string, map: Record<string, string[]>): stri
   return map[displayStatus.toLowerCase()] ?? null;
 }
 
-/** Fetch user details (name + email) from the users table */
+/** Fetch user details (name, email, phone) from the users table */
 async function fetchUsers(
   userIds: string[]
-): Promise<Map<string, { name: string; email: string }>> {
-  const result = new Map<string, { name: string; email: string }>();
+): Promise<Map<string, { name: string; email: string; phone: string | null }>> {
+  const result = new Map<string, { name: string; email: string; phone: string | null }>();
   if (!userIds.length) return result;
 
   const { data, error } = await supabase
     .from('users')
-    .select('id, first_name, last_name, email')
+    .select('id, first_name, last_name, email, phone')
     .in('id', userIds);
 
   if (error) {
@@ -182,8 +186,9 @@ async function fetchUsers(
   for (const allUsers of data ?? []) {
     const row = allUsers as Record<string, unknown>;
     result.set(row.id as string, {
-      name: `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || 'Unknown',
+      name:  `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || 'Unknown',
       email: (row.email as string) ?? '',
+      phone: (row.phone as string | null) ?? null,
     });
   }
   return result;
@@ -191,11 +196,13 @@ async function fetchUsers(
 
 // Per-service order fetchers
 type RawOrder = {
-  id: string;
+  id:          string;
   customer_id: string;
-  status: string;
-  created_at: string;
-  service: string;
+  status:      string;
+  created_at:  string;
+  service:     string;      // display label
+  service_key: string;      // URL routing key
+  amount:      number | null;
 };
 
 async function getFoodOrders(
@@ -203,7 +210,7 @@ async function getFoodOrders(
 ): Promise<{ orders: RawOrder[]; total: number }> {
   let q = supabase
     .from('food_orders')
-    .select('id, customer_id, status, created_at', { count: 'exact' });
+    .select('id, customer_id, status, created_at, total_amount', { count: 'exact' });
 
   if (filters.status) {
     const raw = rawStatuses(filters.status, STATUS_MAP_FOOD);
@@ -220,11 +227,13 @@ async function getFoodOrders(
     orders: (data ?? []).map((o) => {
       const row = o as Record<string, unknown>;
       return {
-        id: row.id as string,
+        id:          row.id as string,
         customer_id: row.customer_id as string,
-        status: row.status as string,
-        created_at: row.created_at as string,
-        service: 'Olakz Food',
+        status:      row.status as string,
+        created_at:  row.created_at as string,
+        service:     'Olakz Food',
+        service_key: 'food',
+        amount:      row.total_amount ? parseFloat(row.total_amount as string) : null,
       };
     }),
     total: count ?? 0,
@@ -236,7 +245,7 @@ async function getMarketplaceOrders(
 ): Promise<{ orders: RawOrder[]; total: number }> {
   let q = supabase
     .from('marketplace_orders')
-    .select('id, customer_id, status, created_at', { count: 'exact' });
+    .select('id, customer_id, status, created_at, total_amount', { count: 'exact' });
 
   if (filters.status) {
     const raw = rawStatuses(filters.status, STATUS_MAP_MARKETPLACE);
@@ -253,11 +262,13 @@ async function getMarketplaceOrders(
     orders: (data ?? []).map((o) => {
       const row = o as Record<string, unknown>;
       return {
-        id: row.id as string,
+        id:          row.id as string,
         customer_id: row.customer_id as string,
-        status: row.status as string,
-        created_at: row.created_at as string,
-        service: 'Marketplace',
+        status:      row.status as string,
+        created_at:  row.created_at as string,
+        service:     'Marketplace',
+        service_key: 'marketplace',
+        amount:      row.total_amount ? parseFloat(row.total_amount as string) : null,
       };
     }),
     total: count ?? 0,
@@ -269,7 +280,7 @@ async function getRideOrders(
 ): Promise<{ orders: RawOrder[]; total: number }> {
   let q = supabase
     .from('rides')
-    .select('id, user_id, status, created_at', { count: 'exact' });
+    .select('id, user_id, status, created_at, final_fare, estimated_fare', { count: 'exact' });
 
   if (filters.status) {
     const raw = rawStatuses(filters.status, STATUS_MAP_RIDE);
@@ -288,12 +299,15 @@ async function getRideOrders(
   return {
     orders: (data ?? []).map((o) => {
       const row = o as Record<string, unknown>;
+      const fare = row.final_fare ?? row.estimated_fare;
       return {
-        id: row.id as string,
+        id:          row.id as string,
         customer_id: row.user_id as string,
-        status: row.status as string,
-        created_at: row.created_at as string,
-        service: 'Olakz Ride',
+        status:      row.status as string,
+        created_at:  row.created_at as string,
+        service:     'Olakz Ride',
+        service_key: 'rides',
+        amount:      fare ? parseFloat(fare as string) : null,
       };
     }),
     total: count ?? 0,
@@ -305,7 +319,7 @@ async function getDeliveryOrders(
 ): Promise<{ orders: RawOrder[]; total: number }> {
   let q = supabase
     .from('deliveries')
-    .select('id, customer_id, status, created_at', { count: 'exact' });
+    .select('id, customer_id, status, created_at, final_fare, estimated_fare', { count: 'exact' });
 
   if (filters.status) {
     const raw = rawStatuses(filters.status, STATUS_MAP_DELIVERY);
@@ -324,12 +338,15 @@ async function getDeliveryOrders(
   return {
     orders: (data ?? []).map((o) => {
       const row = o as Record<string, unknown>;
+      const fare = row.final_fare ?? row.estimated_fare;
       return {
-        id: row.id as string,
+        id:          row.id as string,
         customer_id: row.customer_id as string,
-        status: row.status as string,
-        created_at: row.created_at as string,
-        service: 'Olakz Delivery',
+        status:      row.status as string,
+        created_at:  row.created_at as string,
+        service:     'Olakz Delivery',
+        service_key: 'deliveries',
+        amount:      fare ? parseFloat(fare as string) : null,
       };
     }),
     total: count ?? 0,
@@ -348,7 +365,7 @@ async function getAirtimeOrders(
 ): Promise<{ orders: RawOrder[]; total: number }> {
   let q = supabase
     .from('bill_transactions')
-    .select('id, user_id, status, created_at', { count: 'exact' })
+    .select('id, user_id, status, created_at, amount', { count: 'exact' })
     .eq('transaction_type', 'airtime');
 
   if (filters.status) {
@@ -369,11 +386,13 @@ async function getAirtimeOrders(
     orders: (data ?? []).map((o) => {
       const row = o as Record<string, unknown>;
       return {
-        id: row.id as string,
+        id:          row.id as string,
         customer_id: row.user_id as string,
-        status: row.status as string,
-        created_at: row.created_at as string,
-        service: 'Airtime',
+        status:      row.status as string,
+        created_at:  row.created_at as string,
+        service:     'Airtime',
+        service_key: 'airtime',
+        amount:      row.amount ? parseFloat(row.amount as string) : null,
       };
     }),
     total: count ?? 0,
@@ -385,7 +404,7 @@ async function getDataBundleOrders(
 ): Promise<{ orders: RawOrder[]; total: number }> {
   let q = supabase
     .from('bill_transactions')
-    .select('id, user_id, status, created_at', { count: 'exact' })
+    .select('id, user_id, status, created_at, amount', { count: 'exact' })
     .eq('transaction_type', 'data');
 
   if (filters.status) {
@@ -406,11 +425,13 @@ async function getDataBundleOrders(
     orders: (data ?? []).map((o) => {
       const row = o as Record<string, unknown>;
       return {
-        id: row.id as string,
+        id:          row.id as string,
         customer_id: row.user_id as string,
-        status: row.status as string,
-        created_at: row.created_at as string,
-        service: 'Data Bundle',
+        status:      row.status as string,
+        created_at:  row.created_at as string,
+        service:     'Data Bundle',
+        service_key: 'airtime',   // routes to the same airtime detail endpoint
+        amount:      row.amount ? parseFloat(row.amount as string) : null,
       };
     }),
     total: count ?? 0,
@@ -443,18 +464,21 @@ async function mergeAndPaginate(
   const customerIds = [...new Set(allOrders.map((o) => o.customer_id).filter(Boolean))];
   const userMap = await fetchUsers(customerIds);
 
-  type Enriched = RawOrder & { user_name: string; email: string };
+  type Enriched = RawOrder & { user_name: string; email: string; phone: string | null };
 
   let enriched: Enriched[] = allOrders.map((o) => {
-    const user = userMap.get(o.customer_id) ?? { name: 'Unknown', email: '' };
-    return { ...o, user_name: user.name, email: user.email };
+    const user = userMap.get(o.customer_id) ?? { name: 'Unknown', email: '', phone: null };
+    return { ...o, user_name: user.name, email: user.email, phone: user.phone };
   });
 
-  // Apply search (name or email)
+  // Apply search (name, email, or phone)
   if (search) {
     const q = search.toLowerCase();
     enriched = enriched.filter(
-      (o) => o.user_name.toLowerCase().includes(q) || o.email.toLowerCase().includes(q)
+      (o) =>
+        o.user_name.toLowerCase().includes(q) ||
+        o.email.toLowerCase().includes(q) ||
+        (o.phone ?? '').toLowerCase().includes(q)
     );
   }
 
@@ -463,13 +487,17 @@ async function mergeAndPaginate(
   const paginated = enriched.slice(offset, offset + limit);
 
   const orders: NormalisedOrder[] = paginated.map((o, idx) => ({
-    sn: offset + idx + 1,
-    id: o.id,
-    user_name: o.user_name,
-    email: o.email,
-    service: o.service,
-    status: normaliseStatus(o.status),
-    date: formatDate(o.created_at),
+    sn:             offset + idx + 1,
+    id:             o.id,
+    user_name:      o.user_name,
+    email:          o.email,
+    phone:          o.phone,
+    service:        o.service,
+    service_key:    o.service_key,
+    amount:         o.amount,
+    amount_display: o.amount != null ? `₦${o.amount.toLocaleString('en-NG')}` : null,
+    status:         normaliseStatus(o.status),
+    date:           formatDate(o.created_at),
   }));
 
   return {

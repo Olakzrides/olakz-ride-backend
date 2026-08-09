@@ -113,11 +113,27 @@ export class RidesAdminService {
       query = query.lte('created_at', toEnd.toISOString());
     }
 
-    // Address search (before user/driver name search which needs post-processing)
+    // Search — support name, email, phone, or address
     if (search) {
-      query = query.or(
-        `pickup_address.ilike.%${search}%,dropoff_address.ilike.%${search}%`
-      );
+      // Find matching user IDs for customer name/email/phone search
+      const { data: matchingUsers } = await supabase
+        .from('users')
+        .select('id')
+        .or(
+          `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
+        );
+
+      const matchingUserIds = (matchingUsers ?? []).map((u: any) => u.id);
+
+      if (matchingUserIds.length > 0) {
+        query = query.or(
+          `pickup_address.ilike.%${search}%,dropoff_address.ilike.%${search}%,user_id.in.(${matchingUserIds.join(',')})`
+        );
+      } else {
+        query = query.or(
+          `pickup_address.ilike.%${search}%,dropoff_address.ilike.%${search}%`
+        );
+      }
     }
 
     const { data: rides, count, error } = await query;
@@ -134,11 +150,11 @@ export class RidesAdminService {
     const driverIds   = [...new Set(rows.map(r => r.driver_id).filter(Boolean))];
 
     // Fetch users (customers)
-    const userMap = new Map<string, { first_name: string; last_name: string; phone: string }>();
+    const userMap = new Map<string, { first_name: string; last_name: string; phone: string; email: string }>();
     if (customerIds.length > 0) {
       const { data: users } = await supabase
         .from('users')
-        .select('id, first_name, last_name, phone')
+        .select('id, first_name, last_name, phone, email')
         .in('id', customerIds);
       for (const u of users ?? []) userMap.set(u.id, u);
     }
@@ -176,8 +192,8 @@ export class RidesAdminService {
         sn: offset + idx + 1,
         id: ride.id,
         customer: customer
-          ? { id: ride.user_id, name: `${customer.first_name ?? ''} ${customer.last_name ?? ''}`.trim(), phone: customer.phone }
-          : { id: ride.user_id, name: 'Unknown', phone: null },
+          ? { id: ride.user_id, name: `${customer.first_name ?? ''} ${customer.last_name ?? ''}`.trim(), phone: customer.phone, email: customer.email ?? null }
+          : { id: ride.user_id, name: 'Unknown', phone: null, email: null },
         driver: driverUser
           ? { id: ride.driver_id, name: `${driverUser.first_name ?? ''} ${driverUser.last_name ?? ''}`.trim(), phone: driverUser.phone }
           : ride.driver_id

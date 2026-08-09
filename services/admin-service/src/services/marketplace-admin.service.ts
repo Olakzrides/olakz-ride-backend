@@ -102,16 +102,17 @@ export class MarketplaceAdminService {
     const riderIds    = [...new Set(rows.map((o: any) => o.rider_id).filter(Boolean))];
 
     // Fetch customer names
-    const customerMap = new Map<string, { name: string; phone: string | null }>();
+    const customerMap = new Map<string, { name: string; phone: string | null; email: string | null }>();
     if (customerIds.length > 0) {
       const { data: users } = await supabase
         .from('users')
-        .select('id, first_name, last_name, phone')
+        .select('id, first_name, last_name, phone, email')
         .in('id', customerIds);
       for (const u of users ?? []) {
         customerMap.set(u.id, {
           name:  `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Unknown',
           phone: u.phone ?? null,
+          email: u.email ?? null,
         });
       }
     }
@@ -163,6 +164,7 @@ export class MarketplaceAdminService {
           id:    o.customer_id,
           name:  customer?.name  ?? 'Unknown',
           phone: customer?.phone ?? null,
+          email: customer?.email ?? null,
         },
         rider: o.rider_id ? {
           id:    o.rider_id,

@@ -44,6 +44,7 @@ export class OrderService {
       deliveryLat: params.deliveryAddress.lat,
       deliveryLng: params.deliveryAddress.lng,
       vehicleType: params.vehicleType || 'motorcycle',
+      deliveryAddress: (params.deliveryAddress as any).address ?? '',
     });
 
     return {
@@ -109,6 +110,7 @@ export class OrderService {
       deliveryLat: deliveryAddress.lat,
       deliveryLng: deliveryAddress.lng,
       vehicleType: vehicleType,
+      deliveryAddress: deliveryAddress.address ?? '',
     });
 
     // totalAmount = subtotal + deliveryFee + combined serviceFee (which already includes roundingFee)
