@@ -1,6 +1,10 @@
 import * as admin from 'firebase-admin';
+import { Expo, ExpoPushMessage, ExpoPushTicket } from 'expo-server-sdk';
 import { supabase } from '../config/database';
 import { logger } from '../config/logger';
+
+// Singleton Expo client — no credentials needed, Expo Push API is open
+const expoClient = new Expo();
 
 interface PushNotificationPayload {
   title: string;
@@ -131,9 +135,92 @@ export class PushNotificationService {
   }
 
   /**
-   * Send notification to specific device token
+   * Returns true if the token is an Expo Push Token (iOS managed workflow).
+   * Expo tokens always start with "ExponentPushToken[".
+   * FCM tokens (Android + direct FCM iOS) do not.
+   */
+  private isExpoToken(token: string): boolean {
+    return Expo.isExpoPushToken(token);
+  }
+
+  /**
+   * Send notification to specific device token.
+   * Automatically routes to Expo Push API or Firebase Admin SDK
+   * based on the token format:
+   *   - ExponentPushToken[...] → Expo Push API  (iOS managed workflow)
+   *   - Everything else        → Firebase Admin SDK (Android + web)
    */
   private async sendToToken(
+    token: string,
+    payload: PushNotificationPayload,
+    priority: 'high' | 'normal'
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    if (this.isExpoToken(token)) {
+      return this.sendToExpoToken(token, payload, priority);
+    }
+    return this.sendToFcmToken(token, payload, priority);
+  }
+
+  /**
+   * Send via Expo Push API — used for iOS devices on the Expo managed workflow.
+   */
+  private async sendToExpoToken(
+    token: string,
+    payload: PushNotificationPayload,
+    priority: 'high' | 'normal'
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    try {
+      const message: ExpoPushMessage = {
+        to: token,
+        title: payload.title,
+        body: payload.body,
+        data: payload.data || {},
+        sound: (payload.sound as any) || 'default',
+        badge: payload.badge,
+        priority: priority === 'high' ? 'high' : 'normal',
+        channelId: 'ride_updates',
+      };
+
+      const chunks = expoClient.chunkPushNotifications([message]);
+      const tickets: ExpoPushTicket[] = [];
+
+      for (const chunk of chunks) {
+        const chunkTickets = await expoClient.sendPushNotificationsAsync(chunk);
+        tickets.push(...chunkTickets);
+      }
+
+      const ticket = tickets[0];
+
+      if (!ticket) {
+        return { success: false, error: 'No ticket returned from Expo' };
+      }
+
+      if (ticket.status === 'error') {
+        const errDetails = ticket.details as any;
+        // Deactivate the token if Expo says it's invalid
+        if (errDetails?.error === 'DeviceNotRegistered') {
+          await this.deactivateToken(token);
+          logger.warn(`Expo token deactivated (DeviceNotRegistered): ${token.substring(0, 30)}...`);
+        }
+        logger.error(`Expo push failed for token ${token.substring(0, 30)}...`, ticket.message);
+        return { success: false, error: ticket.message };
+      }
+
+      // ticket.status === 'ok'
+      const successTicket = ticket as { status: 'ok'; id: string };
+      logger.info(`Expo push sent successfully, receipt id: ${successTicket.id}`);
+      return { success: true, messageId: successTicket.id };
+    } catch (error: any) {
+      logger.error(`Expo push error for token ${token.substring(0, 30)}...`, error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Send via Firebase Admin SDK — used for Android (and web).
+   * Unchanged from original sendToToken() logic.
+   */
+  private async sendToFcmToken(
     token: string,
     payload: PushNotificationPayload,
     priority: 'high' | 'normal'
@@ -179,16 +266,16 @@ export class PushNotificationService {
       };
 
       const messageId = await admin.messaging().send(message);
-      
       return { success: true, messageId };
     } catch (error: any) {
-      // Handle invalid token
-      if (error.code === 'messaging/invalid-registration-token' ||
-          error.code === 'messaging/registration-token-not-registered') {
+      // Deactivate stale FCM tokens
+      if (
+        error.code === 'messaging/invalid-registration-token' ||
+        error.code === 'messaging/registration-token-not-registered'
+      ) {
         await this.deactivateToken(token);
       }
-      
-      logger.error(`Failed to send to token ${token.substring(0, 20)}...`, error);
+      logger.error(`FCM send failed for token ${token.substring(0, 20)}...`, error);
       return { success: false, error: error.message };
     }
   }
@@ -255,7 +342,8 @@ export class PushNotificationService {
       }
 
       // Subscribe to FCM topics (non-fatal if Firebase not initialized)
-      if (this.isInitialized) {
+      // Only FCM tokens support topic subscriptions — skip for Expo Push Tokens
+      if (this.isInitialized && !this.isExpoToken(fcmToken)) {
         try {
           const topicsToSubscribe = ['all_users'];
 

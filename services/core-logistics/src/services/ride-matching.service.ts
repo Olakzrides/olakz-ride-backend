@@ -20,9 +20,40 @@ interface DriverMatch {
 interface RideMatchingCriteria {
   pickupLatitude: number;
   pickupLongitude: number;
-  serviceTierId: string; // Changed from vehicleTypeId to serviceTierId
+  serviceTierId: string; // The booked tier — drivers at this tier AND lower tiers can serve this ride
   maxDistance: number;
   maxDrivers: number;
+}
+
+// ── Tier hierarchy:
+// Standard drivers can ONLY serve Standard bookings.
+// Premium drivers can serve Standard + Premium bookings.
+// VIP drivers can serve Standard + Premium + VIP bookings.
+const TIER_IDS = {
+  standard: '00000000-0000-0000-0000-000000000011',
+  premium:  '00000000-0000-0000-0000-000000000012',
+  vip:      '00000000-0000-0000-0000-000000000013',
+} as const;
+
+/**
+ * Given the booked tier UUID, return the list of driver tier UUIDs
+ * that are eligible to serve that ride.
+ *
+ * Standard booking → Premium + VIP + Standard drivers (any tier can take standard)
+ * Premium booking  → Premium + VIP drivers only (standard drivers cannot serve premium)
+ * VIP booking      → VIP drivers only
+ */
+function getEligibleDriverTierIds(bookedTierId: string): string[] {
+  if (bookedTierId === TIER_IDS.vip) {
+    // Only VIP drivers can serve VIP bookings
+    return [TIER_IDS.vip];
+  }
+  if (bookedTierId === TIER_IDS.premium) {
+    // Premium and VIP drivers can serve Premium bookings
+    return [TIER_IDS.premium, TIER_IDS.vip];
+  }
+  // Standard booking — all tiers (Standard, Premium, VIP) can serve it
+  return [TIER_IDS.standard, TIER_IDS.premium, TIER_IDS.vip];
 }
 
 export class RideMatchingService {
@@ -197,7 +228,11 @@ export class RideMatchingService {
     // times in results and only 1 driver ends up receiving the request.
     // Location is fetched separately per driver below.
 
-    // Build the base query — try with service_tier_id first
+    // Build the inclusive tier list — VIP booking can be served by Standard/Premium/VIP drivers
+    const eligibleTierIds = getEligibleDriverTierIds(serviceTierId);
+    logger.info(`✅ Eligible driver tiers for booking tier ${serviceTierId}:`, eligibleTierIds);
+
+    // Build the base query — match drivers whose tier is eligible to serve this ride
     let { data: driversData, error } = await supabase
       .from('drivers')
       .select(`
@@ -220,49 +255,12 @@ export class RideMatchingService {
         )
       `)
       .eq('status', 'approved')
-      .eq('service_tier_id', serviceTierId)
+      .in('service_tier_id', eligibleTierIds)
       .eq('vehicles.is_active', true)
       .eq('availability.is_online', true)
       .eq('availability.is_available', true);
 
     logger.info(`Query result (tier match): Found ${driversData?.length || 0} drivers, Error: ${error?.message || 'none'}`);
-
-    // Fallback: if no drivers match the specific service tier, include ALL approved
-    // online drivers regardless of tier so the customer isn't left waiting
-    if (!error && (!driversData || driversData.length === 0)) {
-      logger.warn(`No drivers found for service tier ${serviceTierId} — falling back to all approved online drivers`);
-      const fallback = await supabase
-        .from('drivers')
-        .select(`
-          id,
-          user_id,
-          rating,
-          total_rides,
-          service_tier_id,
-          vehicles:driver_vehicles!inner(
-            plate_number,
-            manufacturer,
-            model,
-            color,
-            is_active
-          ),
-          availability:driver_availability!inner(
-            is_online,
-            is_available,
-            last_seen_at
-          )
-        `)
-        .eq('status', 'approved')
-        .eq('vehicles.is_active', true)
-        .eq('availability.is_online', true)
-        .eq('availability.is_available', true);
-
-      driversData = fallback.data;
-      error = fallback.error;
-      logger.info(`Fallback query: Found ${driversData?.length || 0} drivers`);
-    }
-
-    logger.info(`Query result: Found ${driversData?.length || 0} drivers, Error: ${error?.message || 'none'}`);
     
     if (error) {
       logger.error('Error fetching available drivers:', error);

@@ -37,6 +37,76 @@ export class DriverRegistrationController {
     this.notificationService = new NotificationService();
   }
 
+  /**
+   * Get driver account status for the authenticated user
+   * GET /api/driver-registration/driver-status
+   *
+   * Frontend uses this to decide whether to show, lock, or allow the registration flow.
+   * Possible statuses returned:
+   *   - "not_registered"  → no driver record and no active session → show registration card as tappable
+   *   - "in_progress"     → active registration session exists → show card as resumable
+   *   - "pending"         → submitted, awaiting admin review → show card as submitted/locked
+   *   - "approved"        → admin approved → grey out / disable the card entirely
+   *   - "rejected"        → admin rejected → allow re-registration
+   */
+  getDriverAccountStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        ResponseUtil.authenticationRequired(res);
+        return;
+      }
+
+      // Check for an existing driver record
+      const { data: driver } = await supabase
+        .from('drivers')
+        .select('id, status')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (driver) {
+        // Driver record exists — return its status
+        ResponseUtil.success(res, {
+          has_driver_account: true,
+          driver_status: driver.status,          // 'pending' | 'approved' | 'rejected'
+          can_register: driver.status === 'rejected', // only rejected drivers can re-apply
+          registration_locked: driver.status === 'approved',
+        });
+        return;
+      }
+
+      // No driver record — check for an active registration session
+      const activeSession = await this.registrationSessionService.getActiveSessionByUserId(userId);
+      const isExpired = activeSession
+        ? this.registrationSessionService.isSessionExpired(activeSession)
+        : true;
+
+      if (activeSession && !isExpired) {
+        ResponseUtil.success(res, {
+          has_driver_account: false,
+          driver_status: 'in_progress',
+          can_register: true,
+          registration_locked: false,
+          session_id: activeSession.id,
+          current_step: activeSession.currentStep,
+          progress_percentage: activeSession.progressPercentage,
+        });
+        return;
+      }
+
+      // No driver record, no active session — completely new
+      ResponseUtil.success(res, {
+        has_driver_account: false,
+        driver_status: 'not_registered',
+        can_register: true,
+        registration_locked: false,
+      });
+    } catch (error: any) {
+      logger.error('Error getting driver account status:', error);
+      ResponseUtil.error(res, 'Failed to get driver account status');
+    }
+  };
+
   getVehicleTypes = async (_req: Request, res: Response): Promise<void> => {
     try {
       const vehicleTypes = await this.vehicleTypeService.getVehicleTypesWithServices();
@@ -722,6 +792,13 @@ export class DriverRegistrationController {
       ResponseUtil.success(res, response);
     } catch (error: any) {
       logger.error('Error submitting registration:', error);
+
+      // Return a specific error for approved drivers attempting re-registration
+      if (error.message?.includes('already have an approved driver account')) {
+        ResponseUtil.duplicateRegistration(res, req.user?.id || '');
+        return;
+      }
+
       ResponseUtil.standardizedError(
         res,
         DriverRegistrationErrorCode.INTERNAL_SERVER_ERROR,
@@ -1076,7 +1153,54 @@ export class DriverRegistrationController {
         throw new Error(`Vehicle type not found: ${session.vehicleType}`);
       }
 
-      // Create driver record
+      // Check if a driver record already exists for this user
+      const { data: existingDriver } = await supabase
+        .from('drivers')
+        .select('id, status')
+        .eq('user_id', session.userId)
+        .single();
+
+      if (existingDriver) {
+        if (existingDriver.status === 'approved') {
+          // Approved driver trying to re-register — block to protect their account
+          throw new Error('You already have an approved driver account. Re-registration is not allowed.');
+        }
+
+        // Status is pending or rejected — allow update (re-submission after rejection)
+        const { data: updatedDriver, error: updateError } = await supabase
+          .from('drivers')
+          .update({
+            identification_type: personalInfo.identification_type || 'drivers_license',
+            identification_number: personalInfo.identification_number || personalInfo.license_number,
+            license_number: personalInfo.license_number,
+            vehicle_type_id: vehicleType.id,
+            service_types: session.serviceTypes || ['ride'],
+            status: 'pending', // Reset to pending for admin to re-review
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingDriver.id)
+          .select()
+          .single();
+
+        if (updateError) {
+          throw new Error(`Failed to update driver record: ${updateError.message}`);
+        }
+
+        // Update vehicle record too
+        if (vehicleDetails && updatedDriver) {
+          await this.createDriverVehicle(updatedDriver.id, vehicleType.id, vehicleDetails, session.id);
+        }
+
+        logger.info('Driver record updated for re-submission:', {
+          driverId: updatedDriver.id,
+          userId: session.userId,
+          previousStatus: existingDriver.status,
+        });
+
+        return updatedDriver;
+      }
+
+      // No existing driver — create new record (first-time registration)
       const { data: driver, error } = await supabase
         .from('drivers')
         .insert({
@@ -1085,8 +1209,8 @@ export class DriverRegistrationController {
           identification_number: personalInfo.identification_number || personalInfo.license_number,
           license_number: personalInfo.license_number,
           vehicle_type_id: vehicleType.id,
-          service_types: session.serviceTypes || ['ride'], // Copy service types from session
-          status: 'pending', // Pending admin approval
+          service_types: session.serviceTypes || ['ride'],
+          status: 'pending',
           rating: 0,
           total_rides: 0,
           total_earnings: 0,
@@ -1103,7 +1227,7 @@ export class DriverRegistrationController {
 
       // Create driver vehicle record if vehicle details exist
       if (vehicleDetails && driver) {
-        await this.createDriverVehicle(driver.id, vehicleType.id, vehicleDetails);
+        await this.createDriverVehicle(driver.id, vehicleType.id, vehicleDetails, session.id);
       }
 
       logger.info('Driver record created:', {
@@ -1122,8 +1246,27 @@ export class DriverRegistrationController {
   /**
    * Create driver vehicle record
    */
-  private async createDriverVehicle(driverId: string, vehicleTypeId: string, vehicleDetails: any): Promise<void> {
+  private async createDriverVehicle(driverId: string, vehicleTypeId: string, vehicleDetails: any, sessionId?: string): Promise<void> {
     try {
+      // Try to get the vehicle photo URL from the session documents
+      let vehiclePhotoUrl: string | null = null;
+
+      if (sessionId) {
+        const { data: vehiclePhotoDoc } = await supabase
+          .from('driver_documents')
+          .select('document_url')
+          .eq('session_id', sessionId)
+          .eq('document_type', 'vehicle_photos')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (vehiclePhotoDoc?.document_url) {
+          vehiclePhotoUrl = vehiclePhotoDoc.document_url;
+          logger.info('Vehicle photo found for driver vehicle record', { driverId, vehiclePhotoUrl });
+        }
+      }
+
       const { error } = await supabase
         .from('driver_vehicles')
         .insert({
@@ -1135,6 +1278,7 @@ export class DriverRegistrationController {
           year: vehicleDetails.year ? parseInt(vehicleDetails.year) : new Date().getFullYear(),
           color: vehicleDetails.color || 'Unknown',
           is_active: true,
+          vehicle_photo_url: vehiclePhotoUrl,
         });
 
       if (error) {

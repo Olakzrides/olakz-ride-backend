@@ -9,7 +9,7 @@ import logger from '../utils/logger';
 import config from '../config';
 import { verifyTransactionPin, PinError } from '../utils/pin-verify';
 
-const MIN_WITHDRAWAL = 1000;
+const MIN_WITHDRAWAL = 100;
 
 function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'An unexpected error occurred';
