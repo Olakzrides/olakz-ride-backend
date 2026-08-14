@@ -322,6 +322,17 @@ export class PushNotificationService {
     userRole?: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
+      // ── Deactivate all existing rows for this user that carry the same token.
+      // This handles the case where the frontend generates a new device_id on
+      // every launch — the same physical token accumulates across many rows.
+      // We collapse them to a single active row before upserting the new one.
+      await supabase
+        .from('device_tokens')
+        .update({ is_active: false })
+        .eq('user_id', userId)
+        .eq('fcm_token', fcmToken)
+        .neq('device_id', deviceId); // keep the current row if it already exists
+
       const { error } = await supabase
         .from('device_tokens')
         .upsert({
@@ -401,7 +412,12 @@ export class PushNotificationService {
   }
 
   /**
-   * Get user's active device tokens
+   * Get user's active device tokens — deduplicated by token value.
+   *
+   * The frontend currently generates a new device_id on every app launch,
+   * which causes multiple rows with the same fcm_token to accumulate.
+   * We deduplicate here so each physical token is only sent to once,
+   * regardless of how many rows exist for it in the DB.
    */
   private async getUserDeviceTokens(userId: string): Promise<string[]> {
     try {
@@ -415,7 +431,9 @@ export class PushNotificationService {
         return [];
       }
 
-      return data.map(d => d.fcm_token);
+      // Deduplicate: one entry per unique token value
+      const unique = [...new Set(data.map(d => d.fcm_token).filter(Boolean))];
+      return unique;
     } catch (error) {
       logger.error('Error fetching device tokens:', error);
       return [];
@@ -494,79 +512,217 @@ export class PushNotificationService {
   }
 
   /**
-   * Send a broadcast notification to a role-based FCM topic.
+   * Send a broadcast notification to all active devices for a given role.
    *
-   * Topic naming convention:
-   *   all_users          → everyone
-   *   role_customer      → customers only
-   *   role_driver        → drivers only
-   *   role_vendor        → vendors only
+   * Replaces the previous FCM topic-based approach which silently missed
+   * iOS Expo Push Token users (Expo tokens cannot subscribe to FCM topics).
    *
-   * The mobile app subscribes to the relevant topic(s) on startup.
-   * FCM delivers to all subscribed devices instantly, including offline devices
-   * when they reconnect.
+   * Strategy:
+   *   1. Fetch all active, deduplicated tokens for the target role from DB.
+   *   2. Split into Expo tokens and FCM tokens.
+   *   3. Send Expo tokens in chunks via Expo Push API.
+   *   4. Send FCM tokens in batches of 500 via Firebase multicast.
    *
-   * Returns the FCM message ID and the topic used.
+   * Returns counts of successes and failures across both channels.
    */
   async sendBroadcast(params: {
-    title:      string;
-    body:       string;
-    targetRole: 'all' | 'customer' | 'driver' | 'vendor';
-    data?:      Record<string, string>;
+    title:       string;
+    body:        string;
+    targetRole:  'all' | 'customer' | 'driver' | 'vendor';
+    data?:       Record<string, string>;
     broadcastId: string;
   }): Promise<{
-    success:       boolean;
-    fcmMessageId?: string;
-    topic:         string;
-    error?:        string;
+    success:      boolean;
+    topic:        string;   // kept for backward-compat with admin-service response shape
+    fcmMessageId?: string;  // kept for backward-compat
+    successCount: number;
+    failureCount: number;
+    error?:       string;
   }> {
     const { title, body, targetRole, data = {}, broadcastId } = params;
 
+    // topic field kept so admin-service response shape doesn't break
     const topicMap: Record<string, string> = {
-      all:      'all_users',
-      customer: 'role_customer',
-      driver:   'role_driver',
-      vendor:   'role_vendor',
+      all: 'all_users', customer: 'role_customer',
+      driver: 'role_driver', vendor: 'role_vendor',
     };
-
     const topic = topicMap[targetRole] ?? 'all_users';
 
-    if (!this.isInitialized) {
-      logger.warn('sendBroadcast: Firebase not initialized');
-      return { success: false, topic, error: 'Push notifications not configured' };
-    }
-
     try {
-      const message: admin.messaging.Message = {
+      // ── 1. Fetch all active tokens for the target role ────────────────────
+      let tokenQuery = supabase
+        .from('device_tokens')
+        .select('fcm_token, user_id')
+        .eq('is_active', true);
+
+      if (targetRole !== 'all') {
+        // Filter by user role
+        const { data: roleUsers } = await supabase
+          .from('users')
+          .select('id')
+          .contains('roles', [targetRole])
+          .eq('status', 'active');
+
+        if (!roleUsers || roleUsers.length === 0) {
+          logger.info(`sendBroadcast: no active users found for role ${targetRole}`);
+          return { success: true, topic, successCount: 0, failureCount: 0 };
+        }
+
+        tokenQuery = tokenQuery.in('user_id', roleUsers.map(u => u.id));
+      }
+
+      const { data: tokenRows, error: tokenErr } = await tokenQuery;
+
+      if (tokenErr || !tokenRows || tokenRows.length === 0) {
+        logger.warn('sendBroadcast: no device tokens found', { targetRole });
+        return { success: true, topic, successCount: 0, failureCount: 0 };
+      }
+
+      // ── 2. Deduplicate by token value ─────────────────────────────────────
+      const uniqueTokens = [...new Set(tokenRows.map(r => r.fcm_token).filter(Boolean))];
+
+      const expoTokens: string[] = [];
+      const fcmTokens:  string[] = [];
+
+      for (const token of uniqueTokens) {
+        if (this.isExpoToken(token)) {
+          expoTokens.push(token);
+        } else {
+          fcmTokens.push(token);
+        }
+      }
+
+      logger.info('sendBroadcast: token breakdown', {
+        broadcastId, targetRole,
+        total: uniqueTokens.length,
+        expo: expoTokens.length,
+        fcm: fcmTokens.length,
+      });
+
+      let successCount = 0;
+      let failureCount = 0;
+      const notificationData = { ...data, broadcast_id: broadcastId, type: 'broadcast' };
+
+      // ── 3. Send to Expo tokens ────────────────────────────────────────────
+      if (expoTokens.length > 0) {
+        const messages: ExpoPushMessage[] = expoTokens.map(token => ({
+          to: token,
+          title,
+          body,
+          data: notificationData,
+          sound: 'default' as any,
+          priority: 'high' as any,
+          channelId: 'broadcasts',
+        }));
+
+        const chunks = expoClient.chunkPushNotifications(messages);
+
+        for (const chunk of chunks) {
+          try {
+            const tickets = await expoClient.sendPushNotificationsAsync(chunk);
+
+            for (let i = 0; i < tickets.length; i++) {
+              const ticket = tickets[i];
+              if (ticket.status === 'ok') {
+                successCount++;
+              } else {
+                failureCount++;
+                const errDetails = ticket.details as any;
+                if (errDetails?.error === 'DeviceNotRegistered') {
+                  await this.deactivateToken(chunk[i].to as string);
+                }
+                logger.warn('sendBroadcast: Expo ticket error', {
+                  token: (chunk[i].to as string).substring(0, 30),
+                  error: ticket.message,
+                });
+              }
+            }
+          } catch (chunkErr: any) {
+            failureCount += chunk.length;
+            logger.error('sendBroadcast: Expo chunk send error', { error: chunkErr.message });
+          }
+        }
+
+        logger.info('sendBroadcast: Expo sends complete', {
+          broadcastId, sent: expoTokens.length,
+          successCount, failureCount,
+        });
+      }
+
+      // ── 4. Send to FCM tokens via multicast (500 per batch) ───────────────
+      if (fcmTokens.length > 0 && this.isInitialized) {
+        const FCM_BATCH_SIZE = 500;
+
+        for (let i = 0; i < fcmTokens.length; i += FCM_BATCH_SIZE) {
+          const batch = fcmTokens.slice(i, i + FCM_BATCH_SIZE);
+
+          try {
+            const multicastMessage: admin.messaging.MulticastMessage = {
+              tokens: batch,
+              notification: { title, body },
+              data: notificationData,
+              android: {
+                priority: 'high',
+                notification: { sound: 'default', channelId: 'broadcasts', priority: 'high' },
+              },
+              apns: {
+                payload: {
+                  aps: { alert: { title, body }, sound: 'default', contentAvailable: true },
+                },
+              },
+            };
+
+            const response = await admin.messaging().sendEachForMulticast(multicastMessage);
+
+            successCount += response.successCount;
+            failureCount += response.failureCount;
+
+            // Deactivate any tokens FCM says are no longer valid
+            response.responses.forEach((resp, idx) => {
+              if (!resp.success && resp.error) {
+                const code = resp.error.code;
+                if (
+                  code === 'messaging/invalid-registration-token' ||
+                  code === 'messaging/registration-token-not-registered'
+                ) {
+                  this.deactivateToken(batch[idx]).catch(() => {});
+                }
+              }
+            });
+
+            logger.info('sendBroadcast: FCM multicast batch complete', {
+              broadcastId,
+              batchIndex: Math.floor(i / FCM_BATCH_SIZE) + 1,
+              successCount: response.successCount,
+              failureCount: response.failureCount,
+            });
+          } catch (batchErr: any) {
+            failureCount += batch.length;
+            logger.error('sendBroadcast: FCM multicast batch error', { error: batchErr.message });
+          }
+        }
+      } else if (fcmTokens.length > 0 && !this.isInitialized) {
+        logger.warn('sendBroadcast: Firebase not initialized — FCM tokens skipped', {
+          skipped: fcmTokens.length,
+        });
+        failureCount += fcmTokens.length;
+      }
+
+      logger.info('sendBroadcast: complete', {
+        broadcastId, targetRole, topic,
+        totalTokens: uniqueTokens.length,
+        successCount, failureCount,
+      });
+
+      return {
+        success: successCount > 0 || uniqueTokens.length === 0,
         topic,
-        notification: { title, body },
-        data: { ...data, broadcast_id: broadcastId, type: 'broadcast' },
-        android: {
-          priority: 'high',
-          notification: {
-            sound: 'default',
-            channelId: 'broadcasts',
-            priority: 'high',
-          },
-        },
-        apns: {
-          payload: {
-            aps: {
-              alert: { title, body },
-              sound: 'default',
-              contentAvailable: true,
-            },
-          },
-        },
+        successCount,
+        failureCount,
       };
-
-      const fcmMessageId = await admin.messaging().send(message);
-
-      logger.info('Broadcast sent via FCM topic', { topic, broadcastId, fcmMessageId });
-      return { success: true, fcmMessageId, topic };
     } catch (error: any) {
-      logger.error('sendBroadcast FCM error', { topic, error: error.message });
-      return { success: false, topic, error: error.message };
+      logger.error('sendBroadcast error', { topic, broadcastId, error: error.message });
+      return { success: false, topic, successCount: 0, failureCount: 0, error: error.message };
     }
   }
 
