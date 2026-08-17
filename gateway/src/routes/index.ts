@@ -316,5 +316,11 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.marketplace.url, undefined, 60000))
   );
 
+  // Car Wash Service routes
+  app.use(
+    '/api/car-wash',
+    createProxyMiddleware(createProxyOptions(config.services.carWash.url, undefined, 60000))
+  );
+
   logger.info('All proxy routes configured successfully');
 }

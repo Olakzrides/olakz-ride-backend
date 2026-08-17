@@ -49,10 +49,7 @@ export class VendorRegistrationService {
       if (v.verification_status === 'approved') {
         throw new Error('Vendor already registered and approved');
       }
-      if (v.verification_status === 'pending') {
-        throw new Error('Registration already submitted and pending review');
-      }
-      // rejected — allow re-registration: update existing record
+      // pending or rejected — allow re-submission: update existing record
       await prisma.$executeRaw`
         UPDATE vendors SET
           business_name = ${input.business_name},
@@ -228,6 +225,24 @@ export class VendorRegistrationService {
     if (!result.length) throw new Error('Vendor not found');
     const vendor = result[0];
 
+    // ── Add 'vendor' role to the user immediately on approval ─────────────────
+    const userRows = await prisma.$queryRaw<any[]>`
+      SELECT roles, active_role FROM users WHERE id = ${vendor.user_id}::uuid LIMIT 1
+    `;
+    if (userRows.length > 0) {
+      const currentRoles: string[] = userRows[0].roles ?? ['customer'];
+      if (!currentRoles.includes('vendor')) {
+        const updatedRoles = [...currentRoles, 'vendor'];
+        await prisma.$executeRaw`
+          UPDATE users SET
+            roles = ${updatedRoles}::text[],
+            updated_at = now()
+          WHERE id = ${vendor.user_id}::uuid
+        `;
+        logger.info('vendor role added to user on approval', { userId: vendor.user_id });
+      }
+    }
+
     // Auto-provision food_restaurants row for restaurant-type vendors
     // (non-blocking — log error but don't fail the approval)
     if (vendor.business_type === 'restaurant') {
@@ -277,6 +292,31 @@ export class VendorRegistrationService {
         logger.info('Marketplace store provisioned for vendor:', vendor.user_id);
       } catch (err: any) {
         logger.error('Failed to provision marketplace store for vendor (non-fatal):', err.message);
+      }
+    }
+
+    // Auto-provision car_wash_vendors row for car_wash-type vendors
+    if (vendor.business_type === 'car_wash') {
+      const carWashServiceUrl = process.env.CAR_WASH_SERVICE_URL || 'http://localhost:3010';
+      const internalKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
+      try {
+        await axios.post(
+          `${carWashServiceUrl}/api/internal/car-wash/vendor/provision`,
+          {
+            user_id: vendor.user_id,
+            business_name: vendor.business_name,
+            address: vendor.address || '',
+            city: vendor.city,
+            state: vendor.state,
+            phone: vendor.phone,
+            email: vendor.email,
+            logo_url: vendor.logo_url,
+          },
+          { headers: { 'x-internal-api-key': internalKey }, timeout: 8000 }
+        );
+        logger.info('Car wash vendor provisioned:', vendor.user_id);
+      } catch (err: any) {
+        logger.error('Failed to provision car wash vendor (non-fatal):', err.message);
       }
     }
 

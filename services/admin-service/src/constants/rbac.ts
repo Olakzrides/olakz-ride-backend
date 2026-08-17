@@ -58,6 +58,7 @@ export function pathToSection(path: string): PlatformSection | null {
   if (path.includes('/rides'))                return 'rides';
   if (path.includes('/deliveries'))           return 'deliveries';
   if (path.includes('/food'))                 return 'food_orders';
+  if (path.includes('/marketplace/pricing'))  return 'pricing';   // must be before /marketplace
   if (path.includes('/marketplace'))          return 'marketplace';
   if (path.includes('/hire'))                 return 'transport_hire';
   if (path.includes('/airtime'))              return 'airtime_data';
