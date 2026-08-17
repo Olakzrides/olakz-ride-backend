@@ -141,6 +141,7 @@ export class DeliveryService {
             distance_text: fareBreakdown.distanceText,
             city_tier:     fareBreakdown.cityTier,
             currency_code: fareBreakdown.currencyCode,
+            promo_display: fareBreakdown.promoDisplay ?? null,
           },
           paymentResult: {
             requiresAuthorization: true,
@@ -220,6 +221,7 @@ export class DeliveryService {
           distance_text: fareBreakdown.distanceText,
           city_tier:     fareBreakdown.cityTier,
           currency_code: fareBreakdown.currencyCode,
+          promo_display: fareBreakdown.promoDisplay ?? null,
         },
         paymentResult: {
           success: true,

@@ -1684,6 +1684,8 @@ export class DeliveriesController {
           distance_text: fareBreakdown.distanceText,
           city_tier:     fareBreakdown.cityTier,
           currency_code: fareBreakdown.currencyCode,
+          // Promo display — purely cosmetic, frontend shows crossed-out price when not null
+          promo_display: fareBreakdown.promoDisplay ?? null,
         },
         message: 'Fare estimated successfully',
       });

@@ -32,6 +32,7 @@ import dailyReportRoutes from './routes/daily-report.routes';
 import emailLogRoutes from './routes/email-log.routes';
 import hireAdminRoutes from './routes/hire.routes';
 import systemRolesRoutes from './routes/system-roles.routes';
+import carWashRoutes from './routes/car-wash.routes';
 
 const app = express();
 
@@ -123,6 +124,9 @@ app.use('/api/admin/daily-reports', dailyReportRoutes);
 
 // Step 25: email transaction logs
 app.use('/api/admin/email-logs', emailLogRoutes);
+
+// Step 26: car wash vendor & booking management
+app.use('/api/admin/car-wash', carWashRoutes);
 
 // 404
 app.use((req, res) => {
