@@ -37,6 +37,11 @@ interface Config {
       healthCheck: string;
       timeout: number;
     };
+    carWash: {
+      url: string;
+      healthCheck: string;
+      timeout: number;
+    };
   };
   cors: {
     allowedOrigins: string[];
@@ -92,6 +97,11 @@ const config: Config = {
       url: process.env.ADMIN_SERVICE_URL || 'http://localhost:3008',
       healthCheck: '/health',
       timeout: parseInt(process.env.SERVICE_TIMEOUT || '10000', 10),
+    },
+    carWash: {
+      url: process.env.CAR_WASH_SERVICE_URL || 'http://localhost:3010',
+      healthCheck: '/health',
+      timeout: 60000,
     },
   },
 
