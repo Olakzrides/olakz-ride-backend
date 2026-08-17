@@ -73,4 +73,63 @@ export class DeliveriesAdminController {
       ResponseUtil.serverError(res, 'Failed to retrieve delivery', 'DELIVERY_FETCH_ERROR');
     }
   };
+
+  /**
+   * GET /api/admin/deliveries/pricing/promo
+   * List all delivery_fare_config rows with their current promo settings.
+   * Admin sees which vehicle types / city tiers have the promo enabled.
+   */
+  getPromoConfigs = async (_req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const configs = await DeliveriesAdminService.getPromoConfigs();
+      ResponseUtil.success(res, { configs }, 'Delivery promo configs retrieved');
+    } catch (err: unknown) {
+      logger.error('getPromoConfigs error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, 'Failed to retrieve promo configs', 'PROMO_FETCH_ERROR');
+    }
+  };
+
+  /**
+   * PATCH /api/admin/deliveries/pricing/promo/:configId
+   * Admin sets promo_display_enabled and promo_display_multiplier on a specific
+   * delivery_fare_config row.
+   *
+   * Body: { "promo_display_enabled": true, "promo_display_multiplier": 1.75 }
+   *
+   * This is the ONLY place the promo fields are set — they are NOT synced from
+   * marketplace pricing because the promo is delivery-specific.
+   */
+  updatePromoConfig = async (req: AdminRequest, res: Response): Promise<void> => {
+    try {
+      const adminId = req.user?.id;
+      if (!adminId) { ResponseUtil.unauthorized(res); return; }
+
+      const { configId } = req.params;
+      const { promo_display_enabled, promo_display_multiplier } = req.body;
+
+      if (promo_display_enabled === undefined && promo_display_multiplier === undefined) {
+        ResponseUtil.badRequest(res, 'Provide at least one of: promo_display_enabled, promo_display_multiplier');
+        return;
+      }
+
+      if (
+        promo_display_multiplier !== undefined &&
+        promo_display_multiplier !== 0 &&
+        promo_display_multiplier <= 1
+      ) {
+        ResponseUtil.badRequest(res, 'promo_display_multiplier must be 0 (disabled) or greater than 1 — e.g. 1.75');
+        return;
+      }
+
+      const config = await DeliveriesAdminService.updatePromoConfig(
+        configId, adminId, { promo_display_enabled, promo_display_multiplier }
+      );
+      ResponseUtil.success(res, { config }, 'Delivery promo config updated');
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      if (msg === 'Config not found') { ResponseUtil.notFound(res, 'Delivery fare config'); return; }
+      logger.error('updatePromoConfig error', { error: msg });
+      ResponseUtil.serverError(res, msg, 'PROMO_UPDATE_ERROR');
+    }
+  };
 }

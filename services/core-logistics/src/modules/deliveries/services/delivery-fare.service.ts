@@ -25,6 +25,17 @@ export interface FareBreakdown {
   /** Resolved city tier — high | middle | low */
   cityTier:     string;
   currencyCode: string;
+  /**
+   * Promo display — purely cosmetic, never affects the amount charged.
+   * When admin sets promo_display_enabled = true and promo_display_multiplier > 1,
+   * the frontend shows a crossed-out "original price" with a discount % badge.
+   * null when promo display is disabled for this config row.
+   */
+  promoDisplay: {
+    originalPrice:    number;  // e.g. 2100  — the fake crossed-out price shown to customer
+    discountPercent:  number;  // e.g. 43    — percentage badge shown
+    discountLabel:    string;  // e.g. "-43%"
+  } | null;
 }
 
 export class DeliveryFareService {
@@ -165,6 +176,34 @@ export class DeliveryFareService {
 
   // ── Fare calculation ──────────────────────────────────────────────────────
 
+  /**
+   * Build the promo display object — purely cosmetic.
+   * Returns null when promo is disabled or multiplier is not > 1.
+   *
+   * Example: totalAmount=1200, multiplier=1.75
+   *   originalPrice  = round(1200 × 1.75) = 2100
+   *   discountPercent = round((2100-1200)/2100 × 100) = 43
+   *   discountLabel   = "-43%"
+   */
+  private static buildPromoDisplay(
+    fareConfig: any,
+    totalAmount: number
+  ): FareBreakdown['promoDisplay'] {
+    const enabled    = fareConfig.promo_display_enabled    ?? false;
+    const multiplier = Number(fareConfig.promo_display_multiplier ?? 0);
+
+    if (!enabled || multiplier <= 1) return null;
+
+    const originalPrice   = Math.round(totalAmount * multiplier);
+    const discountPercent = Math.round(((originalPrice - totalAmount) / originalPrice) * 100);
+
+    return {
+      originalPrice,
+      discountPercent,
+      discountLabel: `-${discountPercent}%`,
+    };
+  }
+
   public static async calculateFare(params: FareCalculationParams): Promise<FareBreakdown> {
     // Resolve city tier — address extraction first, region lookup as fallback
     const cityTier = await this.resolveCityTier(params.regionId, params.pickupAddress);
@@ -201,6 +240,9 @@ export class DeliveryFareService {
     const serviceFee  = serviceFeeRaw + roundingFeeRaw;
     const totalAmount = deliveryFee + serviceFee;
 
+    // Build promo display — purely cosmetic, customer still pays totalAmount
+    const promoDisplay = this.buildPromoDisplay(fareConfig, totalAmount);
+
     logger.info('Delivery fare calculated', {
       vehicleTypeId: params.vehicleTypeId,
       regionId:      params.regionId,
@@ -211,6 +253,7 @@ export class DeliveryFareService {
       serviceFee,
       totalAmount,
       deliveryType: params.deliveryType,
+      promoEnabled: fareConfig.promo_display_enabled ?? false,
     });
 
     return {
@@ -221,6 +264,7 @@ export class DeliveryFareService {
       totalAmount:  Math.round(totalAmount),
       cityTier,
       currencyCode: fareConfig.currency_code ?? 'NGN',
+      promoDisplay,
     };
   }
 

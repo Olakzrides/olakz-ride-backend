@@ -332,4 +332,91 @@ export class DeliveriesAdminService {
       createdAt:             d.created_at,
     };
   }
+
+  // ── Promo display config ──────────────────────────────────────────────────
+
+  /**
+   * Get all delivery_fare_config rows with their promo settings.
+   * Enriched with vehicle type name for easy identification.
+   */
+  static async getPromoConfigs() {
+    const { data, error } = await supabase
+      .from('delivery_fare_config')
+      .select(`
+        id, city_tier, is_active,
+        promo_display_enabled, promo_display_multiplier,
+        vehicle_type:vehicle_types(id, name, display_name, icon_url)
+      `)
+      .order('city_tier', { ascending: true });
+
+    if (error) throw new Error(`Failed to fetch promo configs: ${error.message}`);
+
+    return (data ?? []).map((row: any) => ({
+      id:                      row.id,
+      cityTier:                row.city_tier,
+      isActive:                row.is_active,
+      promoDisplayEnabled:     row.promo_display_enabled  ?? false,
+      promoDisplayMultiplier:  Number(row.promo_display_multiplier ?? 0),
+      vehicleType: row.vehicle_type ? {
+        id:          (row.vehicle_type as any).id,
+        name:        (row.vehicle_type as any).name,
+        displayName: (row.vehicle_type as any).display_name,
+        iconUrl:     (row.vehicle_type as any).icon_url,
+      } : null,
+      // Preview of what customer would see if promo is enabled
+      examplePromoDisplay: (() => {
+        const m = Number(row.promo_display_multiplier ?? 0);
+        if (!row.promo_display_enabled || m <= 1) return null;
+        const example = 1000; // using ₦1,000 as example fare
+        const original = Math.round(example * m);
+        const pct = Math.round(((original - example) / original) * 100);
+        return { note: `e.g. ₦${example.toLocaleString()} shown as ₦${original.toLocaleString()} crossed out (-${pct}%)` };
+      })(),
+    }));
+  }
+
+  /**
+   * Update promo_display_enabled and/or promo_display_multiplier on a
+   * specific delivery_fare_config row. These fields are delivery-specific
+   * and are NOT synced from marketplace pricing.
+   */
+  static async updatePromoConfig(
+    configId: string,
+    adminId: string,
+    updates: { promo_display_enabled?: boolean; promo_display_multiplier?: number }
+  ) {
+    const { data: existing } = await supabase
+      .from('delivery_fare_config')
+      .select('id, promo_display_enabled, promo_display_multiplier')
+      .eq('id', configId)
+      .single();
+
+    if (!existing) throw new Error('Config not found');
+
+    const payload: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (updates.promo_display_enabled  !== undefined) payload.promo_display_enabled  = updates.promo_display_enabled;
+    if (updates.promo_display_multiplier !== undefined) payload.promo_display_multiplier = updates.promo_display_multiplier;
+
+    const { data, error } = await supabase
+      .from('delivery_fare_config')
+      .update(payload)
+      .eq('id', configId)
+      .select(`
+        id, city_tier, is_active,
+        promo_display_enabled, promo_display_multiplier,
+        vehicle_type:vehicle_types(id, name, display_name)
+      `)
+      .single();
+
+    if (error || !data) throw new Error(`Failed to update promo config: ${error?.message}`);
+
+    logger.info('Admin updated delivery promo config', {
+      adminId,
+      configId,
+      promo_display_enabled:    payload.promo_display_enabled,
+      promo_display_multiplier: payload.promo_display_multiplier,
+    });
+
+    return data;
+  }
 }
