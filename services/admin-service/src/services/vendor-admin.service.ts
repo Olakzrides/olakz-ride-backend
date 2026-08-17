@@ -92,6 +92,31 @@ export class VendorAdminService {
 
     const v = vendor as Record<string, unknown>;
 
+    // ── Add 'vendor' role to the user immediately on approval ─────────────────
+    // This is what allows the user to access vendor-protected routes without
+    // needing to log out and back in (the next token refresh picks it up).
+    // We do this synchronously so approval atomically grants access.
+    const { data: userRow } = await supabase
+      .from('users')
+      .select('roles, active_role')
+      .eq('id', v.user_id as string)
+      .single();
+
+    if (userRow) {
+      const currentRoles: string[] = (userRow.roles as string[]) ?? ['customer'];
+      if (!currentRoles.includes('vendor')) {
+        const updatedRoles = [...currentRoles, 'vendor'];
+        await supabase
+          .from('users')
+          .update({
+            roles:      updatedRoles,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', v.user_id as string);
+        logger.info('vendor role added to user on approval', { userId: v.user_id });
+      }
+    }
+
     // Auto-provision food_restaurants for restaurant-type vendors (non-blocking)
     if (v.business_type === 'restaurant') {
       const foodServiceUrl = process.env.FOOD_SERVICE_URL || 'http://localhost:3005';
@@ -138,6 +163,30 @@ export class VendorAdminService {
         logger.info('Marketplace store provisioned for vendor', { userId: v.user_id });
       }).catch((err: unknown) => {
         logger.error('Failed to provision marketplace store (non-fatal)', { error: err instanceof Error ? err.message : String(err) });
+      });
+    }
+
+    // Auto-provision car_wash_vendors row for car_wash-type vendors (non-blocking)
+    if (v.business_type === 'car_wash') {
+      const carWashServiceUrl = process.env.CAR_WASH_SERVICE_URL || 'http://localhost:3010';
+      const internalKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
+      axios.post(
+        `${carWashServiceUrl}/api/internal/car-wash/vendor/provision`,
+        {
+          user_id: v.user_id,
+          business_name: v.business_name,
+          address: v.address || '',
+          city: v.city,
+          state: v.state,
+          phone: v.phone,
+          email: v.email,
+          logo_url: v.logo_url,
+        },
+        { headers: { 'x-internal-api-key': internalKey }, timeout: 8000 }
+      ).then(() => {
+        logger.info('Car wash vendor provisioned', { userId: v.user_id });
+      }).catch((err: unknown) => {
+        logger.error('Failed to provision car wash vendor (non-fatal)', { error: err instanceof Error ? err.message : String(err) });
       });
     }
 
@@ -485,14 +534,14 @@ export class VendorAdminService {
   static async toggleSuspend(vendorId: string, adminId: string) {
     let { data: existing, error } = await supabase
       .from('vendors')
-      .select('id, user_id, verification_status')
+      .select('id, user_id, verification_status, business_type')
       .eq('id', vendorId)
       .single();
 
     if (error || !existing) {
       const fallback = await supabase
         .from('vendors')
-        .select('id, user_id, verification_status')
+        .select('id, user_id, verification_status, business_type')
         .eq('user_id', vendorId)
         .single();
       existing = fallback.data;
@@ -515,10 +564,21 @@ export class VendorAdminService {
 
     if (updateError || !updated) throw new Error('Failed to update vendor status');
 
-    // Suspend only affects vendors.verification_status — users.status is NOT touched.
-    // A suspended vendor can still use the platform as a regular user
-    // (place orders, use wallet, etc.) but cannot operate their store
-    // or receive any vendor orders/updates until reactivated.
+    // Sync status to car_wash_vendors table (non-blocking)
+    if (v.business_type === 'car_wash') {
+      const carWashStatus = newStatus === 'suspended' ? 'suspended' : 'approved';
+      const carWashServiceUrl = process.env.CAR_WASH_SERVICE_URL || 'http://localhost:3010';
+      const internalKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
+      axios.patch(
+        `${carWashServiceUrl}/api/internal/car-wash/vendor/status`,
+        { user_id: v.user_id, status: carWashStatus },
+        { headers: { 'x-internal-api-key': internalKey }, timeout: 8000 }
+      ).then(() => {
+        logger.info('Car wash vendor status synced', { userId: v.user_id, status: carWashStatus });
+      }).catch((err: unknown) => {
+        logger.error('Failed to sync car wash vendor status (non-fatal)', { error: err instanceof Error ? err.message : String(err) });
+      });
+    }
 
     logger.info('Admin toggled vendor suspension', { adminId, vendorId, from: v.verification_status, to: newStatus });
     return { vendor: updated, action: newStatus === 'suspended' ? 'suspended' : 'reactivated' };

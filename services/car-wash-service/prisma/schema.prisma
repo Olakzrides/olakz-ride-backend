@@ -1,0 +1,148 @@
+// Prisma Schema for Car Wash Service
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/car-wash-client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CAR_WASH_VENDORS  (car-wash businesses / providers)
+// ─────────────────────────────────────────────────────────────────────
+
+model CarWashVendor {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String    @unique @map("user_id") @db.Uuid         // links to auth-service users table
+  businessName      String    @map("business_name") @db.VarChar(150)
+  description       String?   @db.Text
+  phone             String    @db.VarChar(20)
+  email             String?   @db.VarChar(150)
+  address           String    @db.Text
+  city              String    @db.VarChar(100)
+  state             String    @db.VarChar(100)
+  latitude          Decimal   @db.Decimal(10, 8)
+  longitude         Decimal   @db.Decimal(11, 8)
+  coverImageUrl     String?   @map("cover_image_url") @db.Text
+  logoUrl           String?   @map("logo_url") @db.Text
+  status            String    @default("pending") @db.VarChar(20)      // pending | approved | rejected | suspended | inactive
+  rating            Decimal   @default(0) @db.Decimal(3, 2)
+  totalCustomers    Int       @default(0) @map("total_customers")
+  totalHoursServed  Decimal   @default(0) @map("total_hours_served") @db.Decimal(10, 2)
+  operatingHours    Json      @default("{}") @map("operating_hours")   // { monday: { open, close, closed }, … }
+  rejectionReason   String?   @map("rejection_reason") @db.Text
+  reviewedBy        String?   @map("reviewed_by") @db.Uuid
+  reviewedAt        DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  services          CarWashService[]
+  bookings          CarWashBooking[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([city])
+  @@index([state])
+  @@index([rating])
+  @@map("car_wash_vendors")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CAR_WASH_SERVICES  (packages offered by a vendor)
+// ─────────────────────────────────────────────────────────────────────
+
+model CarWashService {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vendorId         String        @map("vendor_id") @db.Uuid
+  name             String        @db.VarChar(100)
+  description      String?       @db.Text
+  category         String        @db.VarChar(50)   // exterior_wash | interior_wash | engine_wash | full_car_wash | car_vacuuming | wax_and_polish
+  durationMinutes  Int           @map("duration_minutes")
+  price            Decimal       @db.Decimal(10, 2)
+  isActive         Boolean       @default(true) @map("is_active")
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  vendor           CarWashVendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  bookings         CarWashBooking[]
+
+  @@index([vendorId])
+  @@index([category])
+  @@index([isActive])
+  @@index([vendorId, isActive])
+  @@map("car_wash_services")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CAR_WASH_BOOKINGS
+// ─────────────────────────────────────────────────────────────────────
+
+model CarWashBooking {
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId         String        @map("customer_id") @db.Uuid
+  vendorId           String        @map("vendor_id") @db.Uuid
+  serviceId          String        @map("service_id") @db.Uuid
+
+  // Booking type
+  bookingType        String        @default("book_now") @map("booking_type") @db.VarChar(20)  // book_now | scheduled
+  status             String        @default("pending") @db.VarChar(20)  // pending | confirmed | in_progress | completed | cancelled | no_show
+
+  // When the service should happen
+  scheduledAt        DateTime?     @map("scheduled_at") @db.Timestamptz(6)
+
+  // Where the service will happen (customer's location)
+  serviceAddress     String        @map("service_address") @db.Text
+  serviceLatitude    Decimal       @map("service_latitude") @db.Decimal(10, 8)
+  serviceLongitude   Decimal       @map("service_longitude") @db.Decimal(11, 8)
+
+  // Vehicle info
+  vehicleDescription String?       @map("vehicle_description") @db.Text
+  vehiclePhotoUrls   String[]      @default([]) @map("vehicle_photo_urls") @db.Text
+
+  // Notes
+  notes              String?       @db.Text
+
+  // Financials
+  totalAmount        Decimal       @map("total_amount") @db.Decimal(10, 2)
+  paymentMethod      String        @default("wallet") @map("payment_method") @db.VarChar(20)  // wallet | card | cash
+  paymentStatus      String        @default("pending") @map("payment_status") @db.VarChar(20) // pending | paid | failed | refunded
+
+  // Cancellation
+  cancellationReason String?       @map("cancellation_reason") @db.Text
+  cancelledAt        DateTime?     @map("cancelled_at") @db.Timestamptz(6)
+
+  // Service lifecycle
+  startedAt          DateTime?     @map("started_at") @db.Timestamptz(6)
+  completedAt        DateTime?     @map("completed_at") @db.Timestamptz(6)
+
+  // Ratings (customer rates vendor)
+  customerRating     Int?          @map("customer_rating")
+  customerFeedback   String?       @map("customer_feedback") @db.Text
+
+  // Ratings (vendor rates customer)
+  vendorRating       Int?          @map("vendor_rating")
+
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  vendor             CarWashVendor  @relation(fields: [vendorId], references: [id])
+  service            CarWashService @relation(fields: [serviceId], references: [id])
+
+  @@index([customerId])
+  @@index([vendorId])
+  @@index([serviceId])
+  @@index([status])
+  @@index([bookingType])
+  @@index([scheduledAt])
+  @@index([createdAt])
+  @@index([vendorId, status])
+  @@index([customerId, status])
+  @@map("car_wash_bookings")
+}

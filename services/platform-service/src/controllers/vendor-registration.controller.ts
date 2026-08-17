@@ -7,7 +7,7 @@ interface AuthRequest extends Request {
   user?: { id: string; email: string; role: string };
 }
 
-const VALID_BUSINESS_TYPES = ['restaurant', 'marketplace', 'carwash', 'mechanics'];
+const VALID_BUSINESS_TYPES = ['restaurant', 'marketplace', 'car_wash', 'mechanics', 'spare_parts', 'car_dealer'];
 
 export class VendorRegistrationController {
   /**
