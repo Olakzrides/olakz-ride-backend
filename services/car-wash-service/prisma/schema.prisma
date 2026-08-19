@@ -33,7 +33,10 @@ model CarWashVendor {
   rating            Decimal   @default(0) @db.Decimal(3, 2)
   totalCustomers    Int       @default(0) @map("total_customers")
   totalHoursServed  Decimal   @default(0) @map("total_hours_served") @db.Decimal(10, 2)
-  operatingHours    Json      @default("{}") @map("operating_hours")   // { monday: { open, close, closed }, … }
+  operatingHours    Json      @default("{}") @map("operating_hours")
+  isOpen                      Boolean   @default(false) @map("is_open")
+  autoAcceptBookings          Boolean   @default(false) @map("auto_accept_bookings")
+  estimatedServiceTimeMinutes Int       @default(30)    @map("estimated_service_time_minutes")
   rejectionReason   String?   @map("rejection_reason") @db.Text
   reviewedBy        String?   @map("reviewed_by") @db.Uuid
   reviewedAt        DateTime? @map("reviewed_at") @db.Timestamptz(6)

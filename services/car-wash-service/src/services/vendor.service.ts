@@ -275,6 +275,185 @@ export class VendorService {
     return current >= openH * 60 + openM && current < closeH * 60 + closeM;
   }
 
+  // ─── Store Details ─────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/car-wash/vendor/store-details
+   * Returns is_open, auto_accept_bookings, estimated_service_time_minutes
+   */
+  async getStoreDetails(userId: string) {
+    const { data, error } = await supabase
+      .from('car_wash_vendors')
+      .select('id, is_open, auto_accept_bookings, estimated_service_time_minutes')
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !data) throw new Error('Vendor profile not found');
+
+    return {
+      id:                           data.id,
+      is_open:                      data.is_open          ?? false,
+      auto_accept_bookings:         data.auto_accept_bookings ?? false,
+      estimated_service_time_minutes: data.estimated_service_time_minutes ?? 30,
+    };
+  }
+
+  /**
+   * PUT /api/car-wash/vendor/store-details
+   * Vendor toggles open/closed, auto-accept, default service time
+   */
+  async updateStoreDetails(userId: string, data: {
+    is_open?: boolean;
+    auto_accept_bookings?: boolean;
+    estimated_service_time_minutes?: number;
+  }) {
+    const { data: existing } = await supabase
+      .from('car_wash_vendors')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    if (!existing) throw new Error('Vendor profile not found');
+
+    const payload: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (data.is_open                      !== undefined) payload.is_open                      = data.is_open;
+    if (data.auto_accept_bookings         !== undefined) payload.auto_accept_bookings         = data.auto_accept_bookings;
+    if (data.estimated_service_time_minutes !== undefined) payload.estimated_service_time_minutes = data.estimated_service_time_minutes;
+
+    const { data: updated, error } = await supabase
+      .from('car_wash_vendors')
+      .update(payload)
+      .eq('user_id', userId)
+      .select('id, is_open, auto_accept_bookings, estimated_service_time_minutes')
+      .single();
+
+    if (error) throw new Error(`Update failed: ${error.message}`);
+
+    return {
+      id:                           updated.id,
+      is_open:                      updated.is_open,
+      auto_accept_bookings:         updated.auto_accept_bookings,
+      estimated_service_time_minutes: updated.estimated_service_time_minutes,
+    };
+  }
+
+  // ─── Store Operations (operating hours) ───────────────────────────────────
+
+  /**
+   * GET /api/car-wash/vendor/store-operations
+   * Returns operating_hours schedule per day
+   */
+  async getStoreOperations(userId: string) {
+    const { data, error } = await supabase
+      .from('car_wash_vendors')
+      .select('id, operating_hours, is_open')
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !data) throw new Error('Vendor profile not found');
+
+    return {
+      id:              data.id,
+      is_open:         data.is_open ?? false,
+      operating_hours: data.operating_hours ?? {},
+    };
+  }
+
+  /**
+   * PUT /api/car-wash/vendor/store-operations
+   * Update operating hours and/or manual open toggle
+   */
+  async updateStoreOperations(userId: string, data: {
+    operating_hours?: Record<string, any>;
+    is_open?: boolean;
+  }) {
+    const { data: existing } = await supabase
+      .from('car_wash_vendors')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    if (!existing) throw new Error('Vendor profile not found');
+
+    const payload: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (data.operating_hours !== undefined) payload.operating_hours = data.operating_hours;
+    if (data.is_open         !== undefined) payload.is_open         = data.is_open;
+
+    const { data: updated, error } = await supabase
+      .from('car_wash_vendors')
+      .update(payload)
+      .eq('user_id', userId)
+      .select('id, operating_hours, is_open')
+      .single();
+
+    if (error) throw new Error(`Update failed: ${error.message}`);
+
+    return {
+      id:              updated.id,
+      is_open:         updated.is_open,
+      operating_hours: updated.operating_hours,
+    };
+  }
+
+  // ─── Statistics ────────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/car-wash/vendor/statistics
+   * Dashboard summary: total bookings, revenue, rating, this-month stats
+   */
+  async getStatistics(userId: string) {
+    const { data: vendor } = await supabase
+      .from('car_wash_vendors')
+      .select('id, rating, total_customers, total_hours_served')
+      .eq('user_id', userId)
+      .single();
+
+    if (!vendor) throw new Error('Vendor profile not found');
+
+    const now       = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+    const [allBookings, monthBookings] = await Promise.all([
+      supabase
+        .from('car_wash_bookings')
+        .select('status, total_amount, payment_status')
+        .eq('vendor_id', vendor.id),
+      supabase
+        .from('car_wash_bookings')
+        .select('status, total_amount, payment_status')
+        .eq('vendor_id', vendor.id)
+        .gte('created_at', monthStart),
+    ]);
+
+    const all   = allBookings.data   ?? [];
+    const month = monthBookings.data ?? [];
+
+    const totalRevenue = all
+      .filter((b: any) => b.status === 'completed' && b.payment_status === 'paid')
+      .reduce((s: number, b: any) => s + parseFloat(b.total_amount ?? 0), 0);
+
+    const monthRevenue = month
+      .filter((b: any) => b.status === 'completed' && b.payment_status === 'paid')
+      .reduce((s: number, b: any) => s + parseFloat(b.total_amount ?? 0), 0);
+
+    return {
+      total_bookings:     all.length,
+      completed_bookings: all.filter((b: any) => b.status === 'completed').length,
+      cancelled_bookings: all.filter((b: any) => b.status === 'cancelled').length,
+      pending_bookings:   all.filter((b: any) => b.status === 'pending').length,
+      total_revenue:      parseFloat(totalRevenue.toFixed(2)),
+      average_rating:     parseFloat(vendor.rating) || 0,
+      total_customers:    vendor.total_customers ?? 0,
+      total_hours_served: parseFloat(vendor.total_hours_served) || 0,
+      this_month: {
+        bookings:   month.length,
+        completed:  month.filter((b: any) => b.status === 'completed').length,
+        revenue:    parseFloat(monthRevenue.toFixed(2)),
+        cancelled:  month.filter((b: any) => b.status === 'cancelled').length,
+      },
+    };
+  }
+
   /**
    * Produces "Mon-Sat | 8am - 7pm" for the vendor profile screen badge.
    */
