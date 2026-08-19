@@ -7,14 +7,12 @@ const router = Router();
 const ctrl = new VendorController();
 
 // ── Static named routes MUST come before /:vendorId ───────────────────────────
-// Express matches routes top-to-bottom. If /:vendorId is first,
-// "search", "top-rated", "me" all get matched as :vendorId params.
 
-// Public static routes
+// Public discovery routes
 router.get('/search',    ctrl.searchVendors);
 router.get('/top-rated', ctrl.getTopRatedVendors);
 
-// Vendor registration (any authenticated user can apply)
+// Vendor registration — any authenticated user can apply to become a vendor
 router.post(
   '/register',
   authenticate,
@@ -22,35 +20,15 @@ router.post(
   ctrl.registerVendor
 );
 
-// Vendor-owner: own profile management
-router.get(
-  '/me/profile',
-  authenticate,
-  authorize('vendor'),
-  ctrl.getMyVendorProfile
-);
-
-router.patch(
-  '/me/profile',
-  authenticate,
-  authorize('vendor'),
-  ctrl.updateMyVendorProfile
-);
-
-router.get(
-  '/me/reviews',
-  authenticate,
-  authorize('vendor'),
-  ctrl.getMyReviews
-);
-
+// Upload cover/logo images — kept here because it uses multipart/form-data
+// All other vendor dashboard operations are under /api/car-wash/vendor/*
 router.post(
   '/me/images',
   authenticate,
   authorize('vendor'),
   vendorUpload.fields([
     { name: 'cover', maxCount: 1 },
-    { name: 'logo', maxCount: 1 },
+    { name: 'logo',  maxCount: 1 },
   ]),
   ctrl.uploadVendorImages
 );

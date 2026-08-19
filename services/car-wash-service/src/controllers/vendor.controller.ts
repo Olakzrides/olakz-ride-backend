@@ -210,4 +210,81 @@ export class VendorController {
       return ResponseUtil.serverError(res, err.message);
     }
   };
+
+  // ── Vendor Dashboard endpoints ─────────────────────────────────────────────
+
+  /**
+   * GET /api/car-wash/vendor/store-details
+   * Returns is_open, auto_accept_bookings, estimated_service_time_minutes
+   */
+  getStoreDetails = async (req: Request, res: Response): Promise<Response> => {
+    const user = (req as AuthRequest).user!;
+    try {
+      const details = await this.vendorService.getStoreDetails(user.id);
+      return ResponseUtil.success(res, { store_details: details });
+    } catch (err: any) {
+      if (err.message.includes('not found')) return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  /**
+   * PUT /api/car-wash/vendor/store-details
+   * Body: { is_open?, auto_accept_bookings?, estimated_service_time_minutes? }
+   */
+  updateStoreDetails = async (req: Request, res: Response): Promise<Response> => {
+    const user = (req as AuthRequest).user!;
+    try {
+      const details = await this.vendorService.updateStoreDetails(user.id, req.body);
+      return ResponseUtil.success(res, { store_details: details }, 'Store details updated');
+    } catch (err: any) {
+      if (err.message.includes('not found')) return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  /**
+   * GET /api/car-wash/vendor/store-operations
+   * Returns operating_hours schedule
+   */
+  getStoreOperations = async (req: Request, res: Response): Promise<Response> => {
+    const user = (req as AuthRequest).user!;
+    try {
+      const ops = await this.vendorService.getStoreOperations(user.id);
+      return ResponseUtil.success(res, { store_operations: ops });
+    } catch (err: any) {
+      if (err.message.includes('not found')) return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  /**
+   * PUT /api/car-wash/vendor/store-operations
+   * Body: { operating_hours?, is_open? }
+   */
+  updateStoreOperations = async (req: Request, res: Response): Promise<Response> => {
+    const user = (req as AuthRequest).user!;
+    try {
+      const ops = await this.vendorService.updateStoreOperations(user.id, req.body);
+      return ResponseUtil.success(res, { store_operations: ops }, 'Store operations updated');
+    } catch (err: any) {
+      if (err.message.includes('not found')) return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  /**
+   * GET /api/car-wash/vendor/statistics
+   * Dashboard summary: bookings, revenue, rating, this-month stats
+   */
+  getStatistics = async (req: Request, res: Response): Promise<Response> => {
+    const user = (req as AuthRequest).user!;
+    try {
+      const stats = await this.vendorService.getStatistics(user.id);
+      return ResponseUtil.success(res, { statistics: stats });
+    } catch (err: any) {
+      if (err.message.includes('not found')) return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
 }
