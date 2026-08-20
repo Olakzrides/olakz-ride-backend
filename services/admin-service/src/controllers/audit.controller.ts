@@ -87,7 +87,8 @@ export class AuditController {
         ResponseUtil.badRequest(res, msg);
       } else {
         logger.error('createTransaction error', { error: msg });
-        ResponseUtil.serverError(res, 'Failed to create transaction');
+        // Return the actual error message so frontend can see what went wrong
+        ResponseUtil.serverError(res, msg);
       }
     }
   };

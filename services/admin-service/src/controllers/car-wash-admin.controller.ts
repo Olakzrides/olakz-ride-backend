@@ -111,6 +111,39 @@ export class CarWashAdminController {
     }
   };
 
+  // ─── Vendor wallet & order history ────────────────────────────────────────
+
+  getVendorWalletBalance = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const result = await CarWashAdminService.getVendorWalletBalance(req.params.id);
+      ResponseUtil.success(res, result, 'Wallet balance retrieved');
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      if (msg === 'Car wash vendor not found') { ResponseUtil.notFound(res, 'Car wash vendor'); return; }
+      logger.error('carWash getVendorWalletBalance error', { error: msg });
+      ResponseUtil.serverError(res, msg);
+    }
+  };
+
+  getVendorBookings = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { status, from, to, page, limit } = req.query;
+      const result = await CarWashAdminService.getVendorBookings(req.params.id, {
+        status: status as string | undefined,
+        from:   from   as string | undefined,
+        to:     to     as string | undefined,
+        page:   page   ? parseInt(page  as string, 10) : 1,
+        limit:  limit  ? parseInt(limit as string, 10) : 20,
+      });
+      ResponseUtil.success(res, result, 'Vendor booking history retrieved');
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      if (msg === 'Car wash vendor not found') { ResponseUtil.notFound(res, 'Car wash vendor'); return; }
+      logger.error('carWash getVendorBookings error', { error: msg });
+      ResponseUtil.serverError(res, msg);
+    }
+  };
+
   // ─── Bookings ──────────────────────────────────────────────────────────────
 
   getBookings = async (req: Request, res: Response): Promise<void> => {
