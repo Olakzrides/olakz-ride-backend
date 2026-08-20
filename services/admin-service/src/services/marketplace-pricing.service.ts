@@ -249,6 +249,10 @@ export class MarketplacePricingService {
         city_tier:                           cityTier,
         is_active:                           payload.is_active,
         updated_at:                          payload.updated_at,
+        // NOTE: promo_display_enabled and promo_display_multiplier are intentionally
+        // NOT included here — they are delivery-specific and managed exclusively via
+        // PATCH /api/admin/deliveries/pricing/promo/:configId. Including them in this
+        // sync payload would reset them every time marketplace pricing is updated.
       };
 
       // Update existing rows for this vehicle_type_id + city_tier

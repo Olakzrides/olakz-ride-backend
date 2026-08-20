@@ -9,13 +9,31 @@ function toMessage(err: unknown): string {
 }
 
 export class VendorAdminController {
+  /**
+   * GET /api/admin/vendors/stats
+   * Top-cards summary: total, approved, active, inactive, pending, rejected, suspended
+   * Counts ALL vendor types together (restaurant + marketplace + car_wash etc.)
+   */
+  getStats = async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const stats = await VendorAdminService.getVendorStats();
+      ResponseUtil.success(res, stats, 'Vendor stats retrieved');
+    } catch (err: unknown) {
+      logger.error('getVendorStats error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, toMessage(err));
+    }
+  };
+
   getAll = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { status, business_type, page, limit } = req.query;
+      const { status, business_type, search, from, to, page, limit } = req.query;
       const result = await VendorAdminService.getAll({
-        status: status as string,
-        business_type: business_type as string,
-        page: page ? parseInt(page as string) : 1,
+        status:        status        as string | undefined,
+        business_type: business_type as string | undefined,
+        search:        search        as string | undefined,
+        from:          from          as string | undefined,
+        to:            to            as string | undefined,
+        page:  page  ? parseInt(page  as string) : 1,
         limit: limit ? parseInt(limit as string) : 20,
       });
       ResponseUtil.success(res, result, 'Vendors retrieved');

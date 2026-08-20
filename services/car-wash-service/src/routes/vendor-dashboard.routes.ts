@@ -2,12 +2,14 @@ import { Router } from 'express';
 import { VendorController } from '../controllers/vendor.controller';
 import { ServiceController } from '../controllers/service.controller';
 import { BookingController } from '../controllers/booking.controller';
+import { CategoryController } from '../controllers/category.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
 const router = Router();
-const vendorCtrl  = new VendorController();
-const serviceCtrl = new ServiceController();
-const bookingCtrl = new BookingController();
+const vendorCtrl   = new VendorController();
+const serviceCtrl  = new ServiceController();
+const bookingCtrl  = new BookingController();
+const categoryCtrl = new CategoryController();
 
 // All vendor dashboard routes require authentication + vendor role
 router.use(authenticate, authorize('vendor'));
@@ -30,11 +32,22 @@ router.get('/statistics',         vendorCtrl.getStatistics);
 // ── Reviews (own) ─────────────────────────────────────────────────────────────
 router.get('/reviews',            vendorCtrl.getMyReviews);
 
+// ── Categories — MUST come before /services to avoid Express route conflict ───
+// GET grouped shows services organised under both system + custom categories
+router.get('/categories/grouped', categoryCtrl.getGroupedServices);
+router.get('/categories',         categoryCtrl.getMyCategories);
+router.post('/categories',        categoryCtrl.createCategory);
+router.patch('/categories/:categoryId', categoryCtrl.updateCategory);
+router.delete('/categories/:categoryId', categoryCtrl.deleteCategory);
+
 // ── Services / Packages ───────────────────────────────────────────────────────
-router.get('/services',           serviceCtrl.getMyServices);
-router.post('/services',          serviceCtrl.createService);
-router.patch('/services/:serviceId', serviceCtrl.updateService);
+router.get('/services',               serviceCtrl.getMyServices);
+router.post('/services',              serviceCtrl.createService);
+router.patch('/services/:serviceId',  serviceCtrl.updateService);
 router.delete('/services/:serviceId', serviceCtrl.deleteService);
+
+// Assign service to a custom category (or null to unassign)
+router.patch('/services/:serviceId/category', categoryCtrl.assignServiceCategory);
 
 // ── Bookings ──────────────────────────────────────────────────────────────────
 router.get('/bookings',                       bookingCtrl.getVendorBookings);

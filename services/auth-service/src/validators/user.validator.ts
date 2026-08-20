@@ -19,7 +19,7 @@ export const updateProfileValidator = {
 export const updateRoleValidator = {
   body: Joi.object({
     roles: Joi.array()
-      .items(Joi.string().valid('customer', 'driver', 'admin'))
+      .items(Joi.string().valid('customer', 'driver', 'admin', 'vendor'))
       .min(1)
       .required()
       .messages({
@@ -27,10 +27,10 @@ export const updateRoleValidator = {
         'any.required': 'Roles are required',
       }),
     activeRole: Joi.string()
-      .valid('customer', 'driver', 'admin')
+      .valid('customer', 'driver', 'admin', 'vendor')
       .optional()
       .messages({
-        'any.only': 'Active role must be one of: customer, driver, admin',
+        'any.only': 'Active role must be one of: customer, driver, admin, vendor',
       }),
   }),
 };
