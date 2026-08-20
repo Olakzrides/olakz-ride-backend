@@ -322,5 +322,11 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.carWash.url, undefined, 60000))
   );
 
+  // Spare Parts Service routes
+  app.use(
+    '/api/spare-parts',
+    createProxyMiddleware(createProxyOptions(config.services.spareParts.url, undefined, 60000))
+  );
+
   logger.info('All proxy routes configured successfully');
 }

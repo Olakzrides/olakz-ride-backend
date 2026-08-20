@@ -1,0 +1,424 @@
+// Prisma Schema for Spare Parts Service
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/spare-parts-client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPARE_PARTS_CATEGORIES
+// Global taxonomy managed by admin. Pre-seeded with 10 initial categories.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SparePartsCategory {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @db.VarChar(100)
+  description String?  @db.Text
+  iconUrl     String?  @map("icon_url") @db.Text
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  storeCategories SparePartsStoreCategory[]
+  products        SparePartsProduct[]
+
+  @@index([isActive])
+  @@index([sortOrder])
+  @@map("spare_parts_categories")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPARE_PARTS_STORES
+// One store per vendor (owner_id is UNIQUE).
+// Created via POST /api/internal/spare-parts/vendor/provision when admin approves.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SparePartsStore {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId       String   @unique @map("owner_id") @db.Uuid   // links to auth-service users table
+  vendorId      String?  @map("vendor_id") @db.Uuid          // links to platform-service vendors table
+  name          String   @db.VarChar(200)
+  description   String?  @db.Text
+  logoUrl       String?  @map("logo_url") @db.Text
+  bannerUrl     String?  @map("banner_url") @db.Text
+  address       String   @db.Text
+  city          String?  @db.VarChar(100)
+  state         String?  @db.VarChar(100)
+  latitude      Decimal  @db.Decimal(10, 8)
+  longitude     Decimal  @db.Decimal(11, 8)
+  phone         String?  @db.VarChar(20)
+  email         String?  @db.VarChar(255)
+  isActive      Boolean  @default(true) @map("is_active")
+  isOpen        Boolean  @default(false) @map("is_open")
+  isVerified    Boolean  @default(false) @map("is_verified")
+  averageRating Decimal  @default(0.00) @map("average_rating") @db.Decimal(3, 2)
+  totalRatings  Int      @default(0) @map("total_ratings")
+  totalOrders   Int      @default(0) @map("total_orders")
+  operatingHours Json    @default("{}") @map("operating_hours")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  storeCategories SparePartsStoreCategory[]
+  products        SparePartsProduct[]
+  carts           SparePartsCart[]
+  orders          SparePartsOrder[]
+  reviews         SparePartsReview[]
+
+  @@index([ownerId])
+  @@index([isActive])
+  @@index([isOpen])
+  @@index([isVerified])
+  @@index([averageRating])
+  @@index([city])
+  @@index([state])
+  @@map("spare_parts_stores")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPARE_PARTS_STORE_CATEGORIES  (join table)
+// A store can belong to multiple categories.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SparePartsStoreCategory {
+  storeId    String             @map("store_id") @db.Uuid
+  categoryId String             @map("category_id") @db.Uuid
+  store      SparePartsStore    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  category   SparePartsCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([storeId, categoryId])
+  @@map("spare_parts_store_categories")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPARE_PARTS_PRODUCTS
+// specs stores structured attributes e.g. {"Size":"225/70","Brand":"TMA","Type":"Radial"}
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SparePartsProduct {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId       String              @map("store_id") @db.Uuid
+  categoryId    String?             @map("category_id") @db.Uuid
+  name          String              @db.VarChar(200)
+  description   String?             @db.Text
+  specs         Json                @default("{}") @db.JsonB  // structured attributes
+  price         Decimal             @db.Decimal(10, 2)
+  images        String[]            @default([])
+  isActive      Boolean             @default(true) @map("is_active")
+  isAvailable   Boolean             @default(true) @map("is_available")
+  stockQuantity Int?                @map("stock_quantity")
+  averageRating Decimal             @default(0.00) @map("average_rating") @db.Decimal(3, 2)
+  totalRatings  Int                 @default(0) @map("total_ratings")
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  store          SparePartsStore     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  category       SparePartsCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  cartItems      SparePartsCartItem[]
+  orderItems     SparePartsOrderItem[]
+  productReviews SparePartsProductReview[]
+  wishlistItems  SparePartsWishlist[]
+
+  @@index([storeId])
+  @@index([categoryId])
+  @@index([isActive])
+  @@index([isAvailable])
+  @@index([storeId, isActive])
+  @@index([storeId, categoryId])
+  @@map("spare_parts_products")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPARE_PARTS_FARE_CONFIG
+// Delivery fee configuration — seeded from marketplace_fare_config on startup.
+// Admin can adjust independently in a future phase.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SparePartsFareConfig {
+  id                              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicleType                     String   @map("vehicle_type") @db.VarChar(50)
+  cityTier                        String   @default("low") @map("city_tier") @db.VarChar(20)  // high | middle | low
+  estimatedBillingUnit            Decimal  @default(0.00) @map("estimated_billing_unit") @db.Decimal(10, 2)
+  highTrafficEstimatedBillingUnit Decimal  @default(0.00) @map("high_traffic_estimated_billing_unit") @db.Decimal(10, 2)
+  minAmountLessThan3km            Decimal  @default(0.00) @map("min_amount_less_than_3km") @db.Decimal(10, 2)
+  serviceFee                      Decimal  @default(0.00) @map("service_fee") @db.Decimal(10, 2)
+  roundingFee                     Decimal  @default(0.00) @map("rounding_fee") @db.Decimal(10, 2)
+  bookingFee                      Decimal  @default(0.00) @map("booking_fee") @db.Decimal(10, 2)
+  fleetCommissionPercent          Decimal  @default(0.00) @map("fleet_commission_percent") @db.Decimal(5, 2)
+  isActive                        Boolean  @default(true) @map("is_active")
+  createdAt                       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([vehicleType, cityTier])
+  @@index([vehicleType])
+  @@index([cityTier])
+  @@index([isActive])
+  @@map("spare_parts_fare_config")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPARE_PARTS_CARTS
+// One cart per user per store — UNIQUE(user_id, store_id).
+// Adding from a different store clears the existing cart.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SparePartsCart {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  storeId   String   @map("store_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  store SparePartsStore     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  items SparePartsCartItem[]
+
+  @@unique([userId, storeId])
+  @@index([userId])
+  @@map("spare_parts_carts")
+}
+
+model SparePartsCartItem {
+  id        String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cartId    String            @map("cart_id") @db.Uuid
+  productId String            @map("product_id") @db.Uuid
+  quantity  Int               @default(1)
+  unitPrice Decimal           @map("unit_price") @db.Decimal(10, 2)  // captured at add time
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  cart    SparePartsCart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product SparePartsProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([cartId])
+  @@index([productId])
+  @@map("spare_parts_cart_items")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPARE_PARTS_ORDERS
+// payment_method: wallet | cash
+// Status machine: pending → in_progress → ready_for_pickup → searching_rider
+//   → rider_accepted → heading_to_store → shipped → heading_to_customer
+//   → arrived → delivered  (terminal)
+//   any non-terminal → cancelled       (terminal)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SparePartsOrder {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId          String   @map("customer_id") @db.Uuid
+  storeId             String   @map("store_id") @db.Uuid
+  riderId             String?  @map("rider_id") @db.Uuid
+  status              String   @default("pending") @db.VarChar(50)
+  paymentMethod       String   @map("payment_method") @db.VarChar(20)   // wallet | cash
+  paymentStatus       String   @default("pending") @map("payment_status") @db.VarChar(20)
+  subtotal            Decimal  @db.Decimal(10, 2)
+  deliveryFee         Decimal  @default(0.00) @map("delivery_fee") @db.Decimal(10, 2)
+  serviceFee          Decimal  @default(0.00) @map("service_fee") @db.Decimal(10, 2)
+  roundingFee         Decimal  @default(0.00) @map("rounding_fee") @db.Decimal(10, 2)
+  totalAmount         Decimal  @map("total_amount") @db.Decimal(10, 2)
+  deliveryAddress     Json     @map("delivery_address") @db.JsonB   // {address, lat, lng, label?}
+  vehicleType         String   @default("motorcycle") @map("vehicle_type") @db.VarChar(50)
+  specialInstructions String?  @map("special_instructions") @db.Text
+
+  // Wallet payment tracking
+  walletTransactionId String?  @map("wallet_transaction_id") @db.VarChar(255)
+  walletBalanceBefore Decimal? @map("wallet_balance_before") @db.Decimal(10, 2)
+  walletBalanceAfter  Decimal? @map("wallet_balance_after") @db.Decimal(10, 2)
+  walletCashPortion   Decimal? @map("wallet_cash_portion") @db.Decimal(10, 2)
+  walletPromoPortion  Decimal? @map("wallet_promo_portion") @db.Decimal(10, 2)
+
+  // Cash payment tracking
+  cashPaymentConfirmed   Boolean   @default(false) @map("cash_payment_confirmed")
+  cashPaymentConfirmedAt DateTime? @map("cash_payment_confirmed_at") @db.Timestamptz(6)
+
+  // Cancellation / rejection
+  cancellationReason String?  @map("cancellation_reason") @db.Text
+  cancelledBy        String?  @map("cancelled_by") @db.VarChar(20)
+  rejectionReason    String?  @map("rejection_reason") @db.Text
+
+  // Rider search state
+  excludedRiderIds    String[] @default([]) @map("excluded_rider_ids") @db.Uuid
+  riderSearchAttempts Int      @default(0) @map("rider_search_attempts")
+
+  // Lifecycle timestamps
+  acceptedAt          DateTime? @map("accepted_at") @db.Timestamptz(6)
+  readyAt             DateTime? @map("ready_at") @db.Timestamptz(6)
+  headingToStoreAt    DateTime? @map("heading_to_store_at") @db.Timestamptz(6)
+  shippedAt           DateTime? @map("shipped_at") @db.Timestamptz(6)
+  headingToCustomerAt DateTime? @map("heading_to_customer_at") @db.Timestamptz(6)
+  arrivedAt           DateTime? @map("arrived_at") @db.Timestamptz(6)
+  deliveredAt         DateTime? @map("delivered_at") @db.Timestamptz(6)
+  cancelledAt         DateTime? @map("cancelled_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  store            SparePartsStore               @relation(fields: [storeId], references: [id])
+  orderItems       SparePartsOrderItem[]
+  statusHistory    SparePartsOrderStatusHistory[]
+  riderAssignments SparePartsRiderAssignment[]
+  riderLocations   SparePartsRiderLocation[]
+  riderEarnings    SparePartsRiderEarning[]
+
+  @@index([customerId])
+  @@index([storeId])
+  @@index([riderId])
+  @@index([status])
+  @@index([paymentMethod])
+  @@index([createdAt])
+  @@index([customerId, status])
+  @@index([storeId, status])
+  @@map("spare_parts_orders")
+}
+
+model SparePartsOrderItem {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId      String            @map("order_id") @db.Uuid
+  productId    String            @map("product_id") @db.Uuid
+  productName  String            @map("product_name") @db.VarChar(200)  // snapshot at order time
+  productPrice Decimal           @map("product_price") @db.Decimal(10, 2)
+  quantity     Int               @default(1)
+  subtotal     Decimal           @db.Decimal(10, 2)
+
+  order   SparePartsOrder   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product SparePartsProduct @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("spare_parts_order_items")
+}
+
+model SparePartsOrderStatusHistory {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId        String          @map("order_id") @db.Uuid
+  status         String          @db.VarChar(50)
+  previousStatus String?         @map("previous_status") @db.VarChar(50)
+  changedBy      String?         @map("changed_by") @db.Uuid
+  changedByRole  String?         @map("changed_by_role") @db.VarChar(20)  // customer | vendor | rider | system
+  notes          String?         @db.Text
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  order SparePartsOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([status])
+  @@map("spare_parts_order_status_history")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RIDER TABLES
+// Riders are existing approved drivers from core-logistics.
+// riderId / driverId values reference drivers.id in core-logistics DB.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SparePartsRiderAssignment {
+  id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId            String          @map("order_id") @db.Uuid
+  riderId            String          @map("rider_id") @db.Uuid   // drivers.id in core-logistics
+  status             String          @default("assigned") @db.VarChar(50)
+  cancelledAt        DateTime?       @map("cancelled_at") @db.Timestamptz(6)
+  cancellationReason String?         @map("cancellation_reason") @db.Text
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  order SparePartsOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([riderId])
+  @@map("spare_parts_rider_assignments")
+}
+
+model SparePartsRiderLocation {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId   String          @map("order_id") @db.Uuid
+  riderId   String          @map("rider_id") @db.Uuid
+  latitude  Decimal         @db.Decimal(10, 8)
+  longitude Decimal         @db.Decimal(11, 8)
+  heading   Decimal?        @db.Decimal(5, 2)
+  speed     Decimal?        @db.Decimal(6, 2)
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  order SparePartsOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([riderId])
+  @@index([createdAt])
+  @@map("spare_parts_rider_locations")
+}
+
+model SparePartsRiderEarning {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  riderId     String          @map("rider_id") @db.Uuid
+  orderId     String          @map("order_id") @db.Uuid
+  deliveryFee Decimal         @map("delivery_fee") @db.Decimal(10, 2)
+  totalEarned Decimal         @map("total_earned") @db.Decimal(10, 2)
+  status      String          @default("pending") @db.VarChar(20)  // pending | paid
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  order SparePartsOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([riderId])
+  @@index([orderId])
+  @@index([status])
+  @@map("spare_parts_rider_earnings")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REVIEWS
+// One review per order (submitted after delivered status).
+// Product ratings are per-item, linked to the parent review.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SparePartsReview {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId     String   @unique @map("order_id") @db.Uuid
+  customerId  String   @map("customer_id") @db.Uuid
+  storeId     String   @map("store_id") @db.Uuid
+  storeRating Int      @map("store_rating")   // 1–5
+  comment     String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  store          SparePartsStore          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  productReviews SparePartsProductReview[]
+
+  @@index([storeId])
+  @@index([customerId])
+  @@map("spare_parts_reviews")
+}
+
+model SparePartsProductReview {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewId      String           @map("review_id") @db.Uuid
+  productId     String           @map("product_id") @db.Uuid
+  productRating Int              @map("product_rating")  // 1–5
+
+  review  SparePartsReview  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  product SparePartsProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId])
+  @@index([productId])
+  @@map("spare_parts_product_reviews")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WISHLIST
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SparePartsWishlist {
+  id        String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String            @map("user_id") @db.Uuid
+  productId String            @map("product_id") @db.Uuid
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  product SparePartsProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([userId])
+  @@map("spare_parts_wishlist")
+}
