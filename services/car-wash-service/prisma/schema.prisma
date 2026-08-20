@@ -46,6 +46,7 @@ model CarWashVendor {
   // Relations
   services          CarWashService[]
   bookings          CarWashBooking[]
+  vendorCategories  CarWashVendorCategory[]
 
   @@index([userId])
   @@index([status])
@@ -53,6 +54,28 @@ model CarWashVendor {
   @@index([state])
   @@index([rating])
   @@map("car_wash_vendors")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CAR_WASH_VENDOR_CATEGORIES (per-vendor custom categories)
+// ─────────────────────────────────────────────────────────────────────
+
+model CarWashVendorCategory {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vendorId    String        @map("vendor_id") @db.Uuid
+  name        String        @db.VarChar(100)
+  description String?       @db.Text
+  sortOrder   Int           @default(0) @map("sort_order")
+  isActive    Boolean       @default(true) @map("is_active")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  vendor      CarWashVendor  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  services    CarWashService[]
+
+  @@index([vendorId])
+  @@index([vendorId, isActive])
+  @@map("car_wash_vendor_categories")
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -71,9 +94,14 @@ model CarWashService {
   createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  // Optional link to vendor's own custom category.
+  // When set, this takes priority over the system `category` field on the vendor dashboard.
+  customCategoryId String?       @map("custom_category_id") @db.Uuid
+
   // Relations
   vendor           CarWashVendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
   bookings         CarWashBooking[]
+  customCategory   CarWashVendorCategory? @relation(fields: [customCategoryId], references: [id], onDelete: SetNull)
 
   @@index([vendorId])
   @@index([category])

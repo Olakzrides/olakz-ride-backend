@@ -42,12 +42,18 @@ function calculateProfitLoss(cp: number, ap: number): { profit: number; loss: nu
 }
 
 async function getNextSerialNumber(date: string): Promise<number> {
-  const { count } = await supabase
+  // Use MAX(serial_number) + 1 instead of COUNT + 1.
+  // COUNT fails when records have been deleted (gaps in sequence),
+  // producing duplicate serial numbers that violate the unique constraint.
+  const { data } = await supabase
     .from('audit_transactions')
-    .select('*', { count: 'exact', head: true })
-    .eq('audit_date', date);
+    .select('serial_number')
+    .eq('audit_date', date)
+    .order('serial_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  return (count ?? 0) + 1;
+  return ((data as any)?.serial_number ?? 0) + 1;
 }
 
 /**
@@ -227,7 +233,10 @@ export class AuditService {
       .select()
       .single();
 
-    if (error) throw new Error(`Failed to create transaction: ${error.message}`);
+    if (error) {
+      logger.error('audit createTransaction DB error', { error: error.message, code: error.code, details: error.details, hint: error.hint });
+      throw new Error(`Failed to create transaction: ${error.message}`);
+    }
     return data;
   }
 

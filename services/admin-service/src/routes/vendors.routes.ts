@@ -10,6 +10,9 @@ const ctrl = new VendorAdminController();
 router.use(adminAuthMiddleware);
 router.use(rbacMiddleware);
 
+// ─── Stats for top cards (must come before /:id) ──────────────────────────────
+router.get('/stats', auditMiddleware('vendor_get_stats'), ctrl.getStats);
+
 // ─── Registration progress (must come before /:id routes) ────────────────────
 router.get('/registrations', auditMiddleware('vendor_get_incomplete_registrations'), ctrl.getIncompleteRegistrations);
 router.get('/registrations/:vendorId', auditMiddleware('vendor_get_incomplete_registration_by_id'), ctrl.getIncompleteRegistrationById);

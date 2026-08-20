@@ -43,9 +43,34 @@ export class CarWashAdminService {
     // Enrich with user details
     const { data: user } = await supabase
       .from('users')
-      .select('id, first_name, last_name, email, phone, avatar_url, status')
+      .select('id, first_name, last_name, email, phone, avatar_url, status, email_verified')
       .eq('id', vendor.user_id)
       .single();
+
+    // Pull submitted documents from platform-service vendors table
+    // (NIN, CAC, profile picture, store images submitted during registration)
+    const { data: platformVendor } = await supabase
+      .from('vendors')
+      .select('nin_number, cac_document_url, profile_picture_url, store_images, logo_url, verification_status, rejection_reason, approved_at')
+      .eq('user_id', vendor.user_id)
+      .maybeSingle();
+
+    // Wallet balance
+    const { data: txns } = await supabase
+      .from('wallet_transactions')
+      .select('transaction_type, amount')
+      .eq('user_id', vendor.user_id)
+      .eq('status', 'completed');
+
+    const CREDIT = new Set(['credit', 'topup', 'refund', 'earning', 'tip_payment']);
+    const DEBIT  = new Set(['debit', 'hold', 'withdrawal', 'payment']);
+    let walletBalance = 0;
+    for (const tx of txns ?? []) {
+      const t = tx as any;
+      const amt = parseFloat(String(t.amount ?? 0));
+      if (CREDIT.has(t.transaction_type))     walletBalance += amt;
+      else if (DEBIT.has(t.transaction_type)) walletBalance -= amt;
+    }
 
     // Booking stats
     const { data: bookingStats } = await supabase
@@ -54,30 +79,68 @@ export class CarWashAdminService {
       .eq('vendor_id', vendorId);
 
     const bookings = bookingStats ?? [];
-    const totalBookings = bookings.length;
-    const completedBookings = bookings.filter((b: any) => b.status === 'completed').length;
     const revenue = bookings
       .filter((b: any) => b.status === 'completed' && b.payment_status === 'paid')
       .reduce((sum: number, b: any) => sum + parseFloat(b.total_amount ?? 0), 0);
 
     const u = user ?? {} as any;
+    const pv = platformVendor ?? {} as any;
 
     return {
-      ...vendor,
+      // Car wash vendor record
+      id:               vendor.id,
+      business_name:    vendor.business_name,
+      description:      vendor.description,
+      phone:            vendor.phone,
+      email:            vendor.email,
+      address:          vendor.address,
+      city:             vendor.city,
+      state:            vendor.state,
+      latitude:         vendor.latitude,
+      longitude:        vendor.longitude,
+      logo_url:         vendor.logo_url,
+      cover_image_url:  vendor.cover_image_url,
+      status:           vendor.status,
+      rating:           vendor.rating,
+      total_customers:  vendor.total_customers,
+      total_hours_served: vendor.total_hours_served,
+      operating_hours:  vendor.operating_hours,
+      is_open:          vendor.is_open ?? false,
+      rejection_reason: vendor.rejection_reason,
+      reviewed_at:      vendor.reviewed_at,
+      created_at:       vendor.created_at,
+      // Owner identity
       owner: {
-        id: vendor.user_id,
-        name: `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Unknown',
-        email: u.email ?? null,
-        phone: u.phone ?? null,
-        avatar_url: u.avatar_url ?? null,
+        id:             vendor.user_id,
+        name:           `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Unknown',
+        email:          u.email ?? null,
+        phone:          u.phone ?? null,
+        avatar_url:     u.avatar_url ?? null,
         account_status: u.status ?? null,
+        email_verified: u.email_verified ?? null,
       },
+      // Submitted documents (from platform-service vendors table)
+      documents: {
+        nin_number:          pv.nin_number ? '***provided***' : null,
+        cac_document_url:    pv.cac_document_url ?? null,
+        profile_picture_url: pv.profile_picture_url ?? null,
+        store_images:        pv.store_images ?? [],
+        registration_status: pv.verification_status ?? null,
+        approved_at:         pv.approved_at ?? null,
+      },
+      // Wallet
+      wallet_balance: Math.max(0, walletBalance),
+      wallet_formatted: `₦${Math.max(0, walletBalance).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`,
+      // Stats
       stats: {
-        total_bookings: totalBookings,
-        completed_bookings: completedBookings,
-        total_revenue: parseFloat(revenue.toFixed(2)),
+        total_bookings:     bookings.length,
+        completed_bookings: bookings.filter((b: any) => b.status === 'completed').length,
+        cancelled_bookings: bookings.filter((b: any) => b.status === 'cancelled').length,
+        pending_bookings:   bookings.filter((b: any) => b.status === 'pending').length,
+        total_revenue:      parseFloat(revenue.toFixed(2)),
       },
-      services: vendor.car_wash_services ?? [],
+      // Active services
+      services: (vendor.car_wash_services ?? []).filter((s: any) => s.is_active),
     };
   }
 
@@ -230,6 +293,144 @@ export class CarWashAdminService {
     }));
 
     return { bookings: enriched, total: count ?? 0, page, limit };
+  }
+
+  // ─── Vendor wallet balance ─────────────────────────────────────────────────
+
+  static async getVendorWalletBalance(vendorId: string) {
+    const { data: vendor } = await supabase
+      .from('car_wash_vendors')
+      .select('id, user_id, business_name, status')
+      .eq('id', vendorId)
+      .single();
+
+    if (!vendor) throw new Error('Car wash vendor not found');
+
+    // Wallet balance from wallet_transactions
+    const { data: txns } = await supabase
+      .from('wallet_transactions')
+      .select('transaction_type, amount')
+      .eq('user_id', vendor.user_id)
+      .eq('status', 'completed');
+
+    const CREDIT = new Set(['credit', 'topup', 'refund', 'earning', 'tip_payment']);
+    const DEBIT  = new Set(['debit', 'hold', 'withdrawal', 'payment']);
+
+    let balance = 0;
+    for (const tx of txns ?? []) {
+      const t = tx as any;
+      const amt = parseFloat(String(t.amount ?? 0));
+      if (CREDIT.has(t.transaction_type))     balance += amt;
+      else if (DEBIT.has(t.transaction_type)) balance -= amt;
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('first_name, last_name, email, phone')
+      .eq('id', vendor.user_id)
+      .single();
+
+    const u = (user ?? {}) as any;
+
+    return {
+      vendor_id:       vendor.id,
+      user_id:         vendor.user_id,
+      business_name:   vendor.business_name,
+      status:          vendor.status,
+      first_name:      u.first_name ?? null,
+      last_name:       u.last_name ?? null,
+      email:           u.email ?? null,
+      phone:           u.phone ?? null,
+      wallet_balance:  Math.max(0, balance),
+      currency_code:   'NGN',
+      formatted_balance: `₦${Math.max(0, balance).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`,
+    };
+  }
+
+  // ─── Vendor booking history ─────────────────────────────────────────────────
+
+  static async getVendorBookings(vendorId: string, filters: {
+    status?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const { status, from, to, page = 1, limit = 20 } = filters;
+    const offset = (page - 1) * limit;
+
+    // Verify vendor exists
+    const { data: vendor } = await supabase
+      .from('car_wash_vendors')
+      .select('id, business_name')
+      .eq('id', vendorId)
+      .single();
+
+    if (!vendor) throw new Error('Car wash vendor not found');
+
+    let query = supabase
+      .from('car_wash_bookings')
+      .select(
+        `id, customer_id, booking_type, status, scheduled_at,
+         service_address, total_amount, payment_method, payment_status,
+         customer_rating, customer_feedback, created_at,
+         service:car_wash_services(id, name, category, duration_minutes)`,
+        { count: 'exact' }
+      )
+      .eq('vendor_id', vendorId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (status) query = query.eq('status', status);
+    if (from)   query = query.gte('created_at', from);
+    if (to)     query = query.lte('created_at', to);
+
+    const { data: bookings, count, error } = await query;
+    if (error) throw new Error(`Failed to fetch bookings: ${error.message}`);
+
+    // Batch-fetch customer names
+    const rows = bookings ?? [];
+    const customerIds = [...new Set(rows.map((b: any) => b.customer_id).filter(Boolean))];
+    const customerMap = new Map<string, { name: string; phone: string | null }>();
+
+    if (customerIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, phone')
+        .in('id', customerIds);
+      for (const u of users ?? []) {
+        const user = u as any;
+        customerMap.set(user.id, {
+          name:  `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || 'Customer',
+          phone: user.phone ?? null,
+        });
+      }
+    }
+
+    const orders = rows.map((b: any, idx: number) => ({
+      sn:              offset + idx + 1,
+      id:              b.id,
+      booking_type:    b.booking_type,
+      status:          b.status,
+      scheduled_at:    b.scheduled_at,
+      service_address: b.service_address,
+      service:         b.service,
+      customer: customerMap.get(b.customer_id) ?? { name: 'Customer', phone: null },
+      amount: {
+        total:          parseFloat(b.total_amount ?? 0),
+        payment_method: b.payment_method,
+        payment_status: b.payment_status,
+      },
+      rating:    b.customer_rating ?? null,
+      feedback:  b.customer_feedback ?? null,
+      created_at: b.created_at,
+    }));
+
+    return {
+      vendor: { id: vendor.id, business_name: vendor.business_name },
+      orders,
+      pagination: { page, limit, total: count ?? 0, pages: Math.ceil((count ?? 0) / limit) },
+    };
   }
 
   // ─── Dashboard stats ───────────────────────────────────────────────────────

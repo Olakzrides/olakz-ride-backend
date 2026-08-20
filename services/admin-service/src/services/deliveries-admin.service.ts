@@ -385,16 +385,19 @@ export class DeliveriesAdminService {
     adminId: string,
     updates: { promo_display_enabled?: boolean; promo_display_multiplier?: number }
   ) {
+    // Verify the row exists — select only columns guaranteed to exist
     const { data: existing } = await supabase
       .from('delivery_fare_config')
-      .select('id, promo_display_enabled, promo_display_multiplier')
+      .select('id')
       .eq('id', configId)
       .single();
 
     if (!existing) throw new Error('Config not found');
 
-    const payload: Record<string, any> = { updated_at: new Date().toISOString() };
-    if (updates.promo_display_enabled  !== undefined) payload.promo_display_enabled  = updates.promo_display_enabled;
+    // Build payload with only the promo fields — no updated_at because
+    // delivery_fare_config does not have that column
+    const payload: Record<string, any> = {};
+    if (updates.promo_display_enabled    !== undefined) payload.promo_display_enabled    = updates.promo_display_enabled;
     if (updates.promo_display_multiplier !== undefined) payload.promo_display_multiplier = updates.promo_display_multiplier;
 
     const { data, error } = await supabase

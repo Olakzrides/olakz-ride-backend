@@ -53,25 +53,80 @@ export class VendorAdminService {
   static async getAll(filters: {
     status?: string;
     business_type?: string;
+    search?: string;
+    from?: string;
+    to?: string;
     page?: number;
     limit?: number;
   }) {
-    const { status, business_type, page = 1, limit = 20 } = filters;
+    const { status, business_type, search, from, to, page = 1, limit = 20 } = filters;
     const offset = (page - 1) * limit;
 
     let query = supabase
       .from('vendors')
-      .select('*', { count: 'exact' })
+      .select('*, users!vendors_user_id_fkey(id, first_name, last_name, avatar_url)', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (status) query = query.eq('verification_status', status);
+    if (status)        query = query.eq('verification_status', status);
     if (business_type) query = query.eq('business_type', business_type);
+    if (from)          query = query.gte('created_at', from);
+    if (to)            query = query.lte('created_at', to);
+    if (search) {
+      query = query.or(
+        `business_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
+      );
+    }
 
     const { data: vendors, count, error } = await query;
     if (error) throw new Error(`Failed to get vendors: ${error.message}`);
 
-    return { vendors: vendors || [], total: count || 0, page, limit };
+    // Flatten user details into each row
+    const enriched = (vendors ?? []).map((v: any) => {
+      const user = v.users ?? {};
+      return {
+        id:                  v.id,
+        user_id:             v.user_id,
+        business_name:       v.business_name,
+        business_type:       v.business_type,
+        email:               v.email,
+        phone:               v.phone,
+        city:                v.city,
+        state:               v.state,
+        logo_url:            v.logo_url,
+        verification_status: v.verification_status,
+        is_active:           v.is_active,
+        created_at:          v.created_at,
+        updated_at:          v.updated_at,
+        owner_name:  `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || null,
+        avatar_url:  user.avatar_url ?? null,
+      };
+    });
+
+    return { vendors: enriched, total: count || 0, page, limit };
+  }
+
+  /**
+   * Summary stats for the top cards on the Vendor Management page.
+   * Counts ALL vendor types together.
+   */
+  static async getVendorStats() {
+    const { data, error } = await supabase
+      .from('vendors')
+      .select('verification_status, is_active');
+
+    if (error) throw new Error(`Failed to get vendor stats: ${error.message}`);
+
+    const rows = data ?? [];
+    return {
+      total:    rows.length,
+      approved: rows.filter((v: any) => v.verification_status === 'approved').length,
+      active:   rows.filter((v: any) => v.verification_status === 'approved' && v.is_active).length,
+      inactive: rows.filter((v: any) => v.verification_status === 'approved' && !v.is_active).length,
+      pending:  rows.filter((v: any) => v.verification_status === 'pending').length,
+      rejected: rows.filter((v: any) => v.verification_status === 'rejected').length,
+      suspended: rows.filter((v: any) => v.verification_status === 'suspended').length,
+    };
   }
 
   static async approve(vendorId: string, adminId: string) {
