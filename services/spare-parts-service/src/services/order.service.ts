@@ -477,7 +477,6 @@ export class OrderService {
   static async getTracking(orderId: string) {
     const order = await prisma.sparePartsOrder.findUnique({
       where:   { id: orderId },
-      select:  { id: true, status: true, riderId: true },
       include: {
         statusHistory:  { orderBy: { createdAt: 'asc' } },
         riderLocations: {
