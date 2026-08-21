@@ -15,6 +15,37 @@ export interface VendorCategory {
 
 export class CategoryService {
   /**
+   * GET /api/car-wash/vendor/categories/all
+   * Returns system categories + vendor's own custom categories combined.
+   * This is the full list the vendor sees when picking/managing categories.
+   */
+  async getAllCategoriesForVendor(vendorId: string): Promise<{
+    systemCategories: Array<{ key: string; label: string; type: 'system' }>;
+    customCategories: Array<{ id: string; name: string; type: 'custom'; serviceCount: number }>;
+  }> {
+    const SYSTEM_CATEGORIES = [
+      { key: 'exterior_wash',  label: 'Exterior Wash',  type: 'system' as const },
+      { key: 'interior_wash',  label: 'Interior Wash',  type: 'system' as const },
+      { key: 'engine_wash',    label: 'Engine Wash',    type: 'system' as const },
+      { key: 'full_car_wash',  label: 'Full Car Wash',  type: 'system' as const },
+      { key: 'car_vacuuming',  label: 'Car Vacuuming',  type: 'system' as const },
+      { key: 'wax_and_polish', label: 'Wax & Polish',   type: 'system' as const },
+    ];
+
+    const customCategories = await this.getVendorCategories(vendorId, false);
+
+    return {
+      systemCategories: SYSTEM_CATEGORIES,
+      customCategories: customCategories.map(c => ({
+        id:           c.id,
+        name:         c.name,
+        type:         'custom' as const,
+        serviceCount: c.serviceCount ?? 0,
+      })),
+    };
+  }
+
+  /**
    * List all categories for a vendor (including inactive for owner).
    * Includes service count per category.
    */

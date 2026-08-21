@@ -34,6 +34,7 @@ router.get('/reviews',            vendorCtrl.getMyReviews);
 
 // ── Categories — MUST come before /services to avoid Express route conflict ───
 // GET grouped shows services organised under both system + custom categories
+router.get('/categories/all',     categoryCtrl.getAllCategories);
 router.get('/categories/grouped', categoryCtrl.getGroupedServices);
 router.get('/categories',         categoryCtrl.getMyCategories);
 router.post('/categories',        categoryCtrl.createCategory);
