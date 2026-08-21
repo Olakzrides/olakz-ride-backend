@@ -279,21 +279,36 @@ export class VendorService {
 
   /**
    * GET /api/car-wash/vendor/store-details
-   * Returns is_open, auto_accept_bookings, estimated_service_time_minutes
+   * Returns business identity + operational settings.
    */
   async getStoreDetails(userId: string) {
     const { data, error } = await supabase
       .from('car_wash_vendors')
-      .select('id, is_open, auto_accept_bookings, estimated_service_time_minutes')
+      .select('id, business_name, phone, email, is_open, auto_accept_bookings, estimated_service_time_minutes, status, logo_url')
       .eq('user_id', userId)
       .single();
 
     if (error || !data) throw new Error('Vendor profile not found');
 
+    // Pull business_type from platform vendors table
+    const { data: platformVendor } = await supabase
+      .from('vendors')
+      .select('business_type')
+      .eq('user_id', userId)
+      .maybeSingle();
+
     return {
-      id:                           data.id,
-      is_open:                      data.is_open          ?? false,
-      auto_accept_bookings:         data.auto_accept_bookings ?? false,
+      id:                             data.id,
+      // Business identity
+      business_name:                  data.business_name,
+      email:                          data.email ?? null,
+      phone:                          data.phone,
+      business_type:                  (platformVendor as any)?.business_type ?? 'car_wash',
+      logo_url:                       data.logo_url ?? null,
+      status:                         data.status,
+      // Operational settings
+      is_open:                        data.is_open          ?? false,
+      auto_accept_bookings:           data.auto_accept_bookings ?? false,
       estimated_service_time_minutes: data.estimated_service_time_minutes ?? 30,
     };
   }

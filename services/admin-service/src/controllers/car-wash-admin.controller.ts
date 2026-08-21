@@ -146,6 +146,33 @@ export class CarWashAdminController {
 
   // ─── Bookings ──────────────────────────────────────────────────────────────
 
+  getBookingStatusCounts = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { vendor_id, from, to } = req.query;
+      const counts = await CarWashAdminService.getBookingStatusCounts({
+        vendor_id: vendor_id as string | undefined,
+        from:      from      as string | undefined,
+        to:        to        as string | undefined,
+      });
+      ResponseUtil.success(res, counts, 'Car wash booking status counts retrieved');
+    } catch (err: unknown) {
+      logger.error('carWash getBookingStatusCounts error', { error: toMessage(err) });
+      ResponseUtil.serverError(res, toMessage(err));
+    }
+  };
+
+  getBookingById = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const booking = await CarWashAdminService.getBookingById(req.params.bookingId);
+      ResponseUtil.success(res, { booking }, 'Car wash booking detail retrieved');
+    } catch (err: unknown) {
+      const msg = toMessage(err);
+      if (msg === 'Booking not found') { ResponseUtil.notFound(res, 'Booking'); return; }
+      logger.error('carWash getBookingById error', { error: msg });
+      ResponseUtil.serverError(res, msg);
+    }
+  };
+
   getBookings = async (req: Request, res: Response): Promise<void> => {
     try {
       const { status, vendor_id, from, to, page, limit } = req.query;
