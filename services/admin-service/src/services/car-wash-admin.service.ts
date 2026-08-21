@@ -222,6 +222,129 @@ export class CarWashAdminService {
 
   // ─── Bookings ──────────────────────────────────────────────────────────────
 
+  static async getBookingStatusCounts(filters: {
+    vendor_id?: string;
+    from?: string;
+    to?: string;
+  }) {
+    let query = supabase
+      .from('car_wash_bookings')
+      .select('status');
+
+    if (filters.vendor_id) query = query.eq('vendor_id', filters.vendor_id);
+    if (filters.from)      query = query.gte('created_at', filters.from);
+    if (filters.to)        query = query.lte('created_at', filters.to);
+
+    const { data, error } = await query;
+    if (error) throw new Error(`Failed to get booking counts: ${error.message}`);
+
+    const rows = data ?? [];
+    return {
+      all:         rows.length,
+      pending:     rows.filter((b: any) => b.status === 'pending').length,
+      confirmed:   rows.filter((b: any) => b.status === 'confirmed').length,
+      in_progress: rows.filter((b: any) => b.status === 'in_progress').length,
+      completed:   rows.filter((b: any) => b.status === 'completed').length,
+      cancelled:   rows.filter((b: any) => b.status === 'cancelled').length,
+      no_show:     rows.filter((b: any) => b.status === 'no_show').length,
+    };
+  }
+
+  static async getBookingById(bookingId: string) {
+    const { data: booking, error } = await supabase
+      .from('car_wash_bookings')
+      .select('*, car_wash_services(id, name, category, duration_minutes, price)')
+      .eq('id', bookingId)
+      .single();
+
+    if (error || !booking) throw new Error('Booking not found');
+
+    // Customer full profile
+    const { data: customer } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email, phone, avatar_url')
+      .eq('id', booking.customer_id)
+      .single();
+
+    // Vendor full profile
+    const { data: vendor } = await supabase
+      .from('car_wash_vendors')
+      .select('id, business_name, phone, email, address, city, state, logo_url, rating')
+      .eq('id', booking.vendor_id)
+      .single();
+
+    const c = (customer ?? {}) as any;
+    const v = (vendor    ?? {}) as any;
+    const s = (booking.car_wash_services ?? {}) as any;
+
+    return {
+      id:               booking.id,
+      booking_type:     booking.booking_type,
+      status:           booking.status,
+      scheduled_at:     booking.scheduled_at,
+      service_address:  booking.service_address,
+      service_latitude: booking.service_latitude,
+      service_longitude: booking.service_longitude,
+
+      // Vehicle info
+      vehicle: {
+        description: booking.vehicle_description ?? null,
+        photo_urls:  booking.vehicle_photo_urls ?? [],
+      },
+
+      // Notes
+      notes: booking.notes ?? null,
+
+      // Payment breakdown
+      payment: {
+        total_amount:   parseFloat(booking.total_amount ?? 0),
+        payment_method: booking.payment_method,
+        payment_status: booking.payment_status,
+      },
+
+      // Customer full profile
+      customer: customer ? {
+        id:        c.id,
+        name:      `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || 'Customer',
+        email:     c.email ?? null,
+        phone:     c.phone ?? null,
+        avatar_url: c.avatar_url ?? null,
+      } : { id: booking.customer_id, name: 'Customer', email: null, phone: null, avatar_url: null },
+
+      // Vendor full profile
+      vendor: vendor ? {
+        id:            v.id,
+        business_name: v.business_name,
+        phone:         v.phone ?? null,
+        email:         v.email ?? null,
+        address:       v.address ?? null,
+        city:          v.city ?? null,
+        state:         v.state ?? null,
+        logo_url:      v.logo_url ?? null,
+        rating:        parseFloat(v.rating ?? 0),
+      } : { id: booking.vendor_id, business_name: 'Vendor' },
+
+      // Service detail
+      service: s,
+
+      // Rating & feedback
+      customer_rating:   booking.customer_rating ?? null,
+      customer_feedback: booking.customer_feedback ?? null,
+      vendor_rating:     booking.vendor_rating ?? null,
+
+      // Timeline
+      timeline: {
+        created_at:   booking.created_at,
+        confirmed_at: null,   // not stored separately — use status transitions
+        started_at:   booking.started_at ?? null,
+        completed_at: booking.completed_at ?? null,
+        cancelled_at: booking.cancelled_at ?? null,
+      },
+
+      cancellation_reason: booking.cancellation_reason ?? null,
+    };
+  }
+
   static async getBookings(filters: {
     status?: string;
     vendor_id?: string;
