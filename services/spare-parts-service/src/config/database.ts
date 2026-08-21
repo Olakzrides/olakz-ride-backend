@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../node_modules/.prisma/spare-parts-client';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // Prisma Client
