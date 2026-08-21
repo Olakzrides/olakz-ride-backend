@@ -62,9 +62,10 @@ export class VendorAdminService {
     const { status, business_type, search, from, to, page = 1, limit = 20 } = filters;
     const offset = (page - 1) * limit;
 
+    // vendors table has no FK to users — use plain select, batch-enrich separately
     let query = supabase
       .from('vendors')
-      .select('*, users!vendors_user_id_fkey(id, first_name, last_name, avatar_url)', { count: 'exact' })
+      .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -81,9 +82,29 @@ export class VendorAdminService {
     const { data: vendors, count, error } = await query;
     if (error) throw new Error(`Failed to get vendors: ${error.message}`);
 
-    // Flatten user details into each row
-    const enriched = (vendors ?? []).map((v: any) => {
-      const user = v.users ?? {};
+    const rows = vendors ?? [];
+
+    // Batch-fetch user display names
+    const userIds = [...new Set(rows.map((v: any) => v.user_id).filter(Boolean))];
+    const userMap = new Map<string, { name: string | null; avatar_url: string | null }>();
+
+    if (userIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, avatar_url')
+        .in('id', userIds);
+
+      for (const u of users ?? []) {
+        const user = u as any;
+        userMap.set(user.id, {
+          name:       `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || null,
+          avatar_url: user.avatar_url ?? null,
+        });
+      }
+    }
+
+    const enriched = rows.map((v: any) => {
+      const user = userMap.get(v.user_id);
       return {
         id:                  v.id,
         user_id:             v.user_id,
@@ -98,8 +119,8 @@ export class VendorAdminService {
         is_active:           v.is_active,
         created_at:          v.created_at,
         updated_at:          v.updated_at,
-        owner_name:  `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || null,
-        avatar_url:  user.avatar_url ?? null,
+        owner_name:          user?.name ?? null,
+        avatar_url:          user?.avatar_url ?? null,
       };
     });
 
