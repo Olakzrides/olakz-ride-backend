@@ -38,6 +38,8 @@ router.post('/vendors/:id/reactivate', auditMiddleware('car_wash_reactivate_vend
 
 // ── All bookings (cross-vendor) ───────────────────────────────────────────────
 // GET ?status=pending&vendor_id=uuid&from=2026-08-01&to=2026-08-31&page=1&limit=20
-router.get('/bookings', auditMiddleware('car_wash_get_bookings'), ctrl.getBookings);
+router.get('/bookings/status-counts', auditMiddleware('car_wash_get_booking_counts'), ctrl.getBookingStatusCounts);
+router.get('/bookings/:bookingId',    auditMiddleware('car_wash_get_booking'),        ctrl.getBookingById);
+router.get('/bookings',               auditMiddleware('car_wash_get_bookings'),       ctrl.getBookings);
 
 export default router;
