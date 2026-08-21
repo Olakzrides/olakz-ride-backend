@@ -3,6 +3,9 @@ import { Router } from 'express';
 const router = Router();
 
 // ── Health check ──────────────────────────────────────────────────────────────
+// Accessible at GET /api/spare-parts/health via the gateway
+// (gateway strips /api/spare-parts and forwards /health to the service)
+// Also directly accessible at GET /health on the service port
 router.get('/health', (_req, res) => {
   res.json({
     success: true,
