@@ -41,6 +41,25 @@ export class CategoryController {
   };
 
   /**
+   * GET /api/car-wash/vendor/categories/all
+   * Returns system categories + vendor's own custom categories combined.
+   * Used when vendor is picking a category for a new service.
+   */
+  getAllCategories = async (req: Request, res: Response): Promise<Response> => {
+    const user = (req as AuthRequest).user!;
+    try {
+      const { data: vendor } = await supabase
+        .from('car_wash_vendors').select('id').eq('user_id', user.id).single();
+      if (!vendor) return ResponseUtil.notFound(res, 'Vendor profile not found');
+
+      const categories = await this.service.getAllCategoriesForVendor(vendor.id);
+      return ResponseUtil.success(res, categories);
+    } catch (err: any) {
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  /**
    * GET /api/car-wash/vendor/categories/grouped
    * Services grouped by category — for dashboard overview.
    */
