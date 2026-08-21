@@ -3,10 +3,9 @@ import { Router } from 'express';
 const router = Router();
 
 // ── Health check ──────────────────────────────────────────────────────────────
-// Accessible at GET /api/spare-parts/health via the gateway
-// (gateway strips /api/spare-parts and forwards /health to the service)
-// Also directly accessible at GET /health on the service port
-router.get('/health', (_req, res) => {
+// Gateway proxies /api/spare-parts/* → this service WITHOUT stripping the prefix.
+// So the service must register routes at the full /api/spare-parts/* path.
+router.get('/api/spare-parts/health', (_req, res) => {
   res.json({
     success: true,
     service: 'spare-parts-service',
