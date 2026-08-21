@@ -21,13 +21,14 @@ export class CarWashServiceService {
     const { data, error } = await supabase
       .from('car_wash_services')
       .insert({
-        vendor_id: vendorId,
-        name: dto.name,
-        description: dto.description ?? null,
-        category: dto.category,
-        duration_minutes: dto.durationMinutes,
-        price: dto.price,
-        is_active: true,
+        vendor_id:          vendorId,
+        name:               dto.name,
+        description:        dto.description ?? null,
+        category:           dto.category,
+        duration_minutes:   dto.durationMinutes,
+        price:              dto.price,
+        is_active:          true,
+        custom_category_id: (dto as any).customCategoryId ?? null,
       })
       .select('*')
       .single();
@@ -106,6 +107,8 @@ export class CarWashServiceService {
     if (dto.durationMinutes !== undefined) updatePayload.duration_minutes = dto.durationMinutes;
     if (dto.price !== undefined)           updatePayload.price = dto.price;
     if (dto.isActive !== undefined)        updatePayload.is_active = dto.isActive;
+    if ((dto as any).customCategoryId !== undefined)
+      updatePayload.custom_category_id = (dto as any).customCategoryId ?? null;
 
     const { data, error } = await supabase
       .from('car_wash_services')
