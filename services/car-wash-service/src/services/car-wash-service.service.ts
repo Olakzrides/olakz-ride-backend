@@ -24,7 +24,7 @@ export class CarWashServiceService {
         vendor_id:          vendorId,
         name:               dto.name,
         description:        dto.description ?? null,
-        category:           dto.category,
+        category:           (dto as any).category ?? 'exterior_wash', // default if only custom cat selected
         duration_minutes:   dto.durationMinutes,
         price:              dto.price,
         is_active:          true,
