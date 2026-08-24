@@ -1,6 +1,7 @@
 import { supabase } from '../config/database';
 import { config } from '../config/env';
 import { logger } from '../config/logger';
+import { CarWashNotificationService } from './car-wash-notification.service';
 import {
   CarWashBooking,
   CreateBookingDto,
@@ -94,6 +95,23 @@ export class BookingService {
     }
 
     logger.info('Booking created', { bookingId: data.id, customerId, vendorId: dto.vendorId });
+
+    // Notify vendor of new booking (non-blocking)
+    const { data: notifyService } = await supabase
+      .from('car_wash_services').select('name').eq('id', dto.serviceId).single();
+    const { data: notifyVendor } = await supabase
+      .from('car_wash_vendors').select('business_name').eq('id', dto.vendorId).single();
+
+    CarWashNotificationService.notifyNewBooking({
+      bookingId:   data.id,
+      customerId,
+      vendorId:    dto.vendorId,
+      bookingType: dto.bookingType,
+      serviceName: (notifyService as any)?.name ?? 'Wash Service',
+      vendorName:  (notifyVendor  as any)?.business_name ?? 'Car Wash',
+      scheduledAt: dto.scheduledAt ?? null,
+    }).catch(() => {});
+
     return this.mapRow(data);
   }
 
@@ -289,6 +307,54 @@ export class BookingService {
   }
 
   /**
+   * Vendor declines a pending booking (with reason).
+   */
+  async declineBooking(bookingId: string, vendorUserId: string, reason: string): Promise<CarWashBooking> {
+    const { data: booking } = await supabase
+      .from('car_wash_bookings')
+      .select('id, customer_id, vendor_id, status')
+      .eq('id', bookingId)
+      .single();
+
+    if (!booking) throw new Error('Booking not found');
+    if (!['pending', 'confirmed'].includes(booking.status)) {
+      throw new Error(`Cannot decline a booking with status: ${booking.status}`);
+    }
+
+    const { data: vendor } = await supabase
+      .from('car_wash_vendors')
+      .select('user_id')
+      .eq('id', booking.vendor_id)
+      .single();
+
+    if (!vendor || vendor.user_id !== vendorUserId) throw new Error('Unauthorised');
+
+    const { data, error } = await supabase
+      .from('car_wash_bookings')
+      .update({
+        status:              'cancelled',
+        cancellation_reason: reason,
+        cancelled_at:        new Date().toISOString(),
+        updated_at:          new Date().toISOString(),
+      })
+      .eq('id', bookingId)
+      .select('*')
+      .single();
+
+    if (error) throw new Error(`Decline failed: ${error.message}`);
+
+    // Notify customer of vendor decline (non-blocking)
+    CarWashNotificationService.notifyBookingStatusChanged({
+      bookingId:  bookingId,
+      customerId: booking.customer_id,
+      vendorId:   booking.vendor_id,
+      status:     'cancelled',
+    }).catch(() => {});
+
+    return this.mapRow(data);
+  }
+
+  /**
    * Vendor confirms a pending booking.
    */
   async confirmBooking(bookingId: string, vendorUserId: string): Promise<CarWashBooking> {
@@ -324,7 +390,7 @@ export class BookingService {
   ): Promise<CarWashBooking> {
     const { data: booking } = await supabase
       .from('car_wash_bookings')
-      .select('id, customer_id, status, scheduled_at, booking_type')
+      .select('id, customer_id, vendor_id, status, scheduled_at, booking_type')
       .eq('id', bookingId)
       .single();
 
@@ -357,6 +423,15 @@ export class BookingService {
       .single();
 
     if (error) throw new Error(`Cancel failed: ${error.message}`);
+
+    // Notify vendor of cancellation (non-blocking)
+    CarWashNotificationService.notifyBookingStatusChanged({
+      bookingId:  bookingId,
+      customerId,
+      vendorId:   booking.vendor_id,
+      status:     'cancelled',
+    }).catch(() => {});
+
     return this.mapRow(data);
   }
 
@@ -409,7 +484,7 @@ export class BookingService {
   ): Promise<CarWashBooking> {
     const { data: booking } = await supabase
       .from('car_wash_bookings')
-      .select('id, vendor_id, status')
+      .select('id, customer_id, vendor_id, status')
       .eq('id', bookingId)
       .single();
 
@@ -431,6 +506,15 @@ export class BookingService {
       .single();
 
     if (error) throw new Error(`Status update failed: ${error.message}`);
+
+    // Notify customer of status change (non-blocking)
+    CarWashNotificationService.notifyBookingStatusChanged({
+      bookingId:  bookingId,
+      customerId: booking.customer_id,
+      vendorId:   booking.vendor_id,
+      status:     newStatus,
+    }).catch(() => {});
+
     return this.mapRow(data);
   }
 
