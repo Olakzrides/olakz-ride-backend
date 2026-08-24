@@ -18,17 +18,35 @@ export class CarWashServiceService {
     if (vendor.user_id !== userId) throw new Error('Unauthorised: you do not own this vendor');
     if (vendor.status !== 'approved') throw new Error('Your vendor account must be approved before adding services');
 
+    // If vendor provides a customCategoryId, system category is optional.
+    // Only fall back to 'exterior_wash' when NEITHER category NOR customCategoryId is given.
+    const customCategoryId = dto.customCategoryId ?? null;
+    const systemCategory   = dto.category ?? (customCategoryId ? null : 'exterior_wash');
+
+    // Verify the custom category belongs to this vendor before accepting it
+    if (customCategoryId) {
+      const { data: cat } = await supabase
+        .from('car_wash_vendor_categories')
+        .select('id')
+        .eq('id', customCategoryId)
+        .eq('vendor_id', vendorId)
+        .eq('is_active', true)
+        .single();
+
+      if (!cat) throw new Error('Custom category not found or does not belong to this vendor');
+    }
+
     const { data, error } = await supabase
       .from('car_wash_services')
       .insert({
         vendor_id:          vendorId,
         name:               dto.name,
         description:        dto.description ?? null,
-        category:           (dto as any).category ?? 'exterior_wash', // default if only custom cat selected
+        category:           systemCategory,
         duration_minutes:   dto.durationMinutes,
         price:              dto.price,
         is_active:          true,
-        custom_category_id: (dto as any).customCategoryId ?? null,
+        custom_category_id: customCategoryId,
       })
       .select('*')
       .single();
@@ -107,8 +125,8 @@ export class CarWashServiceService {
     if (dto.durationMinutes !== undefined) updatePayload.duration_minutes = dto.durationMinutes;
     if (dto.price !== undefined)           updatePayload.price = dto.price;
     if (dto.isActive !== undefined)        updatePayload.is_active = dto.isActive;
-    if ((dto as any).customCategoryId !== undefined)
-      updatePayload.custom_category_id = (dto as any).customCategoryId ?? null;
+    if (dto.customCategoryId !== undefined)
+      updatePayload.custom_category_id = dto.customCategoryId ?? null;
 
     const { data, error } = await supabase
       .from('car_wash_services')
@@ -152,6 +170,7 @@ export class CarWashServiceService {
       name: row.name,
       description: row.description,
       category: row.category,
+      customCategoryId: row.custom_category_id ?? null,
       durationMinutes: row.duration_minutes,
       price: parseFloat(row.price),
       isActive: row.is_active,

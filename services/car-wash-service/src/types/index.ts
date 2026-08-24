@@ -81,7 +81,8 @@ export interface CarWashService {
   vendorId: string;
   name: string;
   description: string | null;
-  category: WashCategory;
+  category: WashCategory | null;
+  customCategoryId: string | null;
   durationMinutes: number;
   price: number;
   isActive: boolean;
@@ -200,7 +201,8 @@ export interface UpdateVendorDto {
 export interface CreateCarWashServiceDto {
   name: string;
   description?: string;
-  category: WashCategory;
+  category?: WashCategory;
+  customCategoryId?: string | null;
   durationMinutes: number;
   price: number;
 }
@@ -209,6 +211,7 @@ export interface UpdateCarWashServiceDto {
   name?: string;
   description?: string;
   category?: WashCategory;
+  customCategoryId?: string | null;
   durationMinutes?: number;
   price?: number;
   isActive?: boolean;

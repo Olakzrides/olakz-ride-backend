@@ -1,9 +1,10 @@
 /**
  * Discovery Service
  * Powers the customer-facing home screen:
- *  - Category chips
+ *  - Category chips (system + all vendor custom categories)
  *  - Top-rated vendors grid
  *  - Nearby vendors list
+ *  - All vendors list
  *  - Search with filters
  */
 
@@ -11,7 +12,7 @@ import { supabase } from '../config/database';
 import { haversineDistanceKm } from '../utils/distance.util';
 import { WashCategory } from '../types';
 
-// The fixed category catalogue shown as chips on the home screen
+// The fixed system category catalogue shown as chips on the home screen
 export const CAR_WASH_CATEGORIES: Array<{
   key: WashCategory;
   label: string;
@@ -42,10 +43,96 @@ export interface VendorCard {
 
 export class DiscoveryService {
   /**
-   * Returns the static category list for the home screen chips.
+   * Returns system categories + all active custom categories from approved vendors.
+   * Used for category chips / filter pills on the home screen.
    */
-  getCategories() {
-    return CAR_WASH_CATEGORIES;
+  async getCategories(): Promise<{
+    systemCategories: Array<{ key: string; label: string; icon: string; type: 'system' }>;
+    customCategories: Array<{ id: string; label: string; vendorId: string; vendorName: string; type: 'custom' }>;
+  }> {
+    // Fetch all active custom categories alongside the vendor's name
+    const { data, error } = await supabase
+      .from('car_wash_vendor_categories')
+      .select('id, name, vendor_id, car_wash_vendors(business_name, status)')
+      .eq('is_active', true);
+
+    if (error) throw new Error(`Failed to fetch custom categories: ${error.message}`);
+
+    // Only surface custom categories belonging to approved vendors
+    const customCategories = (data ?? [])
+      .filter((row: any) => row.car_wash_vendors?.status === 'approved')
+      .map((row: any) => ({
+        id:         row.id,
+        label:      row.name,
+        vendorId:   row.vendor_id,
+        vendorName: row.car_wash_vendors?.business_name ?? '',
+        type:       'custom' as const,
+      }));
+
+    return {
+      systemCategories: CAR_WASH_CATEGORIES.map((c) => ({ ...c, type: 'system' as const })),
+      customCategories,
+    };
+  }
+
+  /**
+   * Get all approved vendors (paginated).
+   * Location is optional — when provided, vendors are sorted by distance.
+   * When omitted, vendors are sorted by rating descending.
+   */
+  async getAllVendors(params: {
+    latitude?: number;
+    longitude?: number;
+    category?: WashCategory | string;
+    page?: number;
+    limit?: number;
+  }): Promise<{ vendors: VendorCard[]; total: number; page: number; totalPages: number }> {
+    const { latitude, longitude, category, page = 1, limit = 20 } = params;
+    const hasLocation = latitude !== undefined && longitude !== undefined;
+
+    const { data, error } = await supabase
+      .from('car_wash_vendors')
+      .select('*, car_wash_services(name, category, is_active)')
+      .eq('status', 'approved');
+
+    if (error) throw new Error(`Failed to fetch vendors: ${error.message}`);
+
+    let rows = data ?? [];
+
+    // Apply category filter before formatting
+    if (category) {
+      rows = rows.filter((row: any) =>
+        (row.car_wash_services ?? []).some(
+          (s: any) => s.category === category && s.is_active
+        )
+      );
+    }
+
+    // Build VendorCards — distance is 0 when no location provided
+    let vendors: VendorCard[] = rows.map((row: any) => {
+      const distanceKm = hasLocation
+        ? parseFloat(haversineDistanceKm(latitude!, longitude!, parseFloat(row.latitude), parseFloat(row.longitude)).toFixed(2))
+        : 0;
+      return this.toVendorCard(row, distanceKm);
+    });
+
+    // Sort: nearest-first when location provided, highest-rated when not
+    if (hasLocation) {
+      vendors.sort((a, b) => a.distanceKm - b.distanceKm);
+    } else {
+      vendors.sort((a, b) => b.rating - a.rating);
+    }
+
+    const total = vendors.length;
+    const totalPages = Math.ceil(total / limit);
+    const start = (page - 1) * limit;
+
+    return {
+      vendors: vendors.slice(start, start + limit),
+      total,
+      page,
+      totalPages,
+    };
   }
 
   /**

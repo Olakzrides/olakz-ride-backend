@@ -45,6 +45,8 @@ router.delete('/categories/:categoryId', categoryCtrl.deleteCategory);
 router.get('/services',               serviceCtrl.getMyServices);
 router.post('/services',              serviceCtrl.createService);
 router.patch('/services/:serviceId',  serviceCtrl.updateService);
+// Delete service — permanently deactivates (soft delete)
+router.delete('/services/:serviceId', serviceCtrl.deleteService);
 // Toggle service active/inactive — PATCH not DELETE, service is never removed
 router.patch('/services/:serviceId/toggle', serviceCtrl.toggleService);
 
