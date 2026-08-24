@@ -151,6 +151,10 @@ export class CategoryController {
     const user = (req as AuthRequest).user!;
     const { categoryId } = req.body; // can be UUID string or null
 
+    // Must explicitly send categoryId as a string UUID or null
+    if (categoryId === undefined) {
+      return ResponseUtil.badRequest(res, 'categoryId is required (send a UUID string to assign, or null to unassign)');
+    }
     if (categoryId !== null && typeof categoryId !== 'string') {
       return ResponseUtil.badRequest(res, 'categoryId must be a UUID string or null');
     }
