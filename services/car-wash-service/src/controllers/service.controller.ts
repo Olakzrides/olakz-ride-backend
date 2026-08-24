@@ -88,7 +88,57 @@ export class ServiceController {
   };
 
   /**
-   * DELETE /api/auto-wash/vendors/me/services/:serviceId
+   * PATCH /api/car-wash/vendor/services/:serviceId/toggle
+   * Toggle is_active on a service — activates if inactive, deactivates if active.
+   * The service is NEVER deleted.
+   */
+  toggleService = async (req: Request, res: Response): Promise<Response> => {
+    const user = (req as AuthRequest).user!;
+
+    try {
+      const { data: myVendor } = await supabase
+        .from('car_wash_vendors')
+        .select('id')
+        .eq('user_id', user.id)
+        .single();
+
+      if (!myVendor) return ResponseUtil.notFound(res, 'Vendor profile not found');
+
+      // Read current state
+      const { data: current } = await supabase
+        .from('car_wash_services')
+        .select('id, is_active')
+        .eq('id', req.params.serviceId)
+        .eq('vendor_id', myVendor.id)
+        .single();
+
+      if (!current) return ResponseUtil.notFound(res, 'Service not found');
+
+      const newState = !(current as any).is_active;
+
+      const { data, error } = await supabase
+        .from('car_wash_services')
+        .update({ is_active: newState, updated_at: new Date().toISOString() })
+        .eq('id', req.params.serviceId)
+        .select('*')
+        .single();
+
+      if (error) return ResponseUtil.serverError(res, error.message);
+
+      return ResponseUtil.success(
+        res,
+        data,
+        newState ? 'Service activated' : 'Service deactivated'
+      );
+    } catch (err: any) {
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  /**
+   * DELETE /api/car-wash/vendor/services/:serviceId
+   * @deprecated Use PATCH /services/:serviceId/toggle instead.
+   * Kept for backward compatibility — deactivates service, does NOT delete it.
    */
   deleteService = async (req: Request, res: Response): Promise<Response> => {
     const user = (req as AuthRequest).user!;
