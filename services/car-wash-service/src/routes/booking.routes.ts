@@ -12,10 +12,11 @@ router.use(authenticate);
 // ── Vendor endpoints — MUST come before /:bookingId ──────────────────────────
 // "vendor" is a literal path segment. If /:bookingId is declared first,
 // Express treats "vendor" as a bookingId value and calls getBooking instead.
-router.get('/vendor/all',                 authorize('vendor'), ctrl.getVendorBookings);
-router.post('/vendor/:bookingId/confirm', authorize('vendor'), ctrl.confirmBooking);
-router.post('/vendor/:bookingId/start',   authorize('vendor'), ctrl.startBooking);
-router.post('/vendor/:bookingId/complete',authorize('vendor'), ctrl.completeBooking);
+router.get('/vendor/all',                  authorize('vendor'), ctrl.getVendorBookings);
+router.post('/vendor/:bookingId/decline',  authorize('vendor'), ctrl.declineBooking);
+router.post('/vendor/:bookingId/confirm',  authorize('vendor'), ctrl.confirmBooking);
+router.post('/vendor/:bookingId/start',    authorize('vendor'), ctrl.startBooking);
+router.post('/vendor/:bookingId/complete', authorize('vendor'), ctrl.completeBooking);
 
 // ── Customer endpoints ────────────────────────────────────────────────────────
 router.post('/',              authorize('customer'), ctrl.createBooking);

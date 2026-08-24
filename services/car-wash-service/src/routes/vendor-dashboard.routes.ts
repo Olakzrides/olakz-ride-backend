@@ -45,13 +45,15 @@ router.delete('/categories/:categoryId', categoryCtrl.deleteCategory);
 router.get('/services',               serviceCtrl.getMyServices);
 router.post('/services',              serviceCtrl.createService);
 router.patch('/services/:serviceId',  serviceCtrl.updateService);
-router.delete('/services/:serviceId', serviceCtrl.deleteService);
+// Toggle service active/inactive — PATCH not DELETE, service is never removed
+router.patch('/services/:serviceId/toggle', serviceCtrl.toggleService);
 
 // Assign service to a custom category (or null to unassign)
 router.patch('/services/:serviceId/category', categoryCtrl.assignServiceCategory);
 
 // ── Bookings ──────────────────────────────────────────────────────────────────
 router.get('/bookings',                       bookingCtrl.getVendorBookings);
+router.post('/bookings/:bookingId/decline',   bookingCtrl.declineBooking);
 router.post('/bookings/:bookingId/confirm',   bookingCtrl.confirmBooking);
 router.post('/bookings/:bookingId/start',     bookingCtrl.startBooking);
 router.post('/bookings/:bookingId/complete',  bookingCtrl.completeBooking);

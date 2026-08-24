@@ -2,6 +2,8 @@ import { createApp } from './app';
 import { config, validateEnv } from './config/env';
 import { testDatabaseConnection, disconnectDatabase } from './config/database';
 import { logger } from './config/logger';
+import { initCarWashSocketService } from './services/car-wash-socket.service';
+import { createServer } from 'http';
 
 async function startServer() {
   try {
@@ -13,10 +15,18 @@ async function startServer() {
 
     const app = createApp();
 
-    const server = app.listen(config.port, () => {
+    // HTTP server needed for Socket.IO
+    const server = createServer(app);
+
+    // Initialize Socket.IO for real-time booking tracking
+    initCarWashSocketService(server);
+    logger.info('CarWash Socket.IO service initialized');
+
+    server.listen(config.port, () => {
       logger.info(`🚗 Car Wash Service running on port ${config.port}`);
       logger.info(`Environment: ${config.nodeEnv}`);
       logger.info(`Health check: http://localhost:${config.port}/health`);
+      logger.info(`Socket.IO: /car-wash-customer  /car-wash-vendor`);
     });
 
     // Graceful shutdown

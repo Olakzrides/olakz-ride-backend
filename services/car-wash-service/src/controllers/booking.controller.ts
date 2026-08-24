@@ -150,6 +150,25 @@ export class BookingController {
   // ── Vendor endpoints ────────────────────────────────────────
 
   /**
+   * POST /api/car-wash/bookings/vendor/:bookingId/decline
+   * Vendor declines/rejects a pending or confirmed booking with a reason.
+   */
+  declineBooking = async (req: Request, res: Response): Promise<Response> => {
+    const user = (req as AuthRequest).user!;
+    const { reason } = req.body;
+    if (!reason) return ResponseUtil.badRequest(res, 'reason is required');
+
+    try {
+      const booking = await this.bookingService.declineBooking(req.params.bookingId, user.id, reason);
+      return ResponseUtil.success(res, booking, 'Booking declined');
+    } catch (err: any) {
+      if (err.message === 'Unauthorised') return ResponseUtil.forbidden(res);
+      if (err.message === 'Booking not found') return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.badRequest(res, err.message);
+    }
+  };
+
+  /**
    * GET /api/car-wash/bookings/vendor/all
    * Vendor sees their own incoming bookings.
    */
