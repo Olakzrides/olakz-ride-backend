@@ -322,5 +322,39 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.carWash.url, undefined, 60000))
   );
 
+  // Car Wash Service — Socket.IO WebSocket proxy
+  // Proxies /car-wash-customer/* and /car-wash-vendor/* socket namespaces
+  app.use(
+    '/car-wash-customer',
+    createProxyMiddleware({
+      target: config.services.carWash.url,
+      changeOrigin: true,
+      ws: true,
+      logLevel: 'warn',
+      onError: (err: any, _req, res) => {
+        logger.error('Car wash socket proxy error:', { error: err.message });
+        if (!(res as any).headersSent) {
+          (res as any).status(502).json({ success: false, message: 'Car wash socket unavailable' });
+        }
+      },
+    })
+  );
+
+  app.use(
+    '/car-wash-vendor',
+    createProxyMiddleware({
+      target: config.services.carWash.url,
+      changeOrigin: true,
+      ws: true,
+      logLevel: 'warn',
+      onError: (err: any, _req, res) => {
+        logger.error('Car wash vendor socket proxy error:', { error: err.message });
+        if (!(res as any).headersSent) {
+          (res as any).status(502).json({ success: false, message: 'Car wash socket unavailable' });
+        }
+      },
+    })
+  );
+
   logger.info('All proxy routes configured successfully');
 }

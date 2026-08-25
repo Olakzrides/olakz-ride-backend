@@ -395,6 +395,55 @@ export function createApp(): Application {
     }
   });
 
+  // ── Internal car-wash emit endpoints (called by car-wash-service) ────────────
+  // POST /api/internal/car-wash/emit/new-booking    → notify all admins of new booking
+  // POST /api/internal/car-wash/emit/status-updated → notify admins of booking status change
+
+  app.post('/api/internal/car-wash/emit/new-booking', internalApiAuth, async (req, res) => {
+    try {
+      const { booking_id, vendor_name, status, booking_type, created_at } = req.body;
+      if (!booking_id) return res.status(400).json({ success: false, message: 'booking_id required' });
+
+      const socketService: import('./services/socket.service').SocketService = app.get('socketService');
+      if (socketService) {
+        socketService.emitToAllAdmins('admin:car-wash:new', {
+          bookingId:   booking_id,
+          vendorName:  vendor_name ?? null,
+          status:      status ?? 'pending',
+          bookingType: booking_type ?? 'book_now',
+          createdAt:   created_at ?? new Date().toISOString(),
+        });
+      }
+      return res.json({ success: true });
+    } catch (err: any) {
+      logger.error('Internal car-wash/emit/new-booking error', { error: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post('/api/internal/car-wash/emit/status-updated', internalApiAuth, async (req, res) => {
+    try {
+      const { booking_id, status, vendor_name, updated_at } = req.body;
+      if (!booking_id || !status) {
+        return res.status(400).json({ success: false, message: 'booking_id and status required' });
+      }
+
+      const socketService: import('./services/socket.service').SocketService = app.get('socketService');
+      if (socketService) {
+        socketService.emitToAllAdmins('admin:car-wash:status_changed', {
+          bookingId:  booking_id,
+          status,
+          vendorName: vendor_name ?? null,
+          updatedAt:  updated_at ?? new Date().toISOString(),
+        });
+      }
+      return res.json({ success: true });
+    } catch (err: any) {
+      logger.error('Internal car-wash/emit/status-updated error', { error: err.message });
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   // Mount routes
   app.use(routes);
 

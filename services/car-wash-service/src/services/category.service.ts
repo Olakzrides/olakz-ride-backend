@@ -167,19 +167,23 @@ export class CategoryService {
   }
 
   /**
-   * Delete (soft-delete) a category.
+   * Soft-delete a category (sets is_active = false).
+   * Returns the updated category so the caller can reflect the new state.
    * Services assigned to this category will have their custom_category_id set to NULL
    * (handled by ON DELETE SET NULL constraint).
    */
-  async deleteCategory(categoryId: string, vendorId: string, userId: string): Promise<void> {
+  async deleteCategory(categoryId: string, vendorId: string, userId: string): Promise<VendorCategory> {
     await this.verifyOwnership(categoryId, vendorId, userId);
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('car_wash_vendor_categories')
       .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq('id', categoryId);
+      .eq('id', categoryId)
+      .select('*')
+      .single();
 
     if (error) throw new Error(`Delete failed: ${error.message}`);
+    return this.mapRow(data);
   }
 
   /**

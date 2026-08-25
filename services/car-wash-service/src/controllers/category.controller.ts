@@ -134,8 +134,8 @@ export class CategoryController {
         .from('car_wash_vendors').select('id').eq('user_id', user.id).single();
       if (!vendor) return ResponseUtil.notFound(res, 'Vendor profile not found');
 
-      await this.service.deleteCategory(req.params.categoryId, vendor.id, user.id);
-      return ResponseUtil.success(res, null, 'Category deactivated');
+      const category = await this.service.deleteCategory(req.params.categoryId, vendor.id, user.id);
+      return ResponseUtil.success(res, category, 'Category deactivated');
     } catch (err: any) {
       if (err.message.includes('not found')) return ResponseUtil.notFound(res, err.message);
       return ResponseUtil.serverError(res, err.message);
