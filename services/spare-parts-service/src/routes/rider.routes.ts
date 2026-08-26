@@ -1,0 +1,29 @@
+import { Router } from 'express';
+import { RiderController } from '../controllers/rider.controller';
+import { authenticate } from '../middleware/auth.middleware';
+
+const router     = Router();
+const riderCtrl  = new RiderController();
+
+// All rider routes require authentication (driver JWT)
+router.use(authenticate);
+
+// ── Static routes MUST come before /:id ──────────────────────────────────────
+router.get('/available',      riderCtrl.getAvailableOrders);
+router.get('/active',         riderCtrl.getActiveOrders);
+router.get('/history',        riderCtrl.getHistory);
+router.get('/earnings',       riderCtrl.getEarnings);
+router.post('/location',      riderCtrl.updateLocation);
+
+// ── Order lifecycle ───────────────────────────────────────────────────────────
+router.post('/:id/accept',             riderCtrl.acceptOrder);
+router.post('/:id/reject',             riderCtrl.rejectOrder);
+router.post('/:id/cancel',             riderCtrl.cancelOrder);
+router.post('/:id/heading-to-store',   riderCtrl.headingToStore);
+router.post('/:id/picked-up',          riderCtrl.pickedUp);
+router.post('/:id/heading-to-customer', riderCtrl.headingToCustomer);
+router.post('/:id/arrived',            riderCtrl.arrived);
+router.post('/:id/delivered',          riderCtrl.delivered);
+router.post('/:id/confirm-cash',       riderCtrl.confirmCash);
+
+export default router;

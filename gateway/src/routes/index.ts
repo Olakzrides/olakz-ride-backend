@@ -394,6 +394,10 @@ export function setupRoutes(app: Application): void {
         }
       },
     })
+  // Spare Parts Service routes
+  app.use(
+    '/api/spare-parts',
+    createProxyMiddleware(createProxyOptions(config.services.spareParts.url, undefined, 60000))
   );
 
   logger.info('All proxy routes configured successfully');
