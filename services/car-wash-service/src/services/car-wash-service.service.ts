@@ -163,6 +163,11 @@ export class CarWashServiceService {
 
   // ─── Private ─────────────────────────────────────────────
 
+  /** Exposed for use in controller toggle handler to avoid an extra DB round-trip. */
+  mapRowPublic(row: any): CarWashService {
+    return this.mapRow(row);
+  }
+
   private mapRow(row: any): CarWashService {
     return {
       id: row.id,

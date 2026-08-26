@@ -103,8 +103,11 @@ export class AuditController {
       const { from, to, location } = req.query as {
         from?: string; to?: string; location?: string;
       };
-      const transactions = await svc.listTransactions({ from, to, location });
-      ResponseUtil.success(res, { transactions, total: transactions.length });
+      const [transactions, summary] = await Promise.all([
+        svc.listTransactions({ from, to, location }),
+        svc.getDailySummary({ from, to, location }),
+      ]);
+      ResponseUtil.success(res, { transactions, total: transactions.length, summary });
     } catch (err) {
       logger.error('listTransactions error', { error: toMsg(err) });
       ResponseUtil.serverError(res, 'Failed to list transactions');

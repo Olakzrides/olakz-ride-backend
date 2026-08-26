@@ -320,6 +320,28 @@ export class VendorRegistrationService {
       }
     }
 
+    // Auto-provision auto_mech_vendors row for mechanics/auto_mech-type vendors
+    if (vendor.business_type === 'mechanics' || vendor.business_type === 'auto_mech') {
+      const autoMechServiceUrl = process.env.AUTO_MECH_SERVICE_URL || 'http://localhost:3011';
+      const internalKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
+      try {
+        await axios.post(
+          `${autoMechServiceUrl}/api/internal/auto-mech/vendor/provision`,
+          {
+            user_id:       vendor.user_id,
+            business_name: vendor.business_name,
+            address:       vendor.address || '',
+            city:          vendor.city,
+            state:         vendor.state,
+            phone:         vendor.phone,
+            email:         vendor.email,
+            logo_url:      vendor.logo_url,
+          },
+          { headers: { 'x-internal-api-key': internalKey }, timeout: 8000 }
+        );
+        logger.info('Auto mech vendor provisioned:', vendor.user_id);
+      } catch (err: any) {
+        logger.error('Failed to provision auto mech vendor (non-fatal):', err.message);
     // Auto-provision spare_parts_stores row for spare_parts-type vendors
     if (vendor.business_type === 'spare_parts') {
       const sparePartsServiceUrl = process.env.SPARE_PARTS_SERVICE_URL || 'http://localhost:3009';

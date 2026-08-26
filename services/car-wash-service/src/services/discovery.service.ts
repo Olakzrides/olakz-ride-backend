@@ -136,9 +136,102 @@ export class DiscoveryService {
   }
 
   /**
-   * Top-rated vendors near the customer's location.
-   * Used for the "Top rated Car wash" horizontal grid.
+   * Get all vendors that offer a specific category (system or custom).
+   * Returns two tiers:
+   *  - topRatedAndNearby: high-rated vendors within a close radius, sorted by rating desc
+   *  - others: remaining vendors outside that radius or lower-rated, sorted by distance
+   *
+   * For custom categories, matches via custom_category_id on services.
+   * For system categories, matches via the category column on services.
    */
+  async getVendorsByCategory(params: {
+    category: string;           // system key OR custom category UUID
+    categoryType: 'system' | 'custom';
+    latitude?: number;
+    longitude?: number;
+    nearbyRadiusKm?: number;    // radius considered "nearby" — default 15km
+    topRatedMinRating?: number; // minimum rating for top-rated tier — default 3.5
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    topRatedAndNearby: VendorCard[];
+    others: { vendors: VendorCard[]; total: number; page: number; totalPages: number };
+  }> {
+    const {
+      category,
+      categoryType,
+      latitude,
+      longitude,
+      nearbyRadiusKm = 15,
+      topRatedMinRating = 3.5,
+      page = 1,
+      limit = 20,
+    } = params;
+
+    const hasLocation = latitude !== undefined && longitude !== undefined;
+
+    // Fetch all approved vendors with their services
+    const { data, error } = await supabase
+      .from('car_wash_vendors')
+      .select('*, car_wash_services(id, name, category, custom_category_id, is_active)')
+      .eq('status', 'approved');
+
+    if (error) throw new Error(`Failed to fetch vendors: ${error.message}`);
+
+    // Filter to vendors that have at least one active service matching the category
+    const matching = (data ?? []).filter((row: any) => {
+      const services: any[] = (row.car_wash_services ?? []).filter((s: any) => s.is_active);
+      if (categoryType === 'system') {
+        return services.some((s) => s.category === category);
+      } else {
+        // custom category — match by UUID
+        return services.some((s) => s.custom_category_id === category);
+      }
+    });
+
+    // Build VendorCards with distance
+    const cards: (VendorCard & { rawRating: number })[] = matching.map((row: any) => {
+      const distanceKm = hasLocation
+        ? parseFloat(haversineDistanceKm(latitude!, longitude!, parseFloat(row.latitude), parseFloat(row.longitude)).toFixed(2))
+        : 0;
+      return {
+        ...this.toVendorCard(row, distanceKm),
+        rawRating: parseFloat(row.rating) || 0,
+      };
+    });
+
+    // Tier 1 — top-rated AND nearby (within nearbyRadiusKm, rating >= threshold)
+    // If no location provided, just use rating threshold for this tier
+    const topRatedAndNearby = cards
+      .filter((v) =>
+        v.rawRating >= topRatedMinRating &&
+        (!hasLocation || v.distanceKm <= nearbyRadiusKm)
+      )
+      .sort((a, b) => b.rawRating - a.rawRating || a.distanceKm - b.distanceKm)
+      .map(({ rawRating: _r, ...v }) => v);
+
+    const topRatedIds = new Set(topRatedAndNearby.map((v) => v.id));
+
+    // Tier 2 — everyone else
+    const otherCards = cards
+      .filter((v) => !topRatedIds.has(v.id))
+      .sort((a, b) => a.distanceKm - b.distanceKm || b.rawRating - a.rawRating)
+      .map(({ rawRating: _r, ...v }) => v);
+
+    const total = otherCards.length;
+    const totalPages = Math.ceil(total / limit);
+    const start = (page - 1) * limit;
+
+    return {
+      topRatedAndNearby,
+      others: {
+        vendors: otherCards.slice(start, start + limit),
+        total,
+        page,
+        totalPages,
+      },
+    };
+  }
   async getTopRated(params: {
     latitude: number;
     longitude: number;

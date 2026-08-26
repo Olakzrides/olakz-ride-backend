@@ -104,7 +104,7 @@ export class ServiceController {
 
       if (!myVendor) return ResponseUtil.notFound(res, 'Vendor profile not found');
 
-      // Read current state
+      // Read current state (no is_active filter — must find even if inactive)
       const { data: current } = await supabase
         .from('car_wash_services')
         .select('id, is_active')
@@ -125,9 +125,12 @@ export class ServiceController {
 
       if (error) return ResponseUtil.serverError(res, error.message);
 
+      // Map through service layer so the response shape matches getMyServices
+      const svc = this.service.mapRowPublic(data);
+
       return ResponseUtil.success(
         res,
-        data,
+        svc,
         newState ? 'Service activated' : 'Service deactivated'
       );
     } catch (err: any) {

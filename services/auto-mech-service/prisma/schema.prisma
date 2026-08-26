@@ -1,0 +1,182 @@
+// Prisma Schema for Auto Mech Service
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/auto-mech-client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// AUTO_MECH_VENDORS  (auto mech businesses / providers)
+// ─────────────────────────────────────────────────────────────────────
+
+model AutoMechVendor {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String    @unique @map("user_id") @db.Uuid
+  businessName      String    @map("business_name") @db.VarChar(150)
+  description       String?   @db.Text
+  phone             String    @db.VarChar(20)
+  email             String?   @db.VarChar(150)
+  address           String    @db.Text
+  city              String    @db.VarChar(100)
+  state             String    @db.VarChar(100)
+  latitude          Decimal   @db.Decimal(10, 8)
+  longitude         Decimal   @db.Decimal(11, 8)
+  coverImageUrl     String?   @map("cover_image_url") @db.Text
+  logoUrl           String?   @map("logo_url") @db.Text
+  status            String    @default("pending") @db.VarChar(20)
+  rating            Decimal   @default(0) @db.Decimal(3, 2)
+  totalCustomers    Int       @default(0) @map("total_customers")
+  totalHoursServed  Decimal   @default(0) @map("total_hours_served") @db.Decimal(10, 2)
+  operatingHours    Json      @default("{}") @map("operating_hours")
+  isOpen                      Boolean   @default(false) @map("is_open")
+  autoAcceptBookings          Boolean   @default(false) @map("auto_accept_bookings")
+  estimatedServiceTimeMinutes Int       @default(30)    @map("estimated_service_time_minutes")
+  rejectionReason   String?   @map("rejection_reason") @db.Text
+  reviewedBy        String?   @map("reviewed_by") @db.Uuid
+  reviewedAt        DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  services          AutoMechService[]
+  bookings          AutoMechBooking[]
+  vendorCategories  AutoMechVendorCategory[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([city])
+  @@index([state])
+  @@index([rating])
+  @@map("auto_mech_vendors")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// AUTO_MECH_VENDOR_CATEGORIES (per-vendor custom categories)
+// ─────────────────────────────────────────────────────────────────────
+
+model AutoMechVendorCategory {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vendorId    String        @map("vendor_id") @db.Uuid
+  name        String        @db.VarChar(100)
+  description String?       @db.Text
+  sortOrder   Int           @default(0) @map("sort_order")
+  isActive    Boolean       @default(true) @map("is_active")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  vendor      AutoMechVendor  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  services    AutoMechService[]
+
+  @@index([vendorId])
+  @@index([vendorId, isActive])
+  @@map("auto_mech_vendor_categories")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// AUTO_MECH_SERVICES  (packages offered by a vendor)
+// ─────────────────────────────────────────────────────────────────────
+
+model AutoMechService {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vendorId         String        @map("vendor_id") @db.Uuid
+  name             String        @db.VarChar(100)
+  description      String?       @db.Text
+  category         String?       @db.VarChar(50)   // oil_change | tyre_service | brake_service | engine_repair | electrical_repair | general_service
+  durationMinutes  Int           @map("duration_minutes")
+  price            Decimal       @db.Decimal(10, 2)
+  priceMin         Decimal?      @map("price_min") @db.Decimal(10, 2)  // lower bound for range pricing — mirrors price
+  priceMax         Decimal?      @map("price_max") @db.Decimal(10, 2)  // upper bound — NULL means fixed price
+  isActive         Boolean       @default(true) @map("is_active")
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  customCategoryId String?       @map("custom_category_id") @db.Uuid
+
+  // Relations
+  vendor           AutoMechVendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  bookings         AutoMechBooking[]
+  customCategory   AutoMechVendorCategory? @relation(fields: [customCategoryId], references: [id], onDelete: SetNull)
+
+  @@index([vendorId])
+  @@index([category])
+  @@index([isActive])
+  @@index([vendorId, isActive])
+  @@map("auto_mech_services")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// AUTO_MECH_BOOKINGS
+// ─────────────────────────────────────────────────────────────────────
+
+model AutoMechBooking {
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingReference   String?       @unique @map("booking_reference") @db.VarChar(30) // e.g. MEC-2024-001234 — auto-generated by DB trigger
+
+  customerId         String        @map("customer_id") @db.Uuid
+  vendorId           String        @map("vendor_id") @db.Uuid
+  serviceId          String        @map("service_id") @db.Uuid
+
+  bookingType        String        @default("book_now") @map("booking_type") @db.VarChar(20)
+  status             String        @default("pending") @db.VarChar(20)
+
+  scheduledAt        DateTime?     @map("scheduled_at") @db.Timestamptz(6)
+
+  serviceAddress     String        @map("service_address") @db.Text
+  serviceLatitude    Decimal       @map("service_latitude") @db.Decimal(10, 8)
+  serviceLongitude   Decimal       @map("service_longitude") @db.Decimal(11, 8)
+
+  // Vehicle structured fields (from booking form)
+  vehicleMake        String?       @map("vehicle_make") @db.VarChar(100)       // e.g. Toyota
+  vehicleModel       String?       @map("vehicle_model") @db.VarChar(100)      // e.g. Camry
+  vehicleYear        Int?          @map("vehicle_year")                          // e.g. 2026
+  vehiclePlateNumber String?       @map("vehicle_plate_number") @db.VarChar(30) // e.g. AHD583
+  vehicleDescription String?       @map("vehicle_description") @db.Text          // free-text additional notes
+  vehiclePhotoUrls   String[]      @default([]) @map("vehicle_photo_urls") @db.Text
+
+  notes              String?       @db.Text
+
+  // Pricing — stored at booking time so confirm screen is always accurate
+  totalAmount        Decimal       @map("total_amount") @db.Decimal(10, 2)
+  estimatedCostMin   Decimal?      @map("estimated_cost_min") @db.Decimal(10, 2) // lower cost estimate
+  estimatedCostMax   Decimal?      @map("estimated_cost_max") @db.Decimal(10, 2) // upper cost estimate — NULL = fixed
+  durationDisplay    String?       @map("duration_display") @db.VarChar(50)       // e.g. "60-180 minutes"
+
+  paymentMethod      String        @default("wallet") @map("payment_method") @db.VarChar(20)
+  paymentStatus      String        @default("pending") @map("payment_status") @db.VarChar(20)
+
+  cancellationReason String?       @map("cancellation_reason") @db.Text
+  cancelledAt        DateTime?     @map("cancelled_at") @db.Timestamptz(6)
+
+  startedAt          DateTime?     @map("started_at") @db.Timestamptz(6)
+  completedAt        DateTime?     @map("completed_at") @db.Timestamptz(6)
+
+  customerRating     Int?          @map("customer_rating")
+  customerFeedback   String?       @map("customer_feedback") @db.Text
+
+  vendorRating       Int?          @map("vendor_rating")
+
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  vendor             AutoMechVendor  @relation(fields: [vendorId], references: [id])
+  service            AutoMechService @relation(fields: [serviceId], references: [id])
+
+  @@index([customerId])
+  @@index([vendorId])
+  @@index([serviceId])
+  @@index([status])
+  @@index([bookingType])
+  @@index([scheduledAt])
+  @@index([createdAt])
+  @@index([vendorId, status])
+  @@index([customerId, status])
+  @@index([vehiclePlateNumber])
+  @@map("auto_mech_bookings")
+}

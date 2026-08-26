@@ -445,7 +445,15 @@ export class SubAdminService {
 
     const { error: updateError } = await supabase
       .from('users')
-      .update({ admin_password_hash: passwordHash, updated_at: new Date().toISOString() })
+      .update({
+        // Always update password_hash — it is the universal login credential
+        // used by both the mobile app and the admin dashboard.
+        // admin_password_hash is kept in sync so legacy code that reads it
+        // also gets the new password.
+        password_hash:       passwordHash,
+        admin_password_hash: passwordHash,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', adminId);
 
     if (updateError) throw new Error(`Failed to reset password: ${updateError.message}`);

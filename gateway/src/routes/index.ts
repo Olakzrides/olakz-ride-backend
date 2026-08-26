@@ -322,6 +322,78 @@ export function setupRoutes(app: Application): void {
     createProxyMiddleware(createProxyOptions(config.services.carWash.url, undefined, 60000))
   );
 
+  // Car Wash Service — Socket.IO WebSocket proxy
+  // Proxies /car-wash-customer/* and /car-wash-vendor/* socket namespaces
+  app.use(
+    '/car-wash-customer',
+    createProxyMiddleware({
+      target: config.services.carWash.url,
+      changeOrigin: true,
+      ws: true,
+      logLevel: 'warn',
+      onError: (err: any, _req, res) => {
+        logger.error('Car wash socket proxy error:', { error: err.message });
+        if (!(res as any).headersSent) {
+          (res as any).status(502).json({ success: false, message: 'Car wash socket unavailable' });
+        }
+      },
+    })
+  );
+
+  app.use(
+    '/car-wash-vendor',
+    createProxyMiddleware({
+      target: config.services.carWash.url,
+      changeOrigin: true,
+      ws: true,
+      logLevel: 'warn',
+      onError: (err: any, _req, res) => {
+        logger.error('Car wash vendor socket proxy error:', { error: err.message });
+        if (!(res as any).headersSent) {
+          (res as any).status(502).json({ success: false, message: 'Car wash socket unavailable' });
+        }
+      },
+    })
+  );
+
+  // Auto Mech Service routes
+  app.use(
+    '/api/auto-mech',
+    createProxyMiddleware(createProxyOptions(config.services.autoMech.url, undefined, 60000))
+  );
+
+  // Auto Mech Service — Socket.IO WebSocket proxy
+  // Proxies /auto-mech-customer/* and /auto-mech-vendor/* socket namespaces
+  app.use(
+    '/auto-mech-customer',
+    createProxyMiddleware({
+      target: config.services.autoMech.url,
+      changeOrigin: true,
+      ws: true,
+      logLevel: 'warn',
+      onError: (err: any, _req, res) => {
+        logger.error('Auto mech customer socket proxy error:', { error: err.message });
+        if (!(res as any).headersSent) {
+          (res as any).status(502).json({ success: false, message: 'Auto mech socket unavailable' });
+        }
+      },
+    })
+  );
+
+  app.use(
+    '/auto-mech-vendor',
+    createProxyMiddleware({
+      target: config.services.autoMech.url,
+      changeOrigin: true,
+      ws: true,
+      logLevel: 'warn',
+      onError: (err: any, _req, res) => {
+        logger.error('Auto mech vendor socket proxy error:', { error: err.message });
+        if (!(res as any).headersSent) {
+          (res as any).status(502).json({ success: false, message: 'Auto mech socket unavailable' });
+        }
+      },
+    })
   // Spare Parts Service routes
   app.use(
     '/api/spare-parts',
