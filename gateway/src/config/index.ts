@@ -42,6 +42,11 @@ interface Config {
       healthCheck: string;
       timeout: number;
     };
+    autoMech: {
+      url: string;
+      healthCheck: string;
+      timeout: number;
+    };
   };
   cors: {
     allowedOrigins: string[];
@@ -100,6 +105,11 @@ const config: Config = {
     },
     carWash: {
       url: process.env.CAR_WASH_SERVICE_URL || 'http://localhost:3010',
+      healthCheck: '/health',
+      timeout: 60000,
+    },
+    autoMech: {
+      url: process.env.AUTO_MECH_SERVICE_URL || 'http://localhost:3011',
       healthCheck: '/health',
       timeout: 60000,
     },

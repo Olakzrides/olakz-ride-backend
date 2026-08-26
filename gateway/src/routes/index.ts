@@ -356,5 +356,45 @@ export function setupRoutes(app: Application): void {
     })
   );
 
+  // Auto Mech Service routes
+  app.use(
+    '/api/auto-mech',
+    createProxyMiddleware(createProxyOptions(config.services.autoMech.url, undefined, 60000))
+  );
+
+  // Auto Mech Service — Socket.IO WebSocket proxy
+  // Proxies /auto-mech-customer/* and /auto-mech-vendor/* socket namespaces
+  app.use(
+    '/auto-mech-customer',
+    createProxyMiddleware({
+      target: config.services.autoMech.url,
+      changeOrigin: true,
+      ws: true,
+      logLevel: 'warn',
+      onError: (err: any, _req, res) => {
+        logger.error('Auto mech customer socket proxy error:', { error: err.message });
+        if (!(res as any).headersSent) {
+          (res as any).status(502).json({ success: false, message: 'Auto mech socket unavailable' });
+        }
+      },
+    })
+  );
+
+  app.use(
+    '/auto-mech-vendor',
+    createProxyMiddleware({
+      target: config.services.autoMech.url,
+      changeOrigin: true,
+      ws: true,
+      logLevel: 'warn',
+      onError: (err: any, _req, res) => {
+        logger.error('Auto mech vendor socket proxy error:', { error: err.message });
+        if (!(res as any).headersSent) {
+          (res as any).status(502).json({ success: false, message: 'Auto mech socket unavailable' });
+        }
+      },
+    })
+  );
+
   logger.info('All proxy routes configured successfully');
 }
