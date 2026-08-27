@@ -76,6 +76,14 @@ export const validateRequest = (schema: any) => {
     if (body) {
       const { error } = body.validate(req.body, { abortEarly: false });
       if (error) {
+        // Log the actual request body (with sensitive values masked) so we can debug
+        const safeBody = { ...req.body };
+        if (safeBody.authorization_code) safeBody.authorization_code = safeBody.authorization_code.substring(0, 20) + '...';
+        console.error('[validateRequest] Validation failed for', req.path, {
+          validationErrors: error.details.map((d: any) => d.message),
+          receivedFields:   Object.keys(req.body),
+          body:             safeBody,
+        });
         res.status(400).json({
           success: false,
           message: 'Validation error',
