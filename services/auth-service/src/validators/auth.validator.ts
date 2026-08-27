@@ -129,19 +129,19 @@ export const appleSignInValidator = {
     }),
     user_info: Joi.object({
       name: Joi.object({
-        firstName: Joi.string().optional(),
-        lastName: Joi.string().optional(),
+        firstName: Joi.string().allow('').optional(),
+        lastName:  Joi.string().allow('').optional(),
       }).optional(),
-      email: Joi.string().email().optional(),
+      email: Joi.string().email({ tlds: { allow: false } }).allow('').optional(),
     }).optional(),
     // Allow any extra fields the Apple SDK may send
-    identityToken: Joi.string().optional(),
-    fullName: Joi.object().optional(),
-    email: Joi.string().optional(),
+    identityToken:  Joi.string().optional(),
+    fullName:       Joi.object().optional(),
+    email:          Joi.string().allow('').optional(),
     realUserStatus: Joi.number().optional(),
-    nonce: Joi.string().optional(),
-    state: Joi.string().optional(),
-  }).options({ allowUnknown: true }), // allow any additional fields Apple SDK may add
+    nonce:          Joi.string().allow('').optional(),
+    state:          Joi.string().allow('').optional(),
+  }).options({ allowUnknown: true }),
 };
 
 export const updatePhoneValidator = {

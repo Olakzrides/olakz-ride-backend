@@ -249,12 +249,12 @@ class AppleService {
       // Verify the ID token
       const payload = await this.verifyAppleToken(tokenResponse.id_token);
 
-      // Extract user info
+      // Extract user info — treat empty strings as missing (Apple sends '' for hidden/unavailable fields)
       const appleUser: AppleUserInfo = {
-        sub: payload.sub,
-        email: payload.email || request.user_info?.email,
+        sub:        payload.sub,
+        email:      payload.email || (request.user_info?.email || '') || undefined,
         first_name: request.user_info?.name?.firstName || '',
-        last_name: request.user_info?.name?.lastName || '',
+        last_name:  request.user_info?.name?.lastName  || '',
       };
 
       // Find or create user
