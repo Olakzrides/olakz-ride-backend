@@ -134,7 +134,14 @@ export const appleSignInValidator = {
       }).optional(),
       email: Joi.string().email().optional(),
     }).optional(),
-  }),
+    // Allow any extra fields the Apple SDK may send
+    identityToken: Joi.string().optional(),
+    fullName: Joi.object().optional(),
+    email: Joi.string().optional(),
+    realUserStatus: Joi.number().optional(),
+    nonce: Joi.string().optional(),
+    state: Joi.string().optional(),
+  }).options({ allowUnknown: true }), // allow any additional fields Apple SDK may add
 };
 
 export const updatePhoneValidator = {
