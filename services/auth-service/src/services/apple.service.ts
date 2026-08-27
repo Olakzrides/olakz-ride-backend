@@ -53,11 +53,34 @@ class AppleService {
       sub: config.apple.bundleId,  // native iOS app — use Bundle ID, not Service ID
     };
 
-    // Clean the private key (remove headers and format properly)
-    const privateKey = config.apple.privateKey
-      .replace(/\\n/g, '\n')
-      .replace(/-----BEGIN PRIVATE KEY-----/, '-----BEGIN PRIVATE KEY-----\n')
-      .replace(/-----END PRIVATE KEY-----/, '\n-----END PRIVATE KEY-----');
+    // Properly format the private key as a valid PEM for ES256 signing.
+    // The key may be stored in the env in various formats:
+    //   - Single line with literal \n characters
+    //   - Already multi-line
+    //   - Headers attached to body without newlines
+    // This normalises all cases into a valid PEM.
+    let rawKey = config.apple.privateKey;
+
+    // Step 1: Replace literal \n escape sequences with real newlines
+    rawKey = rawKey.replace(/\\n/g, '\n');
+
+    // Step 2: Strip any existing headers and whitespace to get just the base64 body
+    const keyBody = rawKey
+      .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+      .replace(/-----END PRIVATE KEY-----/g, '')
+      .replace(/\s+/g, '');  // remove ALL whitespace including newlines
+
+    // Step 3: Re-wrap the base64 body at 64 chars per line (PEM standard)
+    const wrapped = keyBody.match(/.{1,64}/g)?.join('\n') || keyBody;
+
+    // Step 4: Reassemble a clean PEM
+    const privateKey = `-----BEGIN PRIVATE KEY-----\n${wrapped}\n-----END PRIVATE KEY-----`;
+
+    logger.info('Apple Sign-In: private key formatted', {
+      keyLength: privateKey.length,
+      startsCorrectly: privateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
+      endsCorrectly: privateKey.endsWith('-----END PRIVATE KEY-----'),
+    });
 
     return jwt.sign(payload, privateKey, {
       algorithm: 'ES256',
