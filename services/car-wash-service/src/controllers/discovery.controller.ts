@@ -85,6 +85,44 @@ export class DiscoveryController {
   };
 
   /**
+   * GET /api/car-wash/vendors/by-category
+   * Query: category, categoryType (system|custom), latitude?, longitude?,
+   *        nearbyRadiusKm?, topRatedMinRating?, page?, limit?
+   *
+   * Returns two tiers:
+   *  - topRatedAndNearby: high-rated vendors within nearbyRadiusKm
+   *  - others: paginated remainder sorted by distance
+   * No auth required.
+   */
+  getVendorsByCategory = async (req: Request, res: Response): Promise<Response> => {
+    const { category, categoryType, latitude, longitude, nearbyRadiusKm, topRatedMinRating, page, limit } = req.query;
+
+    if (!category) {
+      return ResponseUtil.badRequest(res, 'category is required');
+    }
+    if (!categoryType || !['system', 'custom'].includes(categoryType as string)) {
+      return ResponseUtil.badRequest(res, 'categoryType must be "system" or "custom"');
+    }
+
+    try {
+      const result = await this.discoveryService.getVendorsByCategory({
+        category:           category as string,
+        categoryType:       categoryType as 'system' | 'custom',
+        latitude:           latitude          ? parseFloat(latitude as string)          : undefined,
+        longitude:          longitude         ? parseFloat(longitude as string)         : undefined,
+        nearbyRadiusKm:     nearbyRadiusKm    ? parseFloat(nearbyRadiusKm as string)    : undefined,
+        topRatedMinRating:  topRatedMinRating ? parseFloat(topRatedMinRating as string) : undefined,
+        page:               page              ? parseInt(page as string, 10)            : 1,
+        limit:              limit             ? parseInt(limit as string, 10)           : 20,
+      });
+      return ResponseUtil.success(res, result);
+    } catch (err: any) {
+      logger.error('getVendorsByCategory error:', err);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  /**
    * GET /api/car-wash/vendors/all
    * Query: latitude?, longitude?, category?, page?, limit?
    *

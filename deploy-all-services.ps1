@@ -81,6 +81,34 @@ npx prisma generate
 npm run build
 Set-Location ../..
 
+Write-Status "Building Food Service..."
+Set-Location services/food-service
+npm install
+npx prisma generate
+npm run build
+Set-Location ../..
+
+Write-Status "Building Marketplace Service..."
+Set-Location services/marketplace-service
+npm install
+npx prisma generate
+npm run build
+Set-Location ../..
+
+Write-Status "Building Car Wash Service..."
+Set-Location services/car-wash-service
+npm install
+npx prisma generate
+npm run build
+Set-Location ../..
+
+Write-Status "Building Auto Mech Service..."
+Set-Location services/auto-mech-service
+npm install
+npx prisma generate
+npm run build
+Set-Location ../..
+
 # Run database migrations
 Write-Status "Running database migrations..."
 
@@ -96,6 +124,16 @@ Set-Location ../..
 
 Write-Status "Platform Service migrations..."
 Set-Location services/platform-service
+npx prisma migrate deploy
+Set-Location ../..
+
+Write-Status "Car Wash Service migrations..."
+Set-Location services/car-wash-service
+npx prisma migrate deploy
+Set-Location ../..
+
+Write-Status "Auto Mech Service migrations..."
+Set-Location services/auto-mech-service
 npx prisma migrate deploy
 Set-Location ../..
 
@@ -117,14 +155,24 @@ Write-Host ""
 Write-Host "📋 Service URLs:" -ForegroundColor White
 Write-Host "   Gateway:          http://localhost:3000" -ForegroundColor White
 Write-Host "   Core Logistics:   http://localhost:3001" -ForegroundColor White
-Write-Host "   Auth Service:     http://localhost:3002" -ForegroundColor White
-Write-Host "   Platform Service: http://localhost:3003" -ForegroundColor White
+Write-Host "   Auth Service:     http://localhost:3003" -ForegroundColor White
+Write-Host "   Platform Service: http://localhost:3004" -ForegroundColor White
+Write-Host "   Food Service:     http://localhost:3005" -ForegroundColor White
+Write-Host "   Marketplace:      http://localhost:3006" -ForegroundColor White
+Write-Host "   Payment Service:  http://localhost:3007" -ForegroundColor White
+Write-Host "   Car Wash Service: http://localhost:3010" -ForegroundColor White
+Write-Host "   Auto Mech:        http://localhost:3011" -ForegroundColor White
 Write-Host ""
 Write-Host "🔍 Health Checks:" -ForegroundColor White
 Write-Host "   Gateway:          http://localhost:3000/health" -ForegroundColor White
 Write-Host "   Core Logistics:   http://localhost:3001/health" -ForegroundColor White
-Write-Host "   Auth Service:     http://localhost:3002/health" -ForegroundColor White
-Write-Host "   Platform Service: http://localhost:3003/health" -ForegroundColor White
+Write-Host "   Auth Service:     http://localhost:3003/health" -ForegroundColor White
+Write-Host "   Platform Service: http://localhost:3004/health" -ForegroundColor White
+Write-Host "   Food Service:     http://localhost:3005/health" -ForegroundColor White
+Write-Host "   Marketplace:      http://localhost:3006/health" -ForegroundColor White
+Write-Host "   Payment Service:  http://localhost:3007/health" -ForegroundColor White
+Write-Host "   Car Wash Service: http://localhost:3010/health" -ForegroundColor White
+Write-Host "   Auto Mech:        http://localhost:3011/health" -ForegroundColor White
 Write-Host ""
 Write-Host "📊 Monitoring Commands:" -ForegroundColor White
 Write-Host "   pm2 status        - View all services status" -ForegroundColor White
@@ -154,8 +202,13 @@ function Test-Endpoint {
 
 Test-Endpoint "http://localhost:3000/health" "Gateway"
 Test-Endpoint "http://localhost:3001/health" "Core Logistics"
-Test-Endpoint "http://localhost:3002/health" "Auth Service"
-Test-Endpoint "http://localhost:3003/health" "Platform Service"
+Test-Endpoint "http://localhost:3003/health" "Auth Service"
+Test-Endpoint "http://localhost:3004/health" "Platform Service"
+Test-Endpoint "http://localhost:3005/health" "Food Service"
+Test-Endpoint "http://localhost:3006/health" "Marketplace Service"
+Test-Endpoint "http://localhost:3007/health" "Payment Service"
+Test-Endpoint "http://localhost:3010/health" "Car Wash Service"
+Test-Endpoint "http://localhost:3011/health" "Auto Mech Service"
 
 Write-Success "🚀 All services deployed successfully!"
 Write-Status "Check logs with: pm2 logs"

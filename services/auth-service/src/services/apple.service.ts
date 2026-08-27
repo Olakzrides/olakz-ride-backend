@@ -50,7 +50,7 @@ class AppleService {
       iat: now,
       exp: now + 3600, // 1 hour
       aud: 'https://appleid.apple.com',
-      sub: config.apple.serviceId,
+      sub: config.apple.bundleId,  // native iOS app — use Bundle ID, not Service ID
     };
 
     // Clean the private key (remove headers and format properly)
@@ -84,7 +84,7 @@ class AppleService {
       const clientSecret = this.generateClientSecret();
 
       const params = new URLSearchParams({
-        client_id: config.apple.serviceId,
+        client_id: config.apple.bundleId,  // native iOS app — use Bundle ID, not Service ID
         client_secret: clientSecret,
         code: authorizationCode,
         grant_type: 'authorization_code',
@@ -115,7 +115,7 @@ class AppleService {
         logger.info('Using mock Apple token payload for testing');
         return {
           iss: 'https://appleid.apple.com',
-          aud: config.apple.serviceId,
+          aud: config.apple.bundleId,
           exp: Math.floor(Date.now() / 1000) + 3600,
           iat: Math.floor(Date.now() / 1000),
           sub: 'mock_apple_user_id_12345',
@@ -147,7 +147,7 @@ class AppleService {
       // Verify the token
       const payload = jwt.verify(idToken, publicKey, {
         algorithms: ['RS256'],
-        audience: config.apple.serviceId,
+        audience: config.apple.bundleId,  // native iOS app — audience must match Bundle ID
         issuer: 'https://appleid.apple.com',
       }) as AppleTokenPayload;
 

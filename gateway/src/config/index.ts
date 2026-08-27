@@ -42,6 +42,7 @@ interface Config {
       healthCheck: string;
       timeout: number;
     };
+    autoMech: {
     spareParts: {
       url: string;
       healthCheck: string;
@@ -108,6 +109,8 @@ const config: Config = {
       healthCheck: '/health',
       timeout: 60000,
     },
+    autoMech: {
+      url: process.env.AUTO_MECH_SERVICE_URL || 'http://localhost:3011',
     spareParts: {
       url: process.env.SPARE_PARTS_SERVICE_URL || 'http://localhost:3009',
       healthCheck: '/health',

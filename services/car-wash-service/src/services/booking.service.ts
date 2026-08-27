@@ -206,7 +206,7 @@ export class BookingService {
     const { data, error, count } = await supabase
       .from('car_wash_bookings')
       .select(
-        '*, car_wash_vendors(id, business_name, cover_image_url, rating), car_wash_services(id, name, category)',
+        '*, car_wash_vendors(id, business_name, phone, address, cover_image_url, logo_url, rating), car_wash_services(id, name, category)',
         { count: 'exact' }
       )
       .eq('customer_id', customerId)

@@ -544,7 +544,7 @@ export class AuditService {
 
     let txQuery = supabase
       .from('audit_transactions')
-      .select('charge_price, amount_paid, transaction_expenses');
+      .select('charge_price, amount_paid, transaction_expenses, profit, loss');
 
     let expQuery = supabase
       .from('audit_expenditures')
@@ -582,6 +582,11 @@ export class AuditService {
     const grossExpenses   = totalPayouts + totalTxExpenses + totalOpex;
     const netRevenue      = grossRevenue - grossExpenses;
 
+    // Total Profit = SUM of per-transaction profit column (charge_price - amount_paid per row)
+    // This shows raw profit from transactions before operational expenses
+    const totalProfit = transactions.reduce((s, r) => s + parseFloat(r.profit ?? 0), 0);
+    const totalLoss   = transactions.reduce((s, r) => s + parseFloat(r.loss   ?? 0), 0);
+
     return {
       from:     params.from ?? null,
       to:       params.to   ?? null,
@@ -592,6 +597,8 @@ export class AuditService {
       total_transaction_expenses:    round2(totalTxExpenses),
       total_operational_expenditure: round2(totalOpex),
       net_revenue:                   round2(netRevenue),
+      total_profit:                  round2(totalProfit),   // SUM of (charge_price - amount_paid) per row
+      total_loss:                    round2(totalLoss),     // SUM of loss rows (where payout > charge)
     };
   }
 
