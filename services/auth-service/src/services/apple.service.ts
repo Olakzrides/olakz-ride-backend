@@ -81,14 +81,27 @@ class AppleService {
         };
       }
 
+      logger.info('Apple Sign-In: generating client secret', {
+        bundleId:    config.apple.bundleId,
+        teamId:      config.apple.teamId,
+        keyId:       config.apple.keyId,
+        redirectUri: config.apple.redirectUri,
+      });
+
       const clientSecret = this.generateClientSecret();
 
-      const params = new URLSearchParams({
-        client_id: config.apple.bundleId,  // native iOS app — use Bundle ID, not Service ID
-        client_secret: clientSecret,
-        code: authorizationCode,
+      logger.info('Apple Sign-In: exchanging authorization code with Apple', {
+        url:       this.APPLE_TOKEN_URL,
+        client_id: config.apple.bundleId,
         grant_type: 'authorization_code',
-        redirect_uri: config.apple.redirectUri,
+      });
+
+      const params = new URLSearchParams({
+        client_id:     config.apple.bundleId,  // native iOS app — use Bundle ID, not Service ID
+        client_secret: clientSecret,
+        code:          authorizationCode,
+        grant_type:    'authorization_code',
+        redirect_uri:  config.apple.redirectUri,
       });
 
       const response = await axios.post(this.APPLE_TOKEN_URL, params, {
@@ -97,10 +110,17 @@ class AppleService {
         },
       });
 
+      logger.info('Apple Sign-In: token exchange successful', {
+        has_id_token:     !!response.data?.id_token,
+        has_access_token: !!response.data?.access_token,
+        token_type:       response.data?.token_type,
+      });
+
       return response.data;
     } catch (error: unknown) {
-      const axiosError = error as { response?: { data?: unknown }; message?: string };
-      logger.error('Apple token exchange error:', axiosError.response?.data || axiosError.message);
+      const axiosError = error as { response?: { data?: unknown; status?: number }; message?: string };
+      // Log the full Apple error response so we can diagnose exactly what Apple rejected
+      logger.error(`Apple token exchange error: status=${axiosError.response?.status} body=${JSON.stringify(axiosError.response?.data)} message=${axiosError.message}`);
       throw new UnauthorizedError('Failed to exchange Apple authorization code');
     }
   }
@@ -154,7 +174,7 @@ class AppleService {
       return payload;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Token verification failed';
-      logger.error('Apple token verification error:', message);
+      logger.error(`Apple token verification error: ${message}`);
       throw new UnauthorizedError('Invalid Apple token');
     }
   }
@@ -218,7 +238,7 @@ class AppleService {
       return await this.findOrCreateUser(appleUser);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Apple Sign-In failed';
-      logger.error('Apple Sign-In error:', message);
+      logger.error(`Apple Sign-In error: ${message}`);
       throw error;
     }
   }
