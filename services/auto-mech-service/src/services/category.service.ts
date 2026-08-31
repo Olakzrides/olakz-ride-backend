@@ -73,6 +73,88 @@ export class CategoryService {
   }
 
   /**
+   * PUBLIC — customer-facing.
+   * Returns a vendor's categories (system + custom) that have at least one
+   * active service, with all active services listed under each category.
+   * Used on the vendor profile screen so the customer can tap a category tab
+   * and see the services underneath it.
+   */
+  async getVendorCategoriesForCustomer(vendorId: string): Promise<Array<{
+    id: string;
+    label: string;
+    type: 'system' | 'custom';
+    services: Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      price: number | null;
+      priceMin: number | null;
+      priceMax: number | null;
+      durationMinutes: number | null;
+      category: string | null;
+    }>;
+  }>> {
+    const { data: services, error } = await supabase
+      .from('auto_mech_services')
+      .select('*, auto_mech_vendor_categories(id, name)')
+      .eq('vendor_id', vendorId)
+      .eq('is_active', true);
+
+    if (error) throw new Error(`Failed to fetch services: ${error.message}`);
+
+    const allServices = services ?? [];
+
+    const SYSTEM_CATEGORIES = [
+      { key: 'oil_change',        label: 'Oil Change'        },
+      { key: 'tyre_service',      label: 'Tyre Service'      },
+      { key: 'brake_service',     label: 'Brake Service'     },
+      { key: 'engine_repair',     label: 'Engine Repair'     },
+      { key: 'electrical_repair', label: 'Electrical Repair' },
+      { key: 'general_service',   label: 'General Service'   },
+    ];
+
+    const mapSvc = (s: any) => ({
+      id:              s.id,
+      name:            s.name,
+      description:     s.description ?? null,
+      price:           s.price           != null ? parseFloat(s.price)     : null,
+      priceMin:        s.price_min       != null ? parseFloat(s.price_min) : null,
+      priceMax:        s.price_max       != null ? parseFloat(s.price_max) : null,
+      durationMinutes: s.duration_minutes ?? null,
+      category:        s.category ?? null,
+    });
+
+    const result: Array<{ id: string; label: string; type: 'system' | 'custom'; services: any[] }> = [];
+
+    // System categories — only those that have at least one active service
+    for (const cat of SYSTEM_CATEGORIES) {
+      const catServices = allServices
+        .filter((s: any) => s.category === cat.key && !s.custom_category_id)
+        .map(mapSvc);
+      if (catServices.length > 0) {
+        result.push({ id: cat.key, label: cat.label, type: 'system', services: catServices });
+      }
+    }
+
+    // Custom categories — grouped by custom_category_id
+    const customCatMap = new Map<string, { id: string; label: string; services: any[] }>();
+    for (const s of allServices) {
+      if (s.custom_category_id && (s as any).auto_mech_vendor_categories) {
+        const cat = (s as any).auto_mech_vendor_categories;
+        if (!customCatMap.has(cat.id)) {
+          customCatMap.set(cat.id, { id: cat.id, label: cat.name, services: [] });
+        }
+        customCatMap.get(cat.id)!.services.push(mapSvc(s));
+      }
+    }
+    for (const c of customCatMap.values()) {
+      result.push({ ...c, type: 'custom' });
+    }
+
+    return result;
+  }
+
+  /**
    * Create a new custom category for a vendor.
    */
   async createCategory(vendorId: string, userId: string, dto: {

@@ -69,10 +69,89 @@ export class CategoryService {
       description: row.description,
       sortOrder:   row.sort_order,
       isActive:    row.is_active,
-      serviceCount: (row.car_wash_services ?? []).filter((s: any) => s.is_active).length,
+      // Total count includes inactive so vendor sees the real number under this category
+      serviceCount: (row.car_wash_services ?? []).length,
       createdAt:   row.created_at,
       updatedAt:   row.updated_at,
     }));
+  }
+
+  /**
+   * PUBLIC — customer-facing.
+   * Returns a vendor's categories (system + custom) that have at least one
+   * active service, with all active services listed under each category.
+   * Used on the vendor profile screen so the customer can tap a category tab
+   * and see the services underneath it.
+   */
+  async getVendorCategoriesForCustomer(vendorId: string): Promise<Array<{
+    id: string;
+    label: string;
+    type: 'system' | 'custom';
+    services: Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      price: number | null;
+      durationMinutes: number | null;
+      category: string | null;
+    }>;
+  }>> {
+    const { data: services, error } = await supabase
+      .from('car_wash_services')
+      .select('*, car_wash_vendor_categories(id, name)')
+      .eq('vendor_id', vendorId)
+      .eq('is_active', true);
+
+    if (error) throw new Error(`Failed to fetch services: ${error.message}`);
+
+    const allServices = services ?? [];
+
+    const SYSTEM_CATEGORIES = [
+      { key: 'exterior_wash',  label: 'Exterior Wash'  },
+      { key: 'interior_wash',  label: 'Interior Wash'  },
+      { key: 'engine_wash',    label: 'Engine Wash'    },
+      { key: 'full_car_wash',  label: 'Full Car Wash'  },
+      { key: 'car_vacuuming',  label: 'Car Vacuuming'  },
+      { key: 'wax_and_polish', label: 'Wax & Polish'   },
+    ];
+
+    const mapSvc = (s: any) => ({
+      id:              s.id,
+      name:            s.name,
+      description:     s.description ?? null,
+      price:           s.price != null ? parseFloat(s.price) : null,
+      durationMinutes: s.duration_minutes ?? null,
+      category:        s.category ?? null,
+    });
+
+    const result: Array<{ id: string; label: string; type: 'system' | 'custom'; services: any[] }> = [];
+
+    // System categories — only those that have at least one active service
+    for (const cat of SYSTEM_CATEGORIES) {
+      const catServices = allServices
+        .filter((s: any) => s.category === cat.key && !s.custom_category_id)
+        .map(mapSvc);
+      if (catServices.length > 0) {
+        result.push({ id: cat.key, label: cat.label, type: 'system', services: catServices });
+      }
+    }
+
+    // Custom categories — grouped by custom_category_id
+    const customCatMap = new Map<string, { id: string; label: string; services: any[] }>();
+    for (const s of allServices) {
+      if (s.custom_category_id && (s as any).car_wash_vendor_categories) {
+        const cat = (s as any).car_wash_vendor_categories;
+        if (!customCatMap.has(cat.id)) {
+          customCatMap.set(cat.id, { id: cat.id, label: cat.name, services: [] });
+        }
+        customCatMap.get(cat.id)!.services.push(mapSvc(s));
+      }
+    }
+    for (const c of customCatMap.values()) {
+      result.push({ ...c, type: 'custom' });
+    }
+
+    return result;
   }
 
   /**
@@ -228,17 +307,22 @@ export class CategoryService {
   /**
    * Get all services grouped by vendor category (for dashboard overview).
    * System categories appear as-is; custom categories show their own services.
+   * includeInactive — when true (vendor dashboard), all services are returned
+   * regardless of is_active so the vendor can see and toggle inactive ones too.
    */
-  async getServicesGroupedByCategory(vendorId: string): Promise<{
+  async getServicesGroupedByCategory(vendorId: string, includeInactive = false): Promise<{
     systemCategories: Array<{ key: string; label: string; services: any[] }>;
     customCategories: Array<{ id: string; name: string; services: any[] }>;
     uncategorised: any[];
   }> {
-    const { data: services, error } = await supabase
+    let servicesQuery = supabase
       .from('car_wash_services')
       .select('*, car_wash_vendor_categories(id, name)')
-      .eq('vendor_id', vendorId)
-      .eq('is_active', true);
+      .eq('vendor_id', vendorId);
+
+    if (!includeInactive) servicesQuery = servicesQuery.eq('is_active', true);
+
+    const { data: services, error } = await servicesQuery;
 
     if (error) throw new Error(`Failed to fetch services: ${error.message}`);
 

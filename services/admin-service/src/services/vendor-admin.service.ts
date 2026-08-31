@@ -266,6 +266,30 @@ export class VendorAdminService {
       });
     }
 
+    // Auto-provision auto_mech_vendors row for mechanics/auto_mech-type vendors (non-blocking)
+    if (v.business_type === 'mechanics' || v.business_type === 'auto_mech') {
+      const autoMechServiceUrl = process.env.AUTO_MECH_SERVICE_URL || 'http://localhost:3011';
+      const internalKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
+      axios.post(
+        `${autoMechServiceUrl}/api/internal/auto-mech/vendor/provision`,
+        {
+          user_id:       v.user_id,
+          business_name: v.business_name,
+          address:       v.address || '',
+          city:          v.city,
+          state:         v.state,
+          phone:         v.phone,
+          email:         v.email,
+          logo_url:      v.logo_url,
+        },
+        { headers: { 'x-internal-api-key': internalKey }, timeout: 8000 }
+      ).then(() => {
+        logger.info('Auto mech vendor provisioned', { userId: v.user_id });
+      }).catch((err: unknown) => {
+        logger.error('Failed to provision auto mech vendor (non-fatal)', { error: err instanceof Error ? err.message : String(err) });
+      });
+    }
+
     return vendor;
   }
 
@@ -653,6 +677,22 @@ export class VendorAdminService {
         logger.info('Car wash vendor status synced', { userId: v.user_id, status: carWashStatus });
       }).catch((err: unknown) => {
         logger.error('Failed to sync car wash vendor status (non-fatal)', { error: err instanceof Error ? err.message : String(err) });
+      });
+    }
+
+    // Sync status to auto_mech_vendors table (non-blocking)
+    if (v.business_type === 'mechanics' || v.business_type === 'auto_mech') {
+      const autoMechStatus = newStatus === 'suspended' ? 'suspended' : 'approved';
+      const autoMechServiceUrl = process.env.AUTO_MECH_SERVICE_URL || 'http://localhost:3011';
+      const internalKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
+      axios.patch(
+        `${autoMechServiceUrl}/api/internal/auto-mech/vendor/status`,
+        { user_id: v.user_id, status: autoMechStatus },
+        { headers: { 'x-internal-api-key': internalKey }, timeout: 8000 }
+      ).then(() => {
+        logger.info('Auto mech vendor status synced', { userId: v.user_id, status: autoMechStatus });
+      }).catch((err: unknown) => {
+        logger.error('Failed to sync auto mech vendor status (non-fatal)', { error: err instanceof Error ? err.message : String(err) });
       });
     }
 

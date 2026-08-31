@@ -33,7 +33,8 @@ router.post(
 );
 
 // ── Dynamic :vendorId routes (public) — must be LAST ─────────────────────────
-router.get('/:vendorId/reviews', ctrl.getVendorReviews);
-router.get('/:vendorId',         ctrl.getVendorProfile);
+router.get('/:vendorId/reviews',    ctrl.getVendorReviews);
+router.get('/:vendorId/categories', ctrl.getVendorCategories);
+router.get('/:vendorId',            ctrl.getVendorProfile);
 
 export default router;
