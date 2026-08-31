@@ -394,6 +394,8 @@ export function setupRoutes(app: Application): void {
         }
       },
     })
+  );
+
   // Spare Parts Service routes
   app.use(
     '/api/spare-parts',

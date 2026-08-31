@@ -28,7 +28,7 @@ const server = app.listen(PORT, () => {
   logger.info(`  - Auth routes: 10 requests per 15 minutes`);
   logger.info(`===========================================`);
   logger.info(`CORS Allowed Origins:`);
-  config.cors.allowedOrigins.forEach((origin) => {
+  config.cors.allowedOrigins.forEach((origin: string) => {
     logger.info(`  - ${origin}`);
   });
   logger.info(`===========================================`);
