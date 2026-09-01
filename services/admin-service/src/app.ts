@@ -33,6 +33,7 @@ import emailLogRoutes from './routes/email-log.routes';
 import hireAdminRoutes from './routes/hire.routes';
 import systemRolesRoutes from './routes/system-roles.routes';
 import carWashRoutes from './routes/car-wash.routes';
+import autoMechRoutes from './routes/auto-mech.routes';
 
 const app = express();
 
@@ -127,6 +128,9 @@ app.use('/api/admin/email-logs', emailLogRoutes);
 
 // Step 26: car wash vendor & booking management
 app.use('/api/admin/car-wash', carWashRoutes);
+
+// Step 27: auto mech vendor & booking management
+app.use('/api/admin/auto-mech', autoMechRoutes);
 
 // 404
 app.use((req, res) => {

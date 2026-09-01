@@ -182,7 +182,7 @@ export class CarWashAdminService {
     return data;
   }
 
-  static async suspendVendor(vendorId: string, adminId: string, reason: string) {
+  static async suspendVendor(vendorId: string, adminId: string, reason: string | null) {
     const { data, error } = await supabase
       .from('car_wash_vendors')
       .update({
