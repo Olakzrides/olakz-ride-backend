@@ -342,6 +342,9 @@ export class VendorRegistrationService {
         logger.info('Auto mech vendor provisioned:', vendor.user_id);
       } catch (err: any) {
         logger.error('Failed to provision auto mech vendor (non-fatal):', err.message);
+      }
+    }
+
     // Auto-provision spare_parts_stores row for spare_parts-type vendors
     if (vendor.business_type === 'spare_parts') {
       const sparePartsServiceUrl = process.env.SPARE_PARTS_SERVICE_URL || 'http://localhost:3009';
@@ -370,7 +373,7 @@ export class VendorRegistrationService {
 
     return vendor;
   }
-
+    
   /**
    * Admin: reject vendor
    */

@@ -43,14 +43,17 @@ export interface VendorCard {
 
 export class DiscoveryService {
   /**
-   * Returns system categories + all active custom categories from approved vendors.
-   * Used for category chips / filter pills on the home screen.
+   * Returns a flat merged list of all categories for the home screen chips:
+   * system categories first, then unique custom categories from approved vendors.
+   * Deduplicates custom categories by name so the same category name from
+   * multiple vendors only appears once.
    */
-  async getCategories(): Promise<{
-    systemCategories: Array<{ key: string; label: string; icon: string; type: 'system' }>;
-    customCategories: Array<{ id: string; label: string; vendorId: string; vendorName: string; type: 'custom' }>;
-  }> {
-    // Fetch all active custom categories alongside the vendor's name
+  async getCategories(): Promise<Array<{
+    id: string;           // system key or custom category UUID
+    label: string;
+    icon?: string;
+    type: 'system' | 'custom';
+  }>> {
     const { data, error } = await supabase
       .from('car_wash_vendor_categories')
       .select('id, name, vendor_id, car_wash_vendors(business_name, status)')
@@ -58,21 +61,23 @@ export class DiscoveryService {
 
     if (error) throw new Error(`Failed to fetch custom categories: ${error.message}`);
 
-    // Only surface custom categories belonging to approved vendors
-    const customCategories = (data ?? [])
-      .filter((row: any) => row.car_wash_vendors?.status === 'approved')
-      .map((row: any) => ({
-        id:         row.id,
-        label:      row.name,
-        vendorId:   row.vendor_id,
-        vendorName: row.car_wash_vendors?.business_name ?? '',
-        type:       'custom' as const,
-      }));
+    // Unique custom category names across all approved vendors
+    const seenNames = new Set<string>();
+    const customCategories: Array<{ id: string; label: string; type: 'custom' }> = [];
 
-    return {
-      systemCategories: CAR_WASH_CATEGORIES.map((c) => ({ ...c, type: 'system' as const })),
-      customCategories,
-    };
+    for (const row of data ?? []) {
+      if ((row as any).car_wash_vendors?.status !== 'approved') continue;
+      const name: string = (row as any).name;
+      if (!seenNames.has(name.toLowerCase())) {
+        seenNames.add(name.toLowerCase());
+        customCategories.push({ id: (row as any).id, label: name, type: 'custom' });
+      }
+    }
+
+    return [
+      ...CAR_WASH_CATEGORIES.map((c) => ({ id: c.key, label: c.label, icon: c.icon, type: 'system' as const })),
+      ...customCategories,
+    ];
   }
 
   /**
