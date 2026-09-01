@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { VendorService } from '../services/vendor.service';
 import { ReviewService } from '../services/review.service';
+import { CategoryService } from '../services/category.service';
 import { ResponseUtil } from '../utils/response.util';
 import { StorageUtil } from '../utils/storage.util';
 import { AuthRequest } from '../middleware/auth.middleware';
@@ -9,8 +10,9 @@ import { searchVendorsSchema } from '../validators/booking.validator';
 import { logger } from '../config/logger';
 
 export class VendorController {
-  private vendorService = new VendorService();
-  private reviewService = new ReviewService();
+  private vendorService  = new VendorService();
+  private reviewService  = new ReviewService();
+  private categoryService = new CategoryService();
 
   // ── Customer/Public endpoints ────────────────────────────────
 
@@ -77,6 +79,21 @@ export class VendorController {
         this.reviewService.getVendorRatingSummary(req.params.vendorId),
       ]);
       return ResponseUtil.success(res, { ...reviews, summary });
+    } catch (err: any) {
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  /**
+   * GET /api/auto-mech/vendors/:vendorId/categories
+   * Public — returns this vendor's categories (system + custom) with their
+   * active services nested inside. Used for the category tabs on the vendor
+   * profile screen so customers can browse services by category.
+   */
+  getVendorCategories = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const categories = await this.categoryService.getVendorCategoriesForCustomer(req.params.vendorId);
+      return ResponseUtil.success(res, categories);
     } catch (err: any) {
       return ResponseUtil.serverError(res, err.message);
     }

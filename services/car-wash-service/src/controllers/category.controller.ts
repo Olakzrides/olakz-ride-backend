@@ -70,7 +70,8 @@ export class CategoryController {
         .from('car_wash_vendors').select('id').eq('user_id', user.id).single();
       if (!vendor) return ResponseUtil.notFound(res, 'Vendor profile not found');
 
-      const grouped = await this.service.getServicesGroupedByCategory(vendor.id);
+      // Pass includeInactive=true so vendor can see and toggle inactive services
+      const grouped = await this.service.getServicesGroupedByCategory(vendor.id, true);
       return ResponseUtil.success(res, grouped);
     } catch (err: any) {
       return ResponseUtil.serverError(res, err.message);
