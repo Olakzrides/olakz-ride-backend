@@ -14,6 +14,8 @@ datasource db {
 // ─────────────────────────────────────────────────────────────────────────────
 // SPARE_PARTS_CATEGORIES
 // Global taxonomy managed by admin. Pre-seeded with 10 initial categories.
+// Vendors can also create custom categories scoped to their store
+// by setting storeId. Global categories have storeId = null.
 // ─────────────────────────────────────────────────────────────────────────────
 
 model SparePartsCategory {
@@ -23,14 +25,19 @@ model SparePartsCategory {
   iconUrl     String?  @map("icon_url") @db.Text
   isActive    Boolean  @default(true) @map("is_active")
   sortOrder   Int      @default(0) @map("sort_order")
+  // null  = global category (admin-managed, visible to all stores)
+  // value = vendor-custom category (only visible to that store)
+  storeId     String?  @map("store_id") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  store           SparePartsStore?         @relation("StorecustomCategories", fields: [storeId], references: [id], onDelete: Cascade)
   storeCategories SparePartsStoreCategory[]
   products        SparePartsProduct[]
 
   @@index([isActive])
   @@index([sortOrder])
+  @@index([storeId])
   @@map("spare_parts_categories")
 }
 
@@ -70,6 +77,7 @@ model SparePartsStore {
   carts           SparePartsCart[]
   orders          SparePartsOrder[]
   reviews         SparePartsReview[]
+  customCategories SparePartsCategory[] @relation("StorecustomCategories")
 
   @@index([ownerId])
   @@index([isActive])

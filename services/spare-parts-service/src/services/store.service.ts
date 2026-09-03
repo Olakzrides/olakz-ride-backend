@@ -7,10 +7,26 @@ export class StoreService {
   // CATEGORIES
   // ─────────────────────────────────────────────────────────────────
 
-  static async listCategories() {
+  /**
+   * List categories for a given context:
+   *   - No storeId → global categories only (used by customer browsing)
+   *   - With storeId → global categories + that store's custom categories
+   *     (used by vendor inventory screen)
+   */
+  static async listCategories(storeId?: string) {
     return prisma.sparePartsCategory.findMany({
-      where: { isActive: true },
-      orderBy: { sortOrder: 'asc' },
+      where: {
+        isActive: true,
+        OR: [
+          { storeId: null },                      // global categories
+          ...(storeId ? [{ storeId }] : []),       // vendor-custom categories
+        ],
+      },
+      orderBy: [
+        { storeId: 'asc' },   // global (null) first, then custom
+        { sortOrder: 'asc' },
+        { name: 'asc' },
+      ],
     });
   }
 
