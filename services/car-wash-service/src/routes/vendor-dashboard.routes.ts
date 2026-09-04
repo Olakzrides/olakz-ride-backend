@@ -19,8 +19,9 @@ router.get('/profile',            vendorCtrl.getMyVendorProfile);
 router.put('/profile',            vendorCtrl.updateMyVendorProfile);
 
 // ── Store Details (open/closed, auto-accept, service time) ───────────────────
-router.get('/store-details',      vendorCtrl.getStoreDetails);
-router.put('/store-details',      vendorCtrl.updateStoreDetails);
+router.get('/store-details',          vendorCtrl.getStoreDetails);
+router.put('/store-details',          vendorCtrl.updateStoreDetails);
+router.patch('/store-details/toggle', vendorCtrl.toggleStoreOpen);
 
 // ── Store Operations (operating hours schedule) ───────────────────────────────
 router.get('/store-operations',   vendorCtrl.getStoreOperations);

@@ -266,11 +266,11 @@ export class StoreService {
           return null;
         }
       })
-    );
+    ) as PromiseSettledResult<any>[];
 
     return results
-      .filter((r) => r.status === 'fulfilled' && r.value !== null)
-      .map((r) => (r as PromiseFulfilledResult<any>).value);
+      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && r.value !== null)
+      .map((r) => r.value);
   }
 
   // ─────────────────────────────────────────────────────────────────

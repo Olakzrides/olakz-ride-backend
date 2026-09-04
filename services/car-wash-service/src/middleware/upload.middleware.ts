@@ -5,12 +5,15 @@ import { config } from '../config/env';
 const storage = multer.memoryStorage();
 
 const fileFilter = (_req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
-  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-  const allowedExts = ['.jpg', '.jpeg', '.png', '.webp'];
+  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+  const allowedExts  = ['.jpg', '.jpeg', '.png', '.webp'];
   const ext = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.'));
 
-  if (!allowedTypes.includes(file.mimetype) || !allowedExts.includes(ext)) {
-    return cb(new Error(`Invalid file type: ${file.mimetype}. Allowed: ${allowedTypes.join(', ')}`));
+  const mimeOk = allowedMimes.includes(file.mimetype) || file.mimetype === 'application/octet-stream';
+  const extOk  = allowedExts.includes(ext);
+
+  if (!mimeOk || !extOk) {
+    return cb(new Error(`Invalid file type. Allowed formats: jpg, jpeg, png, webp`));
   }
   cb(null, true);
 };

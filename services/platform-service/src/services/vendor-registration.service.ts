@@ -321,7 +321,8 @@ export class VendorRegistrationService {
     }
 
     // Auto-provision auto_mech_vendors row for mechanics/auto_mech-type vendors
-    if (vendor.business_type === 'mechanics' || vendor.business_type === 'auto_mech') {
+    if (vendor.business_type === 'mechanics' || vendor.business_type === 'auto_mech' ||
+        vendor.service_type === 'mechanics'  || vendor.service_type === 'auto_mech') {
       const autoMechServiceUrl = process.env.AUTO_MECH_SERVICE_URL || 'http://localhost:3011';
       const internalKey = process.env.INTERNAL_API_KEY || 'olakz-internal-api-key-2026-secure';
       try {
