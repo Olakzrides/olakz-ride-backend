@@ -90,17 +90,65 @@ export class VendorService {
   }
 
   /**
-   * Get vendor profile owned by a user.
+   * Get vendor profile owned by a user — enriched with services, stats,
+   * store settings, and operating hours display for the dashboard home screen.
    */
-  async getMyVendorProfile(userId: string): Promise<AutoMechVendor> {
+  async getMyVendorProfile(userId: string): Promise<AutoMechVendor & {
+    services: any[];
+    operatingHoursDisplay: string;
+    storeDetails: {
+      is_open: boolean;
+      auto_accept_bookings: boolean;
+      estimated_service_time_minutes: number;
+    };
+    bookingStats: {
+      total: number;
+      pending: number;
+      confirmed: number;
+      in_progress: number;
+      completed: number;
+      cancelled: number;
+    };
+  }> {
     const { data, error } = await supabase
       .from('auto_mech_vendors')
-      .select('*')
+      .select('*, auto_mech_services(*)')
       .eq('user_id', userId)
       .single();
 
     if (error || !data) throw new Error('Vendor profile not found');
-    return this.mapRow(data);
+
+    const vendor   = this.mapRow(data);
+    // Active services only — vendor sees full list via GET /vendor/services
+    const services = (data.auto_mech_services ?? []).filter((s: any) => s.is_active);
+
+    // Booking stats
+    const { data: bookings } = await supabase
+      .from('auto_mech_bookings')
+      .select('status')
+      .eq('vendor_id', vendor.id);
+
+    const bList = bookings ?? [];
+    const bookingStats = {
+      total:       bList.length,
+      pending:     bList.filter((b: any) => b.status === 'pending').length,
+      confirmed:   bList.filter((b: any) => b.status === 'confirmed').length,
+      in_progress: bList.filter((b: any) => b.status === 'in_progress').length,
+      completed:   bList.filter((b: any) => b.status === 'completed').length,
+      cancelled:   bList.filter((b: any) => b.status === 'cancelled').length,
+    };
+
+    return {
+      ...vendor,
+      services,
+      operatingHoursDisplay: this.formatOperatingHours(data.operating_hours ?? {}),
+      storeDetails: {
+        is_open:                        data.is_open                        ?? false,
+        auto_accept_bookings:           data.auto_accept_bookings           ?? false,
+        estimated_service_time_minutes: data.estimated_service_time_minutes ?? 60,
+      },
+      bookingStats,
+    };
   }
 
   /**
@@ -400,46 +448,129 @@ export class VendorService {
 
     if (!vendor) throw new Error('Vendor profile not found');
 
-    const now        = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const now           = new Date();
+    const monthStart    = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+    const lastMonthEnd   = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59).toISOString();
+    const weekStart      = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [allBookings, monthBookings] = await Promise.all([
+    const [allBookings, monthBookings, lastMonthBookings, weekBookings, services] = await Promise.all([
       supabase
         .from('auto_mech_bookings')
-        .select('status, total_amount, payment_status')
+        .select('status, total_amount, payment_status, created_at')
         .eq('vendor_id', vendor.id),
+      supabase
+        .from('auto_mech_bookings')
+        .select('status, total_amount, payment_status, created_at')
+        .eq('vendor_id', vendor.id)
+        .gte('created_at', monthStart),
       supabase
         .from('auto_mech_bookings')
         .select('status, total_amount, payment_status')
         .eq('vendor_id', vendor.id)
-        .gte('created_at', monthStart),
+        .gte('created_at', lastMonthStart)
+        .lte('created_at', lastMonthEnd),
+      supabase
+        .from('auto_mech_bookings')
+        .select('status, total_amount, payment_status, created_at')
+        .eq('vendor_id', vendor.id)
+        .gte('created_at', weekStart),
+      supabase
+        .from('auto_mech_services')
+        .select('id, name, category, is_active')
+        .eq('vendor_id', vendor.id),
     ]);
 
-    const all   = allBookings.data   ?? [];
-    const month = monthBookings.data ?? [];
+    const all       = allBookings.data      ?? [];
+    const month     = monthBookings.data    ?? [];
+    const lastMonth = lastMonthBookings.data ?? [];
+    const week      = weekBookings.data     ?? [];
 
-    const totalRevenue = all
-      .filter((b: any) => b.status === 'completed' && b.payment_status === 'paid')
-      .reduce((s: number, b: any) => s + parseFloat(b.total_amount ?? 0), 0);
+    // ── Revenue helpers ─────────────────────────────────────────────────────
+    const paidRevenue = (rows: any[]) =>
+      rows
+        .filter((b) => b.status === 'completed' && b.payment_status === 'paid')
+        .reduce((s, b) => s + parseFloat(b.total_amount ?? 0), 0);
 
-    const monthRevenue = month
-      .filter((b: any) => b.status === 'completed' && b.payment_status === 'paid')
-      .reduce((s: number, b: any) => s + parseFloat(b.total_amount ?? 0), 0);
+    const totalRevenue     = paidRevenue(all);
+    const monthRevenue     = paidRevenue(month);
+    const lastMonthRevenue = paidRevenue(lastMonth);
+    const weekRevenue      = paidRevenue(week);
+
+    // ── Month-on-month growth ────────────────────────────────────────────────
+    const revenueGrowth = lastMonthRevenue > 0
+      ? parseFloat((((monthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100).toFixed(1))
+      : null;
+
+    const bookingGrowth = lastMonth.length > 0
+      ? parseFloat((((month.length - lastMonth.length) / lastMonth.length) * 100).toFixed(1))
+      : null;
+
+    // ── Daily trend (last 7 days) ────────────────────────────────────────────
+    const dailyMap: Record<string, { bookings: number; revenue: number }> = {};
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      dailyMap[d.toISOString().split('T')[0]] = { bookings: 0, revenue: 0 };
+    }
+    for (const b of week) {
+      const day = new Date(b.created_at).toISOString().split('T')[0];
+      if (dailyMap[day]) {
+        dailyMap[day].bookings++;
+        if (b.status === 'completed' && b.payment_status === 'paid') {
+          dailyMap[day].revenue += parseFloat(b.total_amount ?? 0);
+        }
+      }
+    }
+    const dailyTrend = Object.entries(dailyMap).map(([date, data]) => ({
+      date,
+      bookings: data.bookings,
+      revenue:  parseFloat(data.revenue.toFixed(2)),
+    }));
+
+    // ── Services summary ─────────────────────────────────────────────────────
+    const svcList = services.data ?? [];
+    const activeServices   = svcList.filter((s: any) => s.is_active).length;
+    const inactiveServices = svcList.filter((s: any) => !s.is_active).length;
 
     return {
+      // ── All-time ──────────────────────────────────────────────────────────
       total_bookings:     all.length,
-      completed_bookings: all.filter((b: any) => b.status === 'completed').length,
-      cancelled_bookings: all.filter((b: any) => b.status === 'cancelled').length,
-      pending_bookings:   all.filter((b: any) => b.status === 'pending').length,
+      completed_bookings: all.filter((b) => b.status === 'completed').length,
+      cancelled_bookings: all.filter((b) => b.status === 'cancelled').length,
+      pending_bookings:   all.filter((b) => b.status === 'pending').length,
+      confirmed_bookings: all.filter((b) => b.status === 'confirmed').length,
+      in_progress_bookings: all.filter((b) => b.status === 'in_progress').length,
       total_revenue:      parseFloat(totalRevenue.toFixed(2)),
       average_rating:     parseFloat(vendor.rating) || 0,
       total_customers:    vendor.total_customers ?? 0,
       total_hours_served: parseFloat(vendor.total_hours_served) || 0,
+
+      // ── This month ────────────────────────────────────────────────────────
       this_month: {
-        bookings:  month.length,
-        completed: month.filter((b: any) => b.status === 'completed').length,
-        revenue:   parseFloat(monthRevenue.toFixed(2)),
-        cancelled: month.filter((b: any) => b.status === 'cancelled').length,
+        bookings:     month.length,
+        completed:    month.filter((b) => b.status === 'completed').length,
+        cancelled:    month.filter((b) => b.status === 'cancelled').length,
+        pending:      month.filter((b) => b.status === 'pending').length,
+        revenue:      parseFloat(monthRevenue.toFixed(2)),
+        // growth vs last month (null if no last-month data)
+        revenue_growth_percent:  revenueGrowth,
+        booking_growth_percent:  bookingGrowth,
+      },
+
+      // ── Last 7 days ───────────────────────────────────────────────────────
+      last_7_days: {
+        bookings: week.length,
+        completed: week.filter((b) => b.status === 'completed').length,
+        revenue:   parseFloat(weekRevenue.toFixed(2)),
+        daily_trend: dailyTrend,
+      },
+
+      // ── Services ──────────────────────────────────────────────────────────
+      services: {
+        total:    svcList.length,
+        active:   activeServices,
+        inactive: inactiveServices,
       },
     };
   }

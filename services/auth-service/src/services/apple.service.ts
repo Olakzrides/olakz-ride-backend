@@ -50,14 +50,37 @@ class AppleService {
       iat: now,
       exp: now + 3600, // 1 hour
       aud: 'https://appleid.apple.com',
-      sub: config.apple.serviceId,
+      sub: config.apple.bundleId,  // native iOS app — use Bundle ID, not Service ID
     };
 
-    // Clean the private key (remove headers and format properly)
-    const privateKey = config.apple.privateKey
-      .replace(/\\n/g, '\n')
-      .replace(/-----BEGIN PRIVATE KEY-----/, '-----BEGIN PRIVATE KEY-----\n')
-      .replace(/-----END PRIVATE KEY-----/, '\n-----END PRIVATE KEY-----');
+    // Properly format the private key as a valid PEM for ES256 signing.
+    // The key may be stored in the env in various formats:
+    //   - Single line with literal \n characters
+    //   - Already multi-line
+    //   - Headers attached to body without newlines
+    // This normalises all cases into a valid PEM.
+    let rawKey = config.apple.privateKey;
+
+    // Step 1: Replace literal \n escape sequences with real newlines
+    rawKey = rawKey.replace(/\\n/g, '\n');
+
+    // Step 2: Strip any existing headers and whitespace to get just the base64 body
+    const keyBody = rawKey
+      .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+      .replace(/-----END PRIVATE KEY-----/g, '')
+      .replace(/\s+/g, '');  // remove ALL whitespace including newlines
+
+    // Step 3: Re-wrap the base64 body at 64 chars per line (PEM standard)
+    const wrapped = keyBody.match(/.{1,64}/g)?.join('\n') || keyBody;
+
+    // Step 4: Reassemble a clean PEM
+    const privateKey = `-----BEGIN PRIVATE KEY-----\n${wrapped}\n-----END PRIVATE KEY-----`;
+
+    logger.info('Apple Sign-In: private key formatted', {
+      keyLength: privateKey.length,
+      startsCorrectly: privateKey.startsWith('-----BEGIN PRIVATE KEY-----'),
+      endsCorrectly: privateKey.endsWith('-----END PRIVATE KEY-----'),
+    });
 
     return jwt.sign(payload, privateKey, {
       algorithm: 'ES256',
@@ -81,14 +104,27 @@ class AppleService {
         };
       }
 
+      logger.info('Apple Sign-In: generating client secret', {
+        bundleId:    config.apple.bundleId,
+        teamId:      config.apple.teamId,
+        keyId:       config.apple.keyId,
+        redirectUri: config.apple.redirectUri,
+      });
+
       const clientSecret = this.generateClientSecret();
 
-      const params = new URLSearchParams({
-        client_id: config.apple.serviceId,
-        client_secret: clientSecret,
-        code: authorizationCode,
+      logger.info('Apple Sign-In: exchanging authorization code with Apple', {
+        url:       this.APPLE_TOKEN_URL,
+        client_id: config.apple.bundleId,
         grant_type: 'authorization_code',
-        redirect_uri: config.apple.redirectUri,
+      });
+
+      const params = new URLSearchParams({
+        client_id:     config.apple.bundleId,  // native iOS app — use Bundle ID, not Service ID
+        client_secret: clientSecret,
+        code:          authorizationCode,
+        grant_type:    'authorization_code',
+        redirect_uri:  config.apple.redirectUri,
       });
 
       const response = await axios.post(this.APPLE_TOKEN_URL, params, {
@@ -97,10 +133,17 @@ class AppleService {
         },
       });
 
+      logger.info('Apple Sign-In: token exchange successful', {
+        has_id_token:     !!response.data?.id_token,
+        has_access_token: !!response.data?.access_token,
+        token_type:       response.data?.token_type,
+      });
+
       return response.data;
     } catch (error: unknown) {
-      const axiosError = error as { response?: { data?: unknown }; message?: string };
-      logger.error('Apple token exchange error:', axiosError.response?.data || axiosError.message);
+      const axiosError = error as { response?: { data?: unknown; status?: number }; message?: string };
+      // Log the full Apple error response so we can diagnose exactly what Apple rejected
+      logger.error(`Apple token exchange error: status=${axiosError.response?.status} body=${JSON.stringify(axiosError.response?.data)} message=${axiosError.message}`);
       throw new UnauthorizedError('Failed to exchange Apple authorization code');
     }
   }
@@ -115,7 +158,7 @@ class AppleService {
         logger.info('Using mock Apple token payload for testing');
         return {
           iss: 'https://appleid.apple.com',
-          aud: config.apple.serviceId,
+          aud: config.apple.bundleId,
           exp: Math.floor(Date.now() / 1000) + 3600,
           iat: Math.floor(Date.now() / 1000),
           sub: 'mock_apple_user_id_12345',
@@ -147,14 +190,14 @@ class AppleService {
       // Verify the token
       const payload = jwt.verify(idToken, publicKey, {
         algorithms: ['RS256'],
-        audience: config.apple.serviceId,
+        audience: config.apple.bundleId,  // native iOS app — audience must match Bundle ID
         issuer: 'https://appleid.apple.com',
       }) as AppleTokenPayload;
 
       return payload;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Token verification failed';
-      logger.error('Apple token verification error:', message);
+      logger.error(`Apple token verification error: ${message}`);
       throw new UnauthorizedError('Invalid Apple token');
     }
   }
@@ -206,19 +249,19 @@ class AppleService {
       // Verify the ID token
       const payload = await this.verifyAppleToken(tokenResponse.id_token);
 
-      // Extract user info
+      // Extract user info — treat empty strings as missing (Apple sends '' for hidden/unavailable fields)
       const appleUser: AppleUserInfo = {
-        sub: payload.sub,
-        email: payload.email || request.user_info?.email,
+        sub:        payload.sub,
+        email:      payload.email || (request.user_info?.email || '') || undefined,
         first_name: request.user_info?.name?.firstName || '',
-        last_name: request.user_info?.name?.lastName || '',
+        last_name:  request.user_info?.name?.lastName  || '',
       };
 
       // Find or create user
       return await this.findOrCreateUser(appleUser);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Apple Sign-In failed';
-      logger.error('Apple Sign-In error:', message);
+      logger.error(`Apple Sign-In error: ${message}`);
       throw error;
     }
   }

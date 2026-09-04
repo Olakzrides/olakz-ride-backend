@@ -34,6 +34,7 @@ import hireAdminRoutes from './routes/hire.routes';
 import systemRolesRoutes from './routes/system-roles.routes';
 import carWashRoutes from './routes/car-wash.routes';
 import autoMechRoutes from './routes/auto-mech.routes';
+import sparePartsRoutes from './routes/spare-parts.routes';
 
 const app = express();
 
@@ -131,6 +132,9 @@ app.use('/api/admin/car-wash', carWashRoutes);
 
 // Step 27: auto mech vendor & booking management
 app.use('/api/admin/auto-mech', autoMechRoutes);
+
+// Step 28: spare parts store & order management
+app.use('/api/admin/spare-parts', sparePartsRoutes);
 
 // 404
 app.use((req, res) => {

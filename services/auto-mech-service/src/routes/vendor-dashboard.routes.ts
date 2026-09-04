@@ -18,9 +18,10 @@ router.use(authenticate, authorize('vendor'));
 router.get('/profile', vendorCtrl.getMyVendorProfile);
 router.put('/profile', vendorCtrl.updateMyVendorProfile);
 
-// ── Store Details ─────────────────────────────────────────────────────────────
-router.get('/store-details', vendorCtrl.getStoreDetails);
-router.put('/store-details', vendorCtrl.updateStoreDetails);
+// ── Store Details (open/closed, auto-accept, service time) ───────────────────
+router.get('/store-details',         vendorCtrl.getStoreDetails);
+router.put('/store-details',         vendorCtrl.updateStoreDetails);
+router.patch('/store-details/toggle', vendorCtrl.toggleStoreOpen);
 
 // ── Store Operations ──────────────────────────────────────────────────────────
 router.get('/store-operations', vendorCtrl.getStoreOperations);
@@ -52,8 +53,10 @@ router.patch('/services/:serviceId/category', categoryCtrl.assignServiceCategory
 
 // ── Bookings ──────────────────────────────────────────────────────────────────
 router.get('/bookings',                       bookingCtrl.getVendorBookings);
+router.post('/bookings/:bookingId/accept',    bookingCtrl.acceptBooking);
 router.post('/bookings/:bookingId/decline',   bookingCtrl.declineBooking);
 router.post('/bookings/:bookingId/confirm',   bookingCtrl.confirmBooking);
+router.post('/bookings/:bookingId/cancel',    bookingCtrl.cancelBookingByVendor);
 router.post('/bookings/:bookingId/start',     bookingCtrl.startBooking);
 router.post('/bookings/:bookingId/complete',  bookingCtrl.completeBooking);
 
