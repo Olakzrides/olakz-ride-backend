@@ -218,4 +218,65 @@ export class VendorStoreController {
       return ResponseUtil.serverError(res, err.message);
     }
   };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // VENDOR CUSTOM CATEGORIES
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // GET /api/spare-parts/vendor/categories
+  listCategories = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const ownerId    = (req as AuthRequest).user!.id;
+      const categories = await VendorStoreService.listCategories(ownerId);
+      return ResponseUtil.success(res, { categories });
+    } catch (err: any) {
+      if (err.message === 'Store not found') return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  // POST /api/spare-parts/vendor/categories
+  // Body: { name, description?, icon_url? }
+  createCategory = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const ownerId    = (req as AuthRequest).user!.id;
+      const { name }   = req.body;
+
+      if (!name) return ResponseUtil.badRequest(res, 'name is required');
+
+      const category = await VendorStoreService.createCategory(ownerId, req.body);
+      return ResponseUtil.created(res, { category }, 'Category created');
+    } catch (err: any) {
+      if (err.message === 'Store not found')          return ResponseUtil.notFound(res, err.message);
+      if (err.message?.includes('already exists'))    return ResponseUtil.conflict(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  // PUT /api/spare-parts/vendor/categories/:id
+  // Body: { name?, description?, icon_url? }
+  updateCategory = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const ownerId  = (req as AuthRequest).user!.id;
+      const category = await VendorStoreService.updateCategory(ownerId, req.params.id, req.body);
+      return ResponseUtil.success(res, { category }, 'Category updated');
+    } catch (err: any) {
+      if (err.message?.includes('not found') || err.message?.includes('not yours'))
+        return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  // DELETE /api/spare-parts/vendor/categories/:id
+  deleteCategory = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const ownerId = (req as AuthRequest).user!.id;
+      await VendorStoreService.deleteCategory(ownerId, req.params.id);
+      return ResponseUtil.success(res, null, 'Category deleted');
+    } catch (err: any) {
+      if (err.message?.includes('not found') || err.message?.includes('not yours'))
+        return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
 }

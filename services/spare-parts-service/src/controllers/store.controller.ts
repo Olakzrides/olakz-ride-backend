@@ -4,9 +4,11 @@ import { ResponseUtil } from '../utils/response.util';
 
 export class StoreController {
   // GET /api/spare-parts/categories
-  listCategories = async (_req: Request, res: Response): Promise<Response> => {
+  // Query: store_id (optional) — if provided returns global + that store's custom categories
+  listCategories = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const categories = await StoreService.listCategories();
+      const { store_id } = req.query;
+      const categories = await StoreService.listCategories(store_id as string | undefined);
       return ResponseUtil.success(res, { categories });
     } catch (err: any) {
       return ResponseUtil.serverError(res, err.message);

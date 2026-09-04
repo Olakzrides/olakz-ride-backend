@@ -185,6 +185,14 @@ export function createApp(): Application {
     }
   });
 
+  // ── Health check — must be before routes to guarantee it's never 404'd ───
+  app.get('/api/auto-mech/health', (_req, res) => {
+    res.json({ success: true, service: 'auto-mech-service', status: 'healthy', timestamp: new Date().toISOString() });
+  });
+  app.get('/health', (_req, res) => {
+    res.json({ success: true, service: 'auto-mech-service', status: 'healthy', timestamp: new Date().toISOString() });
+  });
+
   // Mount public/authenticated routes
   app.use(routes);
 

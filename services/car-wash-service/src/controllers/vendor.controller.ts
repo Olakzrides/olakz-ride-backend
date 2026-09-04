@@ -261,6 +261,29 @@ export class VendorController {
   };
 
   /**
+   * PATCH /api/car-wash/vendor/store-details/toggle
+   * Toggle shop open/closed — body: { is_open: boolean }
+   */
+  toggleStoreOpen = async (req: Request, res: Response): Promise<Response> => {
+    const user = (req as AuthRequest).user!;
+    const { is_open } = req.body;
+    if (is_open === undefined) {
+      return ResponseUtil.badRequest(res, 'is_open is required (true or false)');
+    }
+    try {
+      const details = await this.vendorService.updateStoreDetails(user.id, { is_open: Boolean(is_open) });
+      return ResponseUtil.success(
+        res,
+        { is_open: details.is_open },
+        `Shop is now ${details.is_open ? 'open' : 'closed'}`
+      );
+    } catch (err: any) {
+      if (err.message.includes('not found')) return ResponseUtil.notFound(res, err.message);
+      return ResponseUtil.serverError(res, err.message);
+    }
+  };
+
+  /**
    * GET /api/car-wash/vendor/store-operations
    * Returns operating_hours schedule
    */

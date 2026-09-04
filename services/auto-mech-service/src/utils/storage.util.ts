@@ -5,6 +5,15 @@ import { v4 as uuidv4 } from 'uuid';
 const BUCKET_NAME = config.supabase.storageBucket;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
+
+/** Map extension → proper MIME for octet-stream uploads (e.g. Postman) */
+const EXT_TO_MIME: Record<string, string> = {
+  '.jpg':  'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png':  'image/png',
+  '.webp': 'image/webp',
+};
 
 export class StorageUtil {
   static async initializeBucket(): Promise<void> {
@@ -35,16 +44,27 @@ export class StorageUtil {
     if (file.size > MAX_FILE_SIZE) {
       throw new Error(`File exceeds the ${MAX_FILE_SIZE / 1024 / 1024}MB limit`);
     }
-    if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-      throw new Error(`File type ${file.mimetype} is not allowed`);
+
+    const ext = ('.' + (file.originalname.split('.').pop() ?? '')).toLowerCase();
+
+    // Accept proper image MIME types OR octet-stream with a valid image extension
+    const mimeOk = ALLOWED_MIME_TYPES.includes(file.mimetype) || file.mimetype === 'application/octet-stream';
+    const extOk  = ALLOWED_EXTENSIONS.includes(ext);
+
+    if (!mimeOk || !extOk) {
+      throw new Error(`File type not allowed. Accepted formats: jpg, jpeg, png, webp`);
     }
 
-    const ext = file.originalname.split('.').pop();
-    const filePath = `${folder}/${uuidv4()}.${ext}`;
+    // Resolve actual content type — fall back to extension map for octet-stream
+    const contentType = ALLOWED_MIME_TYPES.includes(file.mimetype)
+      ? file.mimetype
+      : (EXT_TO_MIME[ext] ?? 'image/jpeg');
+
+    const filePath = `${folder}/${uuidv4()}${ext}`;
 
     const { error } = await supabase.storage
       .from(BUCKET_NAME)
-      .upload(filePath, file.buffer, { contentType: file.mimetype, upsert: false });
+      .upload(filePath, file.buffer, { contentType, upsert: false });
 
     if (error) throw new Error(`Upload failed: ${error.message}`);
 

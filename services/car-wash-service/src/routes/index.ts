@@ -29,7 +29,7 @@ router.use('/api/car-wash', availabilityRoutes);
 router.use('/api/car-wash/bookings', bookingRoutes);
 
 // ── Health check ──────────────────────────────────────────────────────────
-router.get('/health', (_req, res) => {
+router.get('/api/car-wash/health', (_req, res) => {
   res.json({ success: true, service: 'car-wash-service', status: 'healthy', timestamp: new Date().toISOString() });
 });
 

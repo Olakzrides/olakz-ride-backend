@@ -360,6 +360,15 @@ export class BookingService {
     return this.vendorUpdateBookingStatus(bookingId, vendorUserId, 'confirmed');
   }
 
+  /**
+   * Explicit accept — same as confirm but named for clarity.
+   * pending → confirmed.
+   * Notifies the customer that their booking has been accepted.
+   */
+  async acceptBooking(bookingId: string, vendorUserId: string): Promise<AutoMechBooking> {
+    return this.vendorUpdateBookingStatus(bookingId, vendorUserId, 'confirmed');
+  }
+
   async startBooking(bookingId: string, vendorUserId: string): Promise<AutoMechBooking> {
     return this.vendorUpdateBookingStatus(bookingId, vendorUserId, 'in_progress', {
       started_at: new Date().toISOString(),
@@ -371,6 +380,59 @@ export class BookingService {
       completed_at:   new Date().toISOString(),
       payment_status: 'paid',
     });
+  }
+
+  /**
+   * Vendor cancels a confirmed or in-progress booking.
+   * confirmed | in_progress → cancelled.
+   * Customer is notified.
+   */
+  async cancelBookingByVendor(
+    bookingId:    string,
+    vendorUserId: string,
+    reason:       string
+  ): Promise<AutoMechBooking> {
+    const { data: booking } = await supabase
+      .from('auto_mech_bookings')
+      .select('id, customer_id, vendor_id, status')
+      .eq('id', bookingId)
+      .single();
+
+    if (!booking) throw new Error('Booking not found');
+    if (!['pending', 'confirmed', 'in_progress'].includes(booking.status)) {
+      throw new Error(`Cannot cancel a booking with status: ${booking.status}`);
+    }
+
+    const { data: vendor } = await supabase
+      .from('auto_mech_vendors')
+      .select('user_id')
+      .eq('id', booking.vendor_id)
+      .single();
+
+    if (!vendor || vendor.user_id !== vendorUserId) throw new Error('Unauthorised');
+
+    const { data, error } = await supabase
+      .from('auto_mech_bookings')
+      .update({
+        status:              'cancelled',
+        cancellation_reason: reason,
+        cancelled_at:        new Date().toISOString(),
+        updated_at:          new Date().toISOString(),
+      })
+      .eq('id', bookingId)
+      .select('*')
+      .single();
+
+    if (error) throw new Error(`Cancel failed: ${error.message}`);
+
+    AutoMechNotificationService.notifyBookingStatusChanged({
+      bookingId,
+      customerId: booking.customer_id,
+      vendorId:   booking.vendor_id,
+      status:     'cancelled',
+    }).catch(() => {});
+
+    return this.mapRow(data);
   }
 
   /**

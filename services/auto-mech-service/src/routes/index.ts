@@ -28,7 +28,7 @@ router.use('/api/auto-mech', availabilityRoutes);
 router.use('/api/auto-mech/bookings', bookingRoutes);
 
 // ── Health check ──────────────────────────────────────────────────────────
-router.get('/health', (_req, res) => {
+router.get('/api/auto-mech/health', (_req, res) => {
   res.json({ success: true, service: 'auto-mech-service', status: 'healthy', timestamp: new Date().toISOString() });
 });
 

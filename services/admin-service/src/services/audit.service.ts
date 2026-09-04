@@ -247,40 +247,52 @@ export class AuditService {
    *  from + to          → returns full range
    *  from/to + location → returns range filtered by location
    *  neither            → returns today
+   *
+   *  Paginated: page (default 1), limit (default 50).
    */
   async listTransactions(params: {
     from?:     string;
     to?:       string;
     location?: string;
+    page?:     number;
+    limit?:    number;
   }) {
-    const today = new Date().toISOString().split('T')[0];
+    const today       = new Date().toISOString().split('T')[0];
     const hasLocation  = !!params.location?.trim();
     const hasDateRange = !!(params.from || params.to);
+    const page         = Math.max(1, params.page  ?? 1);
+    const limit        = Math.min(200, Math.max(1, params.limit ?? 50));
+    const offset       = (page - 1) * limit;
 
     let query = supabase
       .from('audit_transactions')
-      .select('*')
+      .select('*', { count: 'exact' })
       .order('audit_date',    { ascending: true })
-      .order('serial_number', { ascending: true });
+      .order('serial_number', { ascending: true })
+      .range(offset, offset + limit - 1);
 
     if (hasDateRange) {
-      // Date filter applied — location is an optional additional filter
       const from = params.from ?? today;
       const to   = params.to   ?? from;
       query = query.gte('audit_date', from).lte('audit_date', to);
     } else if (!hasLocation) {
-      // No date and no location — default to today
       query = query.eq('audit_date', today);
     }
-    // If location only (no dates) → no date filter, search all dates
 
     if (hasLocation) {
       query = query.ilike('location', `%${params.location!.trim()}%`);
     }
 
-    const { data, error } = await query;
+    const { data, count, error } = await query;
     if (error) throw new Error(`Failed to list transactions: ${error.message}`);
-    return data ?? [];
+
+    return {
+      transactions: data ?? [],
+      total:        count ?? 0,
+      page,
+      limit,
+      totalPages:   Math.ceil((count ?? 0) / limit),
+    };
   }
 
   async updateTransaction(id: string, adminId: string, adminRoles: string[], input: Partial<CreateTransactionInput>) {
@@ -594,11 +606,13 @@ export class AuditService {
       transaction_count:             transactions.length,
       gross_revenue:                 round2(grossRevenue),
       gross_expenses:                round2(grossExpenses),
-      total_transaction_expenses:    round2(totalTxExpenses),
-      total_operational_expenditure: round2(totalOpex),
+      total_driver_payout:           round2(totalPayouts),        // SUM of amount_paid — actual payout to drivers/riders
+      total_company_expenditure:     round2(totalOpex),           // SUM of audit_expenditures — operational costs
+      total_transaction_expenses:    round2(totalTxExpenses),     // SUM of per-transaction extra expenses
+      total_operational_expenditure: round2(totalOpex),           // alias kept for backward compat
       net_revenue:                   round2(netRevenue),
-      total_profit:                  round2(totalProfit),   // SUM of (charge_price - amount_paid) per row
-      total_loss:                    round2(totalLoss),     // SUM of loss rows (where payout > charge)
+      total_profit:                  round2(totalProfit),         // SUM of (charge_price - amount_paid) per row
+      total_loss:                    round2(totalLoss),           // SUM of loss rows (where payout > charge)
     };
   }
 
@@ -654,23 +668,29 @@ export class AuditService {
       const netRevenue    = d.grossRevenue - grossExpenses;
       return {
         date,
-        gross_revenue:  round2(d.grossRevenue),
-        gross_expenses: round2(grossExpenses),
-        net_revenue:    round2(netRevenue),
+        gross_revenue:             round2(d.grossRevenue),
+        gross_expenses:            round2(grossExpenses),
+        total_driver_payout:       round2(d.totalPayouts),
+        total_company_expenditure: round2(d.opex),
+        net_revenue:               round2(netRevenue),
       };
     }).sort((a, b) => a.date.localeCompare(b.date));
 
-    const monthlyGrossRevenue  = dailySummaries.reduce((s, d) => s + d.gross_revenue,  0);
-    const monthlyGrossExpenses = dailySummaries.reduce((s, d) => s + d.gross_expenses, 0);
-    const monthlyNetRevenue    = monthlyGrossRevenue - monthlyGrossExpenses;
+    const monthlyGrossRevenue         = dailySummaries.reduce((s, d) => s + d.gross_revenue,             0);
+    const monthlyGrossExpenses        = dailySummaries.reduce((s, d) => s + d.gross_expenses,            0);
+    const monthlyDriverPayout         = dailySummaries.reduce((s, d) => s + d.total_driver_payout,       0);
+    const monthlyCompanyExpenditure   = dailySummaries.reduce((s, d) => s + d.total_company_expenditure, 0);
+    const monthlyNetRevenue           = monthlyGrossRevenue - monthlyGrossExpenses;
 
     return {
       year,
       month,
-      daily_summaries:        dailySummaries,
-      monthly_gross_revenue:  round2(monthlyGrossRevenue),
-      monthly_gross_expenses: round2(monthlyGrossExpenses),
-      monthly_net_revenue:    round2(monthlyNetRevenue),
+      daily_summaries:                dailySummaries,
+      monthly_gross_revenue:          round2(monthlyGrossRevenue),
+      monthly_gross_expenses:         round2(monthlyGrossExpenses),
+      monthly_total_driver_payout:    round2(monthlyDriverPayout),
+      monthly_company_expenditure:    round2(monthlyCompanyExpenditure),
+      monthly_net_revenue:            round2(monthlyNetRevenue),
     };
   }
 
@@ -726,34 +746,42 @@ export class AuditService {
       const grossExpenses = d.totalPayouts + d.txExp + d.opex;
       const netRevenue    = d.grossRevenue - grossExpenses;
       return {
-        month,                                  // "YYYY-MM"
-        gross_revenue:  round2(d.grossRevenue),
-        gross_expenses: round2(grossExpenses),
-        net_revenue:    round2(netRevenue),
+        month,
+        gross_revenue:             round2(d.grossRevenue),
+        gross_expenses:            round2(grossExpenses),
+        total_driver_payout:       round2(d.totalPayouts),
+        total_company_expenditure: round2(d.opex),
+        net_revenue:               round2(netRevenue),
       };
     }).sort((a, b) => a.month.localeCompare(b.month));
 
-    const yearlyGrossRevenue  = monthlySummaries.reduce((s, m) => s + m.gross_revenue,  0);
-    const yearlyGrossExpenses = monthlySummaries.reduce((s, m) => s + m.gross_expenses, 0);
-    const yearlyNetRevenue    = yearlyGrossRevenue - yearlyGrossExpenses;
+    const yearlyGrossRevenue        = monthlySummaries.reduce((s, m) => s + m.gross_revenue,             0);
+    const yearlyGrossExpenses       = monthlySummaries.reduce((s, m) => s + m.gross_expenses,            0);
+    const yearlyDriverPayout        = monthlySummaries.reduce((s, m) => s + m.total_driver_payout,       0);
+    const yearlyCompanyExpenditure  = monthlySummaries.reduce((s, m) => s + m.total_company_expenditure, 0);
+    const yearlyNetRevenue          = yearlyGrossRevenue - yearlyGrossExpenses;
 
     return {
       year,
-      monthly_summaries:      monthlySummaries,
-      yearly_gross_revenue:   round2(yearlyGrossRevenue),
-      yearly_gross_expenses:  round2(yearlyGrossExpenses),
-      yearly_net_revenue:     round2(yearlyNetRevenue),
+      monthly_summaries:              monthlySummaries,
+      yearly_gross_revenue:           round2(yearlyGrossRevenue),
+      yearly_gross_expenses:          round2(yearlyGrossExpenses),
+      yearly_total_driver_payout:     round2(yearlyDriverPayout),
+      yearly_company_expenditure:     round2(yearlyCompanyExpenditure),
+      yearly_net_revenue:             round2(yearlyNetRevenue),
     };
   }
 
   // ── Export (CSV) ──────────────────────────────────────────────────────────────
 
   async exportDailyCSV(date: string): Promise<string> {
-    const [transactions, expenditures, summary] = await Promise.all([
-      this.listTransactions({ from: date, to: date }),
+    const [txResult, expenditures, summary] = await Promise.all([
+      this.listTransactions({ from: date, to: date, limit: 10000 }), // fetch all for export
       this.listExpenditures({ from: date, to: date }),
       this.getDailySummary({ from: date, to: date }),
     ]);
+
+    const transactions = txResult.transactions;
 
     const headers = [
       'S/N', 'Date', 'Service Type', 'Ride Type',
@@ -787,16 +815,19 @@ export class AuditService {
 
     let csv = `Daily Transaction Audit Sheet — ${date}\n\n`;
     csv += headers.join(',') + '\n';
-    csv += rows.map(r => r.join(',')).join('\n');
+    csv += rows.map((r: any[]) => r.join(',')).join('\n');
     csv += '\n\nDaily Operational Expenditures\n';
     csv += expHeaders.join(',') + '\n';
     csv += expRows.map(r => r.join(',')).join('\n');
     csv += '\n\nDaily Financial Summary\n';
     csv += `Gross Revenue (Total CP Collected),${summary.gross_revenue}\n`;
+    csv += `Total Driver Payout (SUM of amount_paid),${summary.total_driver_payout}\n`;
+    csv += `Total Company Expenditure (Operational Costs),${summary.total_company_expenditure}\n`;
     csv += `Gross Expenses (Payouts + TX Costs + Opex),${summary.gross_expenses}\n`;
     csv += `  — Transaction Expenses,${summary.total_transaction_expenses}\n`;
     csv += `  — Operational Expenditure,${summary.total_operational_expenditure}\n`;
     csv += `Net Revenue (Gross Revenue − Gross Expenses),${summary.net_revenue}\n`;
+    csv += `Total Profit (SUM per transaction),${summary.total_profit}\n`;
 
     return csv;
   }
@@ -805,13 +836,15 @@ export class AuditService {
     const summary = await this.getMonthlySummary(year, month);
 
     let csv = `Monthly Audit Summary — ${year}-${String(month).padStart(2, '0')}\n\n`;
-    csv += 'Date,Gross Revenue,Gross Expenses,Net Revenue\n';
+    csv += 'Date,Gross Revenue,Gross Expenses,Total Driver Payout,Total Company Expenditure,Net Revenue\n';
     csv += summary.daily_summaries
-      .map(d => `${d.date},${d.gross_revenue},${d.gross_expenses},${d.net_revenue}`)
+      .map(d => `${d.date},${d.gross_revenue},${d.gross_expenses},${d.total_driver_payout},${d.total_company_expenditure},${d.net_revenue}`)
       .join('\n');
     csv += '\n\nMonthly Totals\n';
     csv += `Monthly Gross Revenue,${summary.monthly_gross_revenue}\n`;
     csv += `Monthly Gross Expenses,${summary.monthly_gross_expenses}\n`;
+    csv += `Monthly Total Driver Payout,${summary.monthly_total_driver_payout}\n`;
+    csv += `Monthly Company Expenditure,${summary.monthly_company_expenditure}\n`;
     csv += `Monthly Net Revenue,${summary.monthly_net_revenue}\n`;
 
     return csv;
@@ -821,13 +854,15 @@ export class AuditService {
     const summary = await this.getYearlySummary(year);
 
     let csv = `Yearly Audit Summary — ${year}\n\n`;
-    csv += 'Month,Gross Revenue,Gross Expenses,Net Revenue\n';
+    csv += 'Month,Gross Revenue,Gross Expenses,Total Driver Payout,Total Company Expenditure,Net Revenue\n';
     csv += summary.monthly_summaries
-      .map(m => `${m.month},${m.gross_revenue},${m.gross_expenses},${m.net_revenue}`)
+      .map(m => `${m.month},${m.gross_revenue},${m.gross_expenses},${m.total_driver_payout},${m.total_company_expenditure},${m.net_revenue}`)
       .join('\n');
     csv += '\n\nYearly Totals\n';
     csv += `Yearly Gross Revenue,${summary.yearly_gross_revenue}\n`;
     csv += `Yearly Gross Expenses,${summary.yearly_gross_expenses}\n`;
+    csv += `Yearly Total Driver Payout,${summary.yearly_total_driver_payout}\n`;
+    csv += `Yearly Company Expenditure,${summary.yearly_company_expenditure}\n`;
     csv += `Yearly Net Revenue,${summary.yearly_net_revenue}\n`;
 
     return csv;

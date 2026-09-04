@@ -310,3 +310,18 @@ INSERT INTO spare_parts_categories (name, description, is_active, sort_order) VA
   ('Filters',       'Oil, air, fuel and cabin air filters',       true, 8),
   ('Transmission',  'Gearbox, clutch and drivetrain components',  true, 9)
 ON CONFLICT DO NOTHING;
+
+-- ============================================================
+-- VENDOR CUSTOM CATEGORIES — ALTER TABLE
+-- Run this in Supabase SQL Editor after the initial migration
+-- ============================================================
+
+-- Add store_id column to spare_parts_categories
+-- null  = global category (admin-managed, visible to all stores)
+-- value = vendor-custom category (only visible to that store)
+ALTER TABLE spare_parts_categories
+  ADD COLUMN IF NOT EXISTS store_id UUID REFERENCES spare_parts_stores(id) ON DELETE CASCADE;
+
+-- Index for fast lookup of a store's custom categories
+CREATE INDEX IF NOT EXISTS idx_spare_parts_categories_store_id
+  ON spare_parts_categories(store_id);

@@ -183,8 +183,26 @@ export class BookingController {
 
       if (!myVendor) return ResponseUtil.notFound(res, 'Vendor profile not found');
 
-      const result = await this.bookingService.getVendorBookings(myVendor.id, user.id, page, limit, status);
-      return ResponseUtil.success(res, result);
+      // Run paginated bookings + status counts in parallel
+      const [result, { data: allStatuses }] = await Promise.all([
+        this.bookingService.getVendorBookings(myVendor.id, user.id, page, limit, status),
+        (await import('../config/database')).supabase
+          .from('auto_mech_bookings')
+          .select('status')
+          .eq('vendor_id', myVendor.id),
+      ]);
+
+      const rows = allStatuses ?? [];
+      const statusCounts = {
+        all:         rows.length,
+        pending:     rows.filter((b: any) => b.status === 'pending').length,
+        confirmed:   rows.filter((b: any) => b.status === 'confirmed').length,
+        in_progress: rows.filter((b: any) => b.status === 'in_progress').length,
+        completed:   rows.filter((b: any) => b.status === 'completed').length,
+        cancelled:   rows.filter((b: any) => b.status === 'cancelled').length,
+      };
+
+      return ResponseUtil.success(res, { ...result, statusCounts });
     } catch (err: any) {
       return ResponseUtil.serverError(res, err.message);
     }
@@ -200,6 +218,42 @@ export class BookingController {
       return ResponseUtil.success(res, booking, 'Booking confirmed');
     } catch (err: any) {
       if (err.message === 'Unauthorised') return ResponseUtil.forbidden(res);
+      return ResponseUtil.badRequest(res, err.message);
+    }
+  };
+
+  /**
+   * POST /api/auto-mech/bookings/vendor/:bookingId/accept
+   * Explicit accept — moves pending → confirmed and notifies the customer.
+   */
+  acceptBooking = async (req: Request, res: Response): Promise<Response> => {
+    const user = (req as AuthRequest).user!;
+    try {
+      const booking = await this.bookingService.acceptBooking(req.params.bookingId, user.id);
+      return ResponseUtil.success(res, booking, 'Booking accepted');
+    } catch (err: any) {
+      if (err.message === 'Unauthorised') return ResponseUtil.forbidden(res);
+      return ResponseUtil.badRequest(res, err.message);
+    }
+  };
+
+  /**
+   * POST /api/auto-mech/bookings/vendor/:bookingId/cancel
+   * Vendor cancels a pending/confirmed/in-progress booking with a reason.
+   * Customer is notified.
+   */
+  cancelBookingByVendor = async (req: Request, res: Response): Promise<Response> => {
+    const user = (req as AuthRequest).user!;
+    const { reason } = req.body;
+    if (!reason) return ResponseUtil.badRequest(res, 'reason is required');
+    try {
+      const booking = await this.bookingService.cancelBookingByVendor(
+        req.params.bookingId, user.id, reason
+      );
+      return ResponseUtil.success(res, booking, 'Booking cancelled');
+    } catch (err: any) {
+      if (err.message === 'Unauthorised') return ResponseUtil.forbidden(res);
+      if (err.message === 'Booking not found') return ResponseUtil.notFound(res, err.message);
       return ResponseUtil.badRequest(res, err.message);
     }
   };

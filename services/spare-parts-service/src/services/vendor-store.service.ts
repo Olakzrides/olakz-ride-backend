@@ -235,4 +235,116 @@ export class VendorStoreService {
       data: { isAvailable },
     });
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  // VENDOR CUSTOM CATEGORIES
+  // Vendors can create categories scoped to their store.
+  // Global categories (storeId = null) are read-only for vendors.
+  // ─────────────────────────────────────────────────────────────────
+
+  /**
+   * List all categories available to this vendor:
+   * global categories (storeId = null) + their own custom ones.
+   */
+  static async listCategories(ownerId: string) {
+    const store = await prisma.sparePartsStore.findUnique({ where: { ownerId } });
+    if (!store) throw new Error('Store not found');
+
+    return prisma.sparePartsCategory.findMany({
+      where: {
+        isActive: true,
+        OR: [
+          { storeId: null },          // global
+          { storeId: store.id },      // this vendor's custom
+        ],
+      },
+      orderBy: [
+        { storeId: 'asc' },           // global (null) first, then custom
+        { sortOrder: 'asc' },
+        { name: 'asc' },
+      ],
+    });
+  }
+
+  /**
+   * Create a custom category scoped to this vendor's store.
+   * A vendor cannot create a global category (storeId is always set).
+   */
+  static async createCategory(
+    ownerId: string,
+    data: {
+      name:        string;
+      description?: string;
+      icon_url?:   string;
+    }
+  ) {
+    const store = await prisma.sparePartsStore.findUnique({ where: { ownerId } });
+    if (!store) throw new Error('Store not found');
+
+    // Prevent duplicate name within the same store
+    const existing = await prisma.sparePartsCategory.findFirst({
+      where: { name: { equals: data.name, mode: 'insensitive' }, storeId: store.id },
+    });
+    if (existing) throw new Error(`Category "${data.name}" already exists in your store`);
+
+    return prisma.sparePartsCategory.create({
+      data: {
+        name:        data.name,
+        description: data.description || null,
+        iconUrl:     data.icon_url    || null,
+        isActive:    true,
+        sortOrder:   0,
+        storeId:     store.id,
+      },
+    });
+  }
+
+  /**
+   * Update a vendor's own custom category.
+   * Vendors cannot update global categories.
+   */
+  static async updateCategory(
+    ownerId:    string,
+    categoryId: string,
+    data: {
+      name?:        string;
+      description?: string;
+      icon_url?:    string;
+    }
+  ) {
+    const store = await prisma.sparePartsStore.findUnique({ where: { ownerId } });
+    if (!store) throw new Error('Store not found');
+
+    const category = await prisma.sparePartsCategory.findFirst({
+      where: { id: categoryId, storeId: store.id },
+    });
+    if (!category) throw new Error('Category not found or not yours to edit');
+
+    return prisma.sparePartsCategory.update({
+      where: { id: categoryId },
+      data: {
+        ...(data.name        !== undefined && { name: data.name }),
+        ...(data.description !== undefined && { description: data.description }),
+        ...(data.icon_url    !== undefined && { iconUrl: data.icon_url }),
+      },
+    });
+  }
+
+  /**
+   * Delete a vendor's own custom category.
+   * Products that used this category will have categoryId set to null (SetNull in schema).
+   * Vendors cannot delete global categories.
+   */
+  static async deleteCategory(ownerId: string, categoryId: string) {
+    const store = await prisma.sparePartsStore.findUnique({ where: { ownerId } });
+    if (!store) throw new Error('Store not found');
+
+    const category = await prisma.sparePartsCategory.findFirst({
+      where: { id: categoryId, storeId: store.id },
+    });
+    if (!category) throw new Error('Category not found or not yours to delete');
+
+    await prisma.sparePartsCategory.delete({ where: { id: categoryId } });
+  }
+
 }

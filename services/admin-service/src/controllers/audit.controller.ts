@@ -94,20 +94,32 @@ export class AuditController {
   };
 
   /**
-   * GET /api/admin/audit/transactions?from=YYYY-MM-DD&to=YYYY-MM-DD
-   * GET /api/admin/audit/transactions?from=2026-08-01&to=2026-08-04&location=Ikeja
+   * GET /api/admin/audit/transactions?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&limit=50
+   * GET /api/admin/audit/transactions?from=2026-08-01&to=2026-08-04&location=Ikeja&page=1&limit=50
    * Both from and to default to today when not provided.
+   * Paginated — default 50 per page, max 200.
    */
   listTransactions = async (req: AdminRequest, res: Response): Promise<void> => {
     try {
       const { from, to, location } = req.query as {
         from?: string; to?: string; location?: string;
       };
-      const [transactions, summary] = await Promise.all([
-        svc.listTransactions({ from, to, location }),
+      const page  = parseInt((req.query.page  as string) || '1',  10);
+      const limit = parseInt((req.query.limit as string) || '50', 10);
+
+      const [result, summary] = await Promise.all([
+        svc.listTransactions({ from, to, location, page, limit }),
         svc.getDailySummary({ from, to, location }),
       ]);
-      ResponseUtil.success(res, { transactions, total: transactions.length, summary });
+
+      ResponseUtil.success(res, {
+        transactions: result.transactions,
+        total:        result.total,
+        page:         result.page,
+        limit:        result.limit,
+        total_pages:  result.totalPages,
+        summary,
+      });
     } catch (err) {
       logger.error('listTransactions error', { error: toMsg(err) });
       ResponseUtil.serverError(res, 'Failed to list transactions');

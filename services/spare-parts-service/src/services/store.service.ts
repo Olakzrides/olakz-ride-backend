@@ -7,10 +7,26 @@ export class StoreService {
   // CATEGORIES
   // ─────────────────────────────────────────────────────────────────
 
-  static async listCategories() {
+  /**
+   * List categories for a given context:
+   *   - No storeId → global categories only (used by customer browsing)
+   *   - With storeId → global categories + that store's custom categories
+   *     (used by vendor inventory screen)
+   */
+  static async listCategories(storeId?: string) {
     return prisma.sparePartsCategory.findMany({
-      where: { isActive: true },
-      orderBy: { sortOrder: 'asc' },
+      where: {
+        isActive: true,
+        OR: [
+          { storeId: null },                      // global categories
+          ...(storeId ? [{ storeId }] : []),       // vendor-custom categories
+        ],
+      },
+      orderBy: [
+        { storeId: 'asc' },   // global (null) first, then custom
+        { sortOrder: 'asc' },
+        { name: 'asc' },
+      ],
     });
   }
 
@@ -250,11 +266,11 @@ export class StoreService {
           return null;
         }
       })
-    );
+    ) as PromiseSettledResult<any>[];
 
     return results
-      .filter((r) => r.status === 'fulfilled' && r.value !== null)
-      .map((r) => (r as PromiseFulfilledResult<any>).value);
+      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && r.value !== null)
+      .map((r) => r.value);
   }
 
   // ─────────────────────────────────────────────────────────────────

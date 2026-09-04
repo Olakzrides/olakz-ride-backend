@@ -11,8 +11,10 @@ router.use(authenticate);
 
 // ── Vendor endpoints — MUST come before /:bookingId ──────────────────────────
 router.get('/vendor/all',                  authorize('vendor'), ctrl.getVendorBookings);
+router.post('/vendor/:bookingId/accept',   authorize('vendor'), ctrl.acceptBooking);
 router.post('/vendor/:bookingId/decline',  authorize('vendor'), ctrl.declineBooking);
 router.post('/vendor/:bookingId/confirm',  authorize('vendor'), ctrl.confirmBooking);
+router.post('/vendor/:bookingId/cancel',   authorize('vendor'), ctrl.cancelBookingByVendor);
 router.post('/vendor/:bookingId/start',    authorize('vendor'), ctrl.startBooking);
 router.post('/vendor/:bookingId/complete', authorize('vendor'), ctrl.completeBooking);
 
